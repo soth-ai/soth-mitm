@@ -167,10 +167,11 @@ This checklist turns `LIGHTWEIGHT_PROXY_REPO_IMPLEMENTATION_PLAN.md` into an exe
   - [x] Deliverables: H2 path wiring + protocol markers in events.
   - [x] Hardening: HTTP/2 relay maps transport-close EOF/reset/broken-pipe conditions to deterministic `mitm_http_completed` close semantics.
   - [x] Acceptance: H2 fixture traffic passes end-to-end with protocol=`http2`.
-- [ ] `P2-02` HTTP/2 limits and flow-control tuning.
-  - [ ] Scope: `http2_max_header_list_size` and backpressure-safe stream handling.
-  - [ ] Deliverables: configurable limits + stress tests for large headers and parallel streams.
-  - [ ] Acceptance: no uncontrolled memory growth under header/stream stress tests.
+- [x] `P2-02` HTTP/2 limits and flow-control tuning.
+  - [x] Scope: `http2_max_header_list_size` and backpressure-safe stream handling.
+  - [x] Deliverables: configurable limits + stress tests for large headers and parallel streams.
+  - [x] Hardening: explicit HPACK-style header-list enforcement for request/response headers before forwarding.
+  - [x] Acceptance: large-header and parallel-stream fixtures pass with deterministic close semantics and byte accounting.
 - [ ] `P2-03` WebSocket interception baseline.
   - [ ] Scope: upgrade detection, frame pass-through, websocket lifecycle events.
   - [ ] Deliverables: WS flow model + message metadata events.

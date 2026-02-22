@@ -101,6 +101,25 @@ fn has_tls_success_for_peer_with_protocol(
     })
 }
 
+fn stream_closed_for_protocol<'a>(
+    events: &'a [Event],
+    protocol: ApplicationProtocol,
+    reason_code: &str,
+) -> Option<&'a Event> {
+    events.iter().find(|event| {
+        event.kind == EventType::StreamClosed
+            && event.context.protocol == protocol
+            && event.attributes.get("reason_code").map(String::as_str) == Some(reason_code)
+    })
+}
+
+fn attr_u64(event: &Event, key: &str) -> Option<u64> {
+    event
+        .attributes
+        .get(key)
+        .and_then(|value| value.parse::<u64>().ok())
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn intercept_http2_over_tls_relays_and_marks_protocol() {
     let upstream_listener = TcpListener::bind("127.0.0.1:0")
@@ -315,5 +334,259 @@ async fn http2_disabled_negotiates_http1_even_when_client_offers_h2() {
             .iter()
             .any(|event| event.context.protocol == ApplicationProtocol::Http2),
         "unexpected HTTP/2 protocol marker while HTTP/2 was disabled"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn http2_oversized_headers_emit_mitm_http_error_close() {
+    let upstream_listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind upstream listener");
+    let upstream_addr = upstream_listener.local_addr().expect("upstream addr");
+    let upstream_task = tokio::spawn(async move {
+        let server_config =
+            build_http_server_config_for_host("127.0.0.1", true).expect("h2 server config");
+        let acceptor = TlsAcceptor::from(server_config);
+        let (tcp, _) = upstream_listener.accept().await.expect("accept upstream");
+        let tls = acceptor.accept(tcp).await.expect("TLS accept");
+        assert_eq!(tls.get_ref().1.alpn_protocol(), Some(b"h2".as_slice()));
+        let mut h2_conn = h2::server::handshake(tls).await.expect("h2 handshake");
+        let received = tokio::time::timeout(Duration::from_millis(300), h2_conn.accept()).await;
+        let saw_request_stream = matches!(received, Ok(Some(Ok(_))));
+        h2_conn.graceful_shutdown();
+        saw_request_stream
+    });
+
+    let sink = VecEventSink::default();
+    let config = MitmConfig {
+        upstream_tls_insecure_skip_verify: true,
+        http2_enabled: true,
+        http2_max_header_list_size: 1_024,
+        ..MitmConfig::default()
+    };
+    let (proxy_addr, proxy_task, sink) = start_sidecar_with_sink(sink, config).await;
+
+    let mut tcp = TcpStream::connect(proxy_addr)
+        .await
+        .expect("connect sidecar");
+    let connect = format!(
+        "CONNECT 127.0.0.1:{} HTTP/1.1\r\nHost: 127.0.0.1:{}\r\n\r\n",
+        upstream_addr.port(),
+        upstream_addr.port()
+    );
+    tcp.write_all(connect.as_bytes())
+        .await
+        .expect("write CONNECT");
+    let connect_response = read_response_head(&mut tcp).await;
+    assert!(
+        connect_response.starts_with("HTTP/1.1 200 Connection Established"),
+        "{connect_response}"
+    );
+
+    let connector = TlsConnector::from(build_http_client_config(true, true));
+    let server_name = ServerName::try_from("127.0.0.1".to_string()).expect("server name");
+    let tls = connector
+        .connect(server_name, tcp)
+        .await
+        .expect("TLS connect to sidecar");
+    assert_eq!(tls.get_ref().1.alpn_protocol(), Some(b"h2".as_slice()));
+
+    let (mut h2_client, h2_connection) = h2::client::handshake(tls)
+        .await
+        .expect("h2 client handshake");
+    let mut h2_connection_task = tokio::spawn(h2_connection);
+
+    let oversized_header = "a".repeat(8 * 1024);
+    let request = http::Request::builder()
+        .method("GET")
+        .uri("https://127.0.0.1/oversized")
+        .header("host", "127.0.0.1")
+        .header("x-oversized", oversized_header)
+        .body(())
+        .expect("request");
+
+    if let Ok((response_future, _)) = h2_client.send_request(request, true) {
+        let _ = tokio::time::timeout(Duration::from_secs(1), response_future).await;
+    }
+
+    drop(h2_client);
+    if tokio::time::timeout(Duration::from_millis(500), &mut h2_connection_task)
+        .await
+        .is_err()
+    {
+        h2_connection_task.abort();
+    }
+    let saw_upstream_request = tokio::time::timeout(Duration::from_secs(1), upstream_task)
+        .await
+        .expect("upstream task timeout")
+        .expect("upstream task");
+    assert!(
+        !saw_upstream_request,
+        "oversized request should not be forwarded upstream"
+    );
+
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    proxy_task.abort();
+
+    let events = sink.snapshot();
+    assert!(events.iter().any(|event| {
+        event.kind == EventType::StreamClosed
+            && event.context.protocol == ApplicationProtocol::Http2
+    }));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn http2_parallel_stream_stress_keeps_completed_close_and_byte_accounting() {
+    const STREAM_COUNT: usize = 32;
+    const STREAM_CHUNKS: usize = 1;
+    const STREAM_CHUNK_SIZE: usize = 1_024;
+    const STREAM_BYTES: usize = STREAM_CHUNKS * STREAM_CHUNK_SIZE;
+
+    let upstream_listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind upstream listener");
+    let upstream_addr = upstream_listener.local_addr().expect("upstream addr");
+    let upstream_task = tokio::spawn(async move {
+        let server_config =
+            build_http_server_config_for_host("127.0.0.1", true).expect("h2 server config");
+        let acceptor = TlsAcceptor::from(server_config);
+        let (tcp, _) = upstream_listener.accept().await.expect("accept upstream");
+        let tls = acceptor.accept(tcp).await.expect("TLS accept");
+        assert_eq!(tls.get_ref().1.alpn_protocol(), Some(b"h2".as_slice()));
+
+        let mut h2_conn = h2::server::handshake(tls).await.expect("h2 handshake");
+        let mut stream_tasks = tokio::task::JoinSet::new();
+        while let Some(next_stream) = h2_conn.accept().await {
+            let (request, mut respond) = match next_stream {
+                Ok(stream) => stream,
+                Err(_) => break,
+            };
+            stream_tasks.spawn(async move {
+                assert_eq!(request.method(), http::Method::GET);
+                let response = http::Response::builder()
+                    .status(200)
+                    .header("content-type", "application/octet-stream")
+                    .body(())
+                    .expect("response");
+                let mut send = respond
+                    .send_response(response, false)
+                    .expect("send response headers");
+                for idx in 0..STREAM_CHUNKS {
+                    let payload = Bytes::from(vec![idx as u8; STREAM_CHUNK_SIZE]);
+                    send.send_data(payload, idx + 1 == STREAM_CHUNKS)
+                        .expect("send response data");
+                }
+            });
+        }
+        while let Some(task) = stream_tasks.join_next().await {
+            task.expect("upstream stream task join");
+        }
+    });
+
+    let sink = VecEventSink::default();
+    let config = MitmConfig {
+        upstream_tls_insecure_skip_verify: true,
+        http2_enabled: true,
+        ..MitmConfig::default()
+    };
+    let (proxy_addr, proxy_task, sink) = start_sidecar_with_sink(sink, config).await;
+
+    let mut tcp = TcpStream::connect(proxy_addr)
+        .await
+        .expect("connect sidecar");
+    let connect = format!(
+        "CONNECT 127.0.0.1:{} HTTP/1.1\r\nHost: 127.0.0.1:{}\r\n\r\n",
+        upstream_addr.port(),
+        upstream_addr.port()
+    );
+    tcp.write_all(connect.as_bytes())
+        .await
+        .expect("write CONNECT");
+    let connect_response = read_response_head(&mut tcp).await;
+    assert!(
+        connect_response.starts_with("HTTP/1.1 200 Connection Established"),
+        "{connect_response}"
+    );
+
+    let connector = TlsConnector::from(build_http_client_config(true, true));
+    let server_name = ServerName::try_from("127.0.0.1".to_string()).expect("server name");
+    let tls = connector
+        .connect(server_name, tcp)
+        .await
+        .expect("TLS connect to sidecar");
+    assert_eq!(tls.get_ref().1.alpn_protocol(), Some(b"h2".as_slice()));
+
+    let (h2_client, h2_connection) = h2::client::handshake(tls)
+        .await
+        .expect("h2 client handshake");
+    let mut h2_connection_task = tokio::spawn(h2_connection);
+
+    let mut response_futures = Vec::with_capacity(STREAM_COUNT);
+    for idx in 0..STREAM_COUNT {
+        let request = http::Request::builder()
+            .method("GET")
+            .uri(format!("https://127.0.0.1/stream/{idx}"))
+            .header("host", "127.0.0.1")
+            .body(())
+            .expect("request");
+        let (response_future, _) = h2_client
+            .clone()
+            .ready()
+            .await
+            .expect("h2 client ready")
+            .send_request(request, true)
+            .expect("send request");
+        response_futures.push(response_future);
+    }
+
+    let mut response_tasks = tokio::task::JoinSet::new();
+    for response_future in response_futures {
+        response_tasks.spawn(async move {
+            let response = response_future.await.expect("response");
+            assert_eq!(response.status(), http::StatusCode::OK);
+            let mut body = response.into_body();
+            let mut bytes = 0_usize;
+            while let Some(chunk) = body.data().await {
+                bytes += chunk.expect("response chunk").len();
+            }
+            bytes
+        });
+    }
+
+    let mut total_response_bytes = 0_usize;
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while let Some(result) = response_tasks.join_next().await {
+            let stream_bytes = result.expect("response task join");
+            assert_eq!(stream_bytes, STREAM_BYTES);
+            total_response_bytes += stream_bytes;
+        }
+    })
+    .await
+    .expect("response drain timeout");
+    assert_eq!(total_response_bytes, STREAM_COUNT * STREAM_BYTES);
+
+    drop(h2_client);
+    if tokio::time::timeout(Duration::from_secs(1), &mut h2_connection_task)
+        .await
+        .is_err()
+    {
+        h2_connection_task.abort();
+    }
+    tokio::time::timeout(Duration::from_secs(1), upstream_task)
+        .await
+        .expect("upstream task timeout")
+        .expect("upstream task");
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    proxy_task.abort();
+
+    let events = sink.snapshot();
+    let stream_closed =
+        stream_closed_for_protocol(&events, ApplicationProtocol::Http2, "mitm_http_completed")
+            .expect("missing HTTP/2 StreamClosed completed event");
+    let expected = (STREAM_COUNT * STREAM_BYTES) as u64;
+    let bytes_from_server = attr_u64(stream_closed, "bytes_from_server").unwrap_or_default();
+    assert!(
+        bytes_from_server >= expected,
+        "bytes_from_server {bytes_from_server} was less than expected {expected}"
     );
 }

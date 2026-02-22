@@ -360,6 +360,7 @@ where
 
 include!("flow_connect_tunnel.rs");
 include!("flow_intercept.rs");
+include!("http2_stream_relay.rs");
 include!("http_head_parser.rs");
 include!("http_body_relay.rs");
 include!("event_emitters.rs");

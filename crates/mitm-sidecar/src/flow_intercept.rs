@@ -217,7 +217,15 @@ where
             );
             return Ok(());
         }
-        return relay_http2_connection(engine, tunnel_context, downstream_tls, upstream_tls).await;
+        let max_header_list_size = engine.config.http2_max_header_list_size;
+        return relay_http2_connection(
+            engine,
+            tunnel_context,
+            downstream_tls,
+            upstream_tls,
+            max_header_list_size,
+        )
+        .await;
     }
 
     let http_context = FlowContext {
@@ -334,67 +342,6 @@ where
                 Some(bytes_from_server),
             );
             return Ok(());
-        }
-    }
-}
-
-async fn relay_http2_connection<P, S, D, U>(
-    engine: Arc<MitmEngine<P, S>>,
-    tunnel_context: FlowContext,
-    downstream_tls: D,
-    mut upstream_tls: U,
-) -> io::Result<()>
-where
-    P: PolicyEngine + Send + Sync + 'static,
-    S: EventSink + Send + Sync + 'static,
-    D: AsyncRead + AsyncWrite + Unpin,
-    U: AsyncRead + AsyncWrite + Unpin,
-{
-    let mut downstream_tls = downstream_tls;
-    let http2_context = FlowContext {
-        protocol: ApplicationProtocol::Http2,
-        ..tunnel_context
-    };
-
-    match tokio::io::copy_bidirectional(&mut downstream_tls, &mut upstream_tls).await {
-        Ok((from_client, from_server)) => {
-            emit_stream_closed(
-                &engine,
-                http2_context,
-                CloseReasonCode::MitmHttpCompleted,
-                None,
-                Some(from_client),
-                Some(from_server),
-            );
-            Ok(())
-        }
-        Err(error) => {
-            if matches!(
-                error.kind(),
-                io::ErrorKind::UnexpectedEof
-                    | io::ErrorKind::BrokenPipe
-                    | io::ErrorKind::ConnectionReset
-                    | io::ErrorKind::ConnectionAborted
-            ) {
-                emit_stream_closed(
-                    &engine,
-                    http2_context,
-                    CloseReasonCode::MitmHttpCompleted,
-                    Some(format!("http2 relay ended with transport close: {error}")),
-                    None,
-                    None,
-                );
-                return Ok(());
-            }
-            emit_stream_closed(
-                &engine,
-                http2_context,
-                CloseReasonCode::MitmHttpError,
-                Some(format!("http2 relay error: {error}")),
-                None,
-                None,
-            );
-            Err(error)
         }
     }
 }

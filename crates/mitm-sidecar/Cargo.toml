@@ -6,6 +6,9 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+bytes = "1"
+h2 = { workspace = true }
+http = "1"
 mitm-core = { path = "../mitm-core" }
 mitm-http = { path = "../mitm-http" }
 mitm-observe = { path = "../mitm-observe" }
@@ -15,6 +18,3 @@ tokio = { workspace = true, features = ["io-util", "macros", "net", "rt-multi-th
 tokio-rustls = { workspace = true }
 
 [dev-dependencies]
-bytes = "1"
-h2 = { workspace = true }
-http = "1"
