@@ -6,6 +6,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+mitm-http = { path = "../mitm-http" }
 rcgen = { workspace = true, features = ["x509-parser"] }
 rustls = { workspace = true }
 webpki-roots = "1"

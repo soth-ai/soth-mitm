@@ -162,10 +162,11 @@ This checklist turns `LIGHTWEIGHT_PROXY_REPO_IMPLEMENTATION_PLAN.md` into an exe
 
 ## 6) Phase 2: Protocol Expansion
 
-- [ ] `P2-01` HTTP/2 transport enablement in `mitm-http`.
-  - [ ] Scope: config-driven enable/disable and per-connection H2 negotiation.
-  - [ ] Deliverables: H2 path wiring + protocol markers in events.
-  - [ ] Acceptance: H2 fixture traffic passes end-to-end with protocol=`http2`.
+- [x] `P2-01` HTTP/2 transport enablement in `mitm-http`.
+  - [x] Scope: config-driven enable/disable and per-connection H2 negotiation.
+  - [x] Deliverables: H2 path wiring + protocol markers in events.
+  - [x] Hardening: HTTP/2 relay maps transport-close EOF/reset/broken-pipe conditions to deterministic `mitm_http_completed` close semantics.
+  - [x] Acceptance: H2 fixture traffic passes end-to-end with protocol=`http2`.
 - [ ] `P2-02` HTTP/2 limits and flow-control tuning.
   - [ ] Scope: `http2_max_header_list_size` and backpressure-safe stream handling.
   - [ ] Deliverables: configurable limits + stress tests for large headers and parallel streams.

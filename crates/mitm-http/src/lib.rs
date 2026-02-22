@@ -8,6 +8,36 @@ pub enum ApplicationProtocol {
     Tunnel,
 }
 
+pub const ALPN_HTTP_11: &[u8] = b"http/1.1";
+pub const ALPN_H2: &[u8] = b"h2";
+
+pub fn configured_http_alpn_protocols(http2_enabled: bool) -> Vec<Vec<u8>> {
+    if http2_enabled {
+        vec![ALPN_H2.to_vec(), ALPN_HTTP_11.to_vec()]
+    } else {
+        vec![ALPN_HTTP_11.to_vec()]
+    }
+}
+
+pub fn protocol_from_negotiated_alpn(
+    negotiated_alpn: Option<&[u8]>,
+    http2_enabled: bool,
+) -> ApplicationProtocol {
+    if http2_enabled && matches!(negotiated_alpn, Some(value) if value == ALPN_H2) {
+        ApplicationProtocol::Http2
+    } else {
+        ApplicationProtocol::Http1
+    }
+}
+
+pub fn negotiated_alpn_label(negotiated_alpn: Option<&[u8]>) -> Option<&'static str> {
+    match negotiated_alpn {
+        Some(value) if value == ALPN_H2 => Some("h2"),
+        Some(value) if value == ALPN_HTTP_11 => Some("http/1.1"),
+        _ => None,
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HttpLimits {
     pub http2_enabled: bool,
@@ -204,7 +234,11 @@ impl WebSocketTurnAggregator {
 
 #[cfg(test)]
 mod tests {
-    use super::{WebSocketTurnAggregator, WsDirection, WsFrameKind};
+    use super::{
+        configured_http_alpn_protocols, negotiated_alpn_label, protocol_from_negotiated_alpn,
+        ApplicationProtocol, WebSocketTurnAggregator, WsDirection, WsFrameKind, ALPN_H2,
+        ALPN_HTTP_11,
+    };
 
     #[test]
     fn rolls_turn_after_response_when_client_speaks_again() {
@@ -267,5 +301,45 @@ mod tests {
         assert_eq!(second.client_frame_count, 0);
         assert_eq!(second.server_frame_count, 1);
         assert_eq!(second.server_payload_bytes, 3);
+    }
+
+    #[test]
+    fn alpn_configuration_is_deterministic() {
+        assert_eq!(
+            configured_http_alpn_protocols(false),
+            vec![ALPN_HTTP_11.to_vec()]
+        );
+        assert_eq!(
+            configured_http_alpn_protocols(true),
+            vec![ALPN_H2.to_vec(), ALPN_HTTP_11.to_vec()]
+        );
+    }
+
+    #[test]
+    fn negotiated_alpn_maps_to_application_protocol() {
+        assert_eq!(
+            protocol_from_negotiated_alpn(Some(ALPN_H2), true),
+            ApplicationProtocol::Http2
+        );
+        assert_eq!(
+            protocol_from_negotiated_alpn(Some(ALPN_H2), false),
+            ApplicationProtocol::Http1
+        );
+        assert_eq!(
+            protocol_from_negotiated_alpn(Some(ALPN_HTTP_11), true),
+            ApplicationProtocol::Http1
+        );
+        assert_eq!(
+            protocol_from_negotiated_alpn(None, true),
+            ApplicationProtocol::Http1
+        );
+    }
+
+    #[test]
+    fn negotiated_alpn_label_only_marks_supported_http_protocols() {
+        assert_eq!(negotiated_alpn_label(Some(ALPN_H2)), Some("h2"));
+        assert_eq!(negotiated_alpn_label(Some(ALPN_HTTP_11)), Some("http/1.1"));
+        assert_eq!(negotiated_alpn_label(Some(b"h3")), None);
+        assert_eq!(negotiated_alpn_label(None), None);
     }
 }

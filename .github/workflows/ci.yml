@@ -24,6 +24,9 @@ jobs:
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
 
+      - name: Enforce max file length
+        run: ./scripts/check_max_file_lines.sh
+
       - name: Check formatting
         run: cargo fmt --all --check
 
