@@ -1,0 +1,9 @@
+[package]
+name = "mitm-observe"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+mitm-http = { path = "../mitm-http" }

@@ -1,0 +1,15 @@
+[package]
+name = "mitm-sidecar"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+mitm-core = { path = "../mitm-core" }
+mitm-http = { path = "../mitm-http" }
+mitm-observe = { path = "../mitm-observe" }
+mitm-policy = { path = "../mitm-policy" }
+mitm-tls = { path = "../mitm-tls" }
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt-multi-thread", "time"] }
+tokio-rustls = { workspace = true }

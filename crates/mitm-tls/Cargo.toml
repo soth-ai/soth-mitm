@@ -1,0 +1,14 @@
+[package]
+name = "mitm-tls"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+rcgen = { workspace = true, features = ["x509-parser"] }
+rustls = { workspace = true }
+webpki-roots = "1"
+
+[dev-dependencies]
+x509-parser = "0.18"

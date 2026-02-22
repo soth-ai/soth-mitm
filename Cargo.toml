@@ -1,0 +1,34 @@
+[workspace]
+members = [
+    "crates/mitm-core",
+    "crates/mitm-http",
+    "crates/mitm-observe",
+    "crates/mitm-policy",
+    "crates/mitm-sidecar",
+    "crates/mitm-tls",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+rust-version = "1.88"
+
+[workspace.metadata.soth-mitm]
+repo_name = "soth-mitm"
+description = "Lightweight MITM-capable proxy workspace for SOTH."
+
+[workspace.dependencies]
+tokio = "1"
+hyper = "1"
+hyper-util = "0.1"
+h2 = "0.4"
+tokio-rustls = "0.26"
+rustls = "0.23"
+rcgen = "0.14"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+metrics = "0.24"
+thiserror = "2"
