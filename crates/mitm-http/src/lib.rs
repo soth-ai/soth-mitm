@@ -1,6 +1,8 @@
 mod anti_hijack;
 mod decoder_chain;
 mod grpc_envelope;
+mod msgpack;
+mod msgpack_parser;
 mod sse_parser;
 
 pub use anti_hijack::{
@@ -16,6 +18,13 @@ pub use decoder_chain::{
 pub use grpc_envelope::{
     GrpcEnvelopeFrame, GrpcEnvelopeMalformed, GrpcEnvelopeMalformedCode, GrpcEnvelopeParser,
     GrpcEnvelopeParserLimits, GrpcEnvelopeRecord,
+};
+pub use msgpack::{
+    decode_msgpack_structure, detect_msgpack_candidate, is_msgpack_content_type,
+    looks_like_msgpack_prefix, MsgPackDecodeFailure, MsgPackDecodeLimits, MsgPackDecodeStage,
+    MsgPackDetection, MsgPackDetectionSource, MsgPackFailureCode, CONTENT_TYPE_ATTRIBUTE,
+    MSGPACK_CANDIDATE_ATTRIBUTE, MSGPACK_DECODED_ATTRIBUTE, MSGPACK_DETECTION_SOURCE_ATTRIBUTE,
+    MSGPACK_FAILURE_CODE_ATTRIBUTE, MSGPACK_FAILURE_DETAIL_ATTRIBUTE, MSGPACK_FALLBACK_ATTRIBUTE,
 };
 pub use sse_parser::{SseEvent, SseParser};
 

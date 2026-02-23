@@ -208,10 +208,10 @@ This checklist turns `LIGHTWEIGHT_PROXY_REPO_IMPLEMENTATION_PLAN.md` into an exe
   - [x] Scope: detect and strip known anti-hijack prefixes before JSON parsing.
   - [x] Deliverables: sanitizer module + `sanitized=true/false` metadata field.
   - [x] Acceptance: anti-hijack fixture payloads parse successfully with provenance flag set.
-- [ ] `P2-11` MsgPack decode path.
-  - [ ] Scope: content-type/heuristic detection, bounded decode limits, safe fallback to raw bytes.
-  - [ ] Deliverables: msgpack parser module + limit configuration knobs.
-  - [ ] Acceptance: malformed/oversized msgpack inputs fail safely without process instability.
+- [x] `P2-11` MsgPack decode path.
+  - [x] Scope: content-type/heuristic detection, bounded decode limits, safe fallback to raw bytes.
+  - [x] Deliverables: msgpack parser module + limit configuration knobs.
+  - [x] Acceptance: malformed/oversized msgpack inputs fail safely without process instability.
 - [ ] `P2-12` Phase-2 protocol test gate.
   - [ ] Scope: protocol matrix CI for HTTP/2, WS, SSE, HTTP/3 passthrough, gRPC, msgpack.
   - [ ] Deliverables: matrix test job + failure triage output artifact.
@@ -315,7 +315,7 @@ This checklist turns `LIGHTWEIGHT_PROXY_REPO_IMPLEMENTATION_PLAN.md` into an exe
   - [x] Complete `P2-08` gRPC 5-byte envelope parser with chunk-split and mismatch classification.
   - [x] Complete `P2-09` layered decoder chain with stage-level failure events.
   - [x] Complete `P2-10` anti-hijack sanitization with provenance metadata.
-  - [ ] Complete `P2-11` msgpack parser with bounded decode/fallback safety.
+  - [x] Complete `P2-11` msgpack parser with bounded decode/fallback safety.
 - [ ] Self-observability and differential validation:
   - [ ] Expose queue depth, flow duration, decoder failure, backpressure activation, and memory watermark metrics.
   - [ ] Build replay/differential lane (`soth-mitm` vs mitmproxy; hudsucker limited to supported surface).
