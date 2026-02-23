@@ -364,6 +364,7 @@ where
 
 include!("flow_connect_tunnel.rs");
 include!("flow_intercept.rs");
+include!("http2_relay_support.rs");
 include!("http2_stream_relay.rs");
 include!("websocket_relay.rs");
 include!("websocket_relay_support.rs");

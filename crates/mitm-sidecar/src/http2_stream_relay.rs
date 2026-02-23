@@ -6,6 +6,12 @@ const H2_INITIAL_CONNECTION_WINDOW_SIZE: u32 = 262_144;
 const H2_MAX_SEND_BUFFER_SIZE: usize = 128 * 1024;
 const H2_FORWARD_CHUNK_LIMIT: usize = 16 * 1024;
 
+#[derive(Clone)]
+struct H2ByteCounters {
+    request_bytes: Arc<AtomicU64>,
+    response_bytes: Arc<AtomicU64>,
+}
+
 async fn relay_http2_connection<P, S, D, U>(
     engine: Arc<MitmEngine<P, S>>,
     tunnel_context: FlowContext,
@@ -60,25 +66,33 @@ where
     };
     let upstream_connection_task = tokio::spawn(upstream_connection);
 
-    let request_bytes = Arc::new(AtomicU64::new(0));
-    let response_bytes = Arc::new(AtomicU64::new(0));
+    let http2_context = FlowContext {
+        protocol: ApplicationProtocol::Http2,
+        ..tunnel_context.clone()
+    };
+    let byte_counters = H2ByteCounters {
+        request_bytes: Arc::new(AtomicU64::new(0)),
+        response_bytes: Arc::new(AtomicU64::new(0)),
+    };
     let mut stream_tasks = tokio::task::JoinSet::new();
     let mut first_error: Option<io::Error> = None;
 
     while let Some(next_stream) = downstream_connection.accept().await {
         match next_stream {
             Ok((request, respond)) => {
+                let stream_engine = Arc::clone(&engine);
+                let stream_context = http2_context.clone();
                 let stream_upstream_sender = upstream_sender.clone();
-                let stream_request_bytes = Arc::clone(&request_bytes);
-                let stream_response_bytes = Arc::clone(&response_bytes);
+                let stream_byte_counters = byte_counters.clone();
                 stream_tasks.spawn(async move {
                     relay_http2_stream(
+                        stream_engine,
+                        stream_context,
                         stream_upstream_sender,
                         request,
                         respond,
                         max_header_list_size,
-                        stream_request_bytes,
-                        stream_response_bytes,
+                        stream_byte_counters,
                     )
                     .await
                 });
@@ -128,12 +142,8 @@ where
         }
     }
 
-    let http2_context = FlowContext {
-        protocol: ApplicationProtocol::Http2,
-        ..tunnel_context
-    };
-    let bytes_from_client = request_bytes.load(Ordering::Relaxed);
-    let bytes_from_server = response_bytes.load(Ordering::Relaxed);
+    let bytes_from_client = byte_counters.request_bytes.load(Ordering::Relaxed);
+    let bytes_from_server = byte_counters.response_bytes.load(Ordering::Relaxed);
 
     if let Some(error) = first_error {
         emit_stream_closed(
@@ -158,16 +168,32 @@ where
     Ok(())
 }
 
-async fn relay_http2_stream(
+async fn relay_http2_stream<P, S>(
+    engine: Arc<MitmEngine<P, S>>,
+    stream_context: FlowContext,
     upstream_sender: h2::client::SendRequest<bytes::Bytes>,
     downstream_request: http::Request<h2::RecvStream>,
     mut downstream_respond: h2::server::SendResponse<bytes::Bytes>,
     max_header_list_size: u32,
-    request_bytes: Arc<AtomicU64>,
-    response_bytes: Arc<AtomicU64>,
-) -> io::Result<()> {
+    byte_counters: H2ByteCounters,
+) -> io::Result<()>
+where
+    P: PolicyEngine + Send + Sync + 'static,
+    S: EventSink + Send + Sync + 'static,
+{
     let (mut request_parts, mut downstream_request_body) = downstream_request.into_parts();
     enforce_h2_request_header_limit(&request_parts, max_header_list_size)?;
+
+    let grpc_observation = detect_grpc_request(&request_parts);
+    if let Some(observation) = grpc_observation.as_ref() {
+        emit_grpc_request_headers_event(
+            &engine,
+            stream_context.clone(),
+            observation,
+            &request_parts.headers,
+        );
+    }
+
     request_parts.version = http::Version::HTTP_2;
     let upstream_request = http::Request::from_parts(request_parts, ());
     let request_end_stream = downstream_request_body.is_end_stream();
@@ -181,9 +207,11 @@ async fn relay_http2_stream(
         .map_err(|error| h2_error_to_io("forwarding HTTP/2 request failed", error))?;
 
     if !request_end_stream {
-        let forwarded =
+        let request_outcome =
             relay_h2_body(&mut downstream_request_body, &mut upstream_request_stream).await?;
-        request_bytes.fetch_add(forwarded, Ordering::Relaxed);
+        byte_counters
+            .request_bytes
+            .fetch_add(request_outcome.bytes_forwarded, Ordering::Relaxed);
     }
 
     let upstream_response = upstream_response_future
@@ -191,16 +219,42 @@ async fn relay_http2_stream(
         .map_err(|error| h2_error_to_io("awaiting upstream HTTP/2 response failed", error))?;
     let (response_parts, mut upstream_response_body) = upstream_response.into_parts();
     enforce_h2_response_header_limit(&response_parts, max_header_list_size)?;
+
+    if let Some(observation) = grpc_observation.as_ref() {
+        emit_grpc_response_headers_event(
+            &engine,
+            stream_context.clone(),
+            observation,
+            &response_parts,
+        );
+    }
+
     let response_end_stream = upstream_response_body.is_end_stream();
     let downstream_response = http::Response::from_parts(response_parts, ());
-    let mut downstream_response_stream = downstream_respond
-        .send_response(downstream_response, response_end_stream)
-        .map_err(|error| h2_error_to_io("sending downstream HTTP/2 response headers failed", error))?;
+    let mut downstream_response_stream =
+        downstream_respond
+            .send_response(downstream_response, response_end_stream)
+            .map_err(|error| {
+                h2_error_to_io("sending downstream HTTP/2 response headers failed", error)
+            })?;
 
     if !response_end_stream {
-        let forwarded =
+        let response_outcome =
             relay_h2_body(&mut upstream_response_body, &mut downstream_response_stream).await?;
-        response_bytes.fetch_add(forwarded, Ordering::Relaxed);
+        byte_counters
+            .response_bytes
+            .fetch_add(response_outcome.bytes_forwarded, Ordering::Relaxed);
+        if let (Some(observation), Some(trailers)) = (
+            grpc_observation.as_ref(),
+            response_outcome.trailers.as_ref(),
+        ) {
+            emit_grpc_response_trailers_event(
+                &engine,
+                stream_context.clone(),
+                observation,
+                trailers,
+            );
+        }
     }
 
     Ok(())
@@ -209,7 +263,7 @@ async fn relay_http2_stream(
 async fn relay_h2_body(
     source: &mut h2::RecvStream,
     sink: &mut h2::SendStream<bytes::Bytes>,
-) -> io::Result<u64> {
+) -> io::Result<H2BodyRelayOutcome> {
     let mut total = 0_u64;
 
     while let Some(next_data) = source.data().await {
@@ -227,18 +281,27 @@ async fn relay_h2_body(
         total += frame_len as u64;
     }
 
-    match source
+    let trailers = match source
         .trailers()
         .await
         .map_err(|error| h2_error_to_io("reading HTTP/2 trailers failed", error))?
     {
-        Some(trailers) => sink
-            .send_trailers(trailers)
-            .map_err(|error| h2_error_to_io("sending HTTP/2 trailers failed", error))?,
-        None => send_h2_data_with_backpressure(sink, bytes::Bytes::new(), true).await?,
-    }
+        Some(trailers) => {
+            let observation_copy = trailers.clone();
+            sink.send_trailers(trailers)
+                .map_err(|error| h2_error_to_io("sending HTTP/2 trailers failed", error))?;
+            Some(observation_copy)
+        }
+        None => {
+            send_h2_data_with_backpressure(sink, bytes::Bytes::new(), true).await?;
+            None
+        }
+    };
 
-    Ok(total)
+    Ok(H2BodyRelayOutcome {
+        bytes_forwarded: total,
+        trailers,
+    })
 }
 
 async fn send_h2_data_with_backpressure(
@@ -285,84 +348,4 @@ async fn wait_for_h2_capacity(
             }
         }
     }
-}
-
-fn configure_h2_server(builder: &mut h2::server::Builder, max_header_list_size: u32) {
-    builder.max_header_list_size(max_header_list_size);
-    builder.max_concurrent_streams(H2_MAX_CONCURRENT_STREAMS);
-    builder.initial_window_size(H2_INITIAL_WINDOW_SIZE);
-    builder.initial_connection_window_size(H2_INITIAL_CONNECTION_WINDOW_SIZE);
-    builder.max_send_buffer_size(H2_MAX_SEND_BUFFER_SIZE);
-}
-
-fn configure_h2_client(builder: &mut h2::client::Builder, max_header_list_size: u32) {
-    builder.max_header_list_size(max_header_list_size);
-    builder.max_concurrent_streams(H2_MAX_CONCURRENT_STREAMS);
-    builder.initial_window_size(H2_INITIAL_WINDOW_SIZE);
-    builder.initial_connection_window_size(H2_INITIAL_CONNECTION_WINDOW_SIZE);
-    builder.max_send_buffer_size(H2_MAX_SEND_BUFFER_SIZE);
-}
-
-fn is_h2_transport_close_error(error: &h2::Error) -> bool {
-    if let Some(io_error) = error.get_io() {
-        matches!(
-            io_error.kind(),
-            io::ErrorKind::UnexpectedEof
-                | io::ErrorKind::BrokenPipe
-                | io::ErrorKind::ConnectionReset
-                | io::ErrorKind::ConnectionAborted
-        )
-    } else {
-        error.is_go_away() && error.is_remote()
-    }
-}
-
-fn h2_error_to_io(context: &str, error: h2::Error) -> io::Error {
-    io::Error::other(format!("{context}: {error}"))
-}
-
-fn enforce_h2_request_header_limit(parts: &http::request::Parts, max_header_list_size: u32) -> io::Result<()> {
-    let mut header_list_size = estimate_header_map_size(&parts.headers);
-    header_list_size += header_field_size(":method", parts.method.as_str());
-    header_list_size += header_field_size(":scheme", parts.uri.scheme_str().unwrap_or("https"));
-    if let Some(authority) = parts.uri.authority() {
-        header_list_size += header_field_size(":authority", authority.as_str());
-    }
-    let path = parts.uri.path_and_query().map(|value| value.as_str()).unwrap_or("/");
-    header_list_size += header_field_size(":path", path);
-    enforce_h2_header_limit("request", header_list_size, max_header_list_size)
-}
-
-fn enforce_h2_response_header_limit(parts: &http::response::Parts, max_header_list_size: u32) -> io::Result<()> {
-    let mut header_list_size = estimate_header_map_size(&parts.headers);
-    header_list_size += header_field_size(":status", parts.status.as_str());
-    enforce_h2_header_limit("response", header_list_size, max_header_list_size)
-}
-
-fn enforce_h2_header_limit(
-    direction: &str,
-    observed_size: usize,
-    max_header_list_size: u32,
-) -> io::Result<()> {
-    let limit = max_header_list_size as usize;
-    if observed_size > limit {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!(
-                "HTTP/2 {direction} header list size {observed_size} exceeded configured limit {limit}"
-            ),
-        ));
-    }
-    Ok(())
-}
-
-fn estimate_header_map_size(headers: &http::HeaderMap) -> usize {
-    headers
-        .iter()
-        .map(|(name, value)| header_field_size(name.as_str(), value.as_bytes()))
-        .sum()
-}
-
-fn header_field_size(name: &str, value: impl AsRef<[u8]>) -> usize {
-    name.len() + value.as_ref().len() + 32
 }

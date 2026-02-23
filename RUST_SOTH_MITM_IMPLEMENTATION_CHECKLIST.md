@@ -192,10 +192,10 @@ This checklist turns `LIGHTWEIGHT_PROXY_REPO_IMPLEMENTATION_PLAN.md` into an exe
   - [x] Deliverables: policy integration + protocol/mode indicators in emitted events.
   - [x] Hardening: passthrough override respects policy blocks and records source hint + prior policy action for auditability.
   - [x] Acceptance: HTTP/3-designated flows are tunneled and never decrypted in integration tests.
-- [ ] `P2-07` gRPC flow observation over HTTP/2.
-  - [ ] Scope: detect gRPC (`content-type`, path patterns), capture headers/trailers deterministically.
-  - [ ] Deliverables: gRPC metadata event schema additions.
-  - [ ] Acceptance: unary + streaming fixtures emit stable header/trailer ordering.
+- [x] `P2-07` gRPC flow observation over HTTP/2.
+  - [x] Scope: detect gRPC (`content-type`, path patterns), capture headers/trailers deterministically.
+  - [x] Deliverables: gRPC metadata event schema additions.
+  - [x] Acceptance: unary + streaming fixtures emit stable header/trailer ordering.
 - [ ] `P2-08` gRPC envelope framing parser.
   - [ ] Scope: parse 5-byte envelope (`compressed`, `message_length`) across chunk boundaries.
   - [ ] Deliverables: parser + malformed-frame classification + boundary tests.
