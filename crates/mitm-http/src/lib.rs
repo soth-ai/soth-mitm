@@ -1,7 +1,13 @@
+mod anti_hijack;
 mod decoder_chain;
 mod grpc_envelope;
 mod sse_parser;
 
+pub use anti_hijack::{
+    sanitize_anti_hijack_prefix, sanitize_anti_hijack_prefixes, AntiHijackPrefix,
+    AntiHijackSanitizationStage, AntiHijackSanitizeResult, KNOWN_ANTI_HIJACK_PREFIXES,
+    SANITIZED_ATTRIBUTE, SANITIZED_PREFIX_ATTRIBUTE, SANITIZED_PROVENANCE_ATTRIBUTE,
+};
 pub use decoder_chain::{
     validate_stage_order, DecoderFailureCode, DecoderFrame, DecoderPipelineRegistry,
     DecoderPipelineResult, DecoderStage, DecoderStageFailure, DecoderStageProcessor,

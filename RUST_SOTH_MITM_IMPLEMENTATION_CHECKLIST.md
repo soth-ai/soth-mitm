@@ -204,10 +204,10 @@ This checklist turns `LIGHTWEIGHT_PROXY_REPO_IMPLEMENTATION_PLAN.md` into an exe
   - [x] Scope: deterministic order: transfer/content decode -> protocol frame parse -> payload parse.
   - [x] Deliverables: decoder pipeline registry and per-stage failure reporting.
   - [x] Acceptance: decoder-order invariants enforced by unit tests.
-- [ ] `P2-10` Anti-hijack sanitization stage.
-  - [ ] Scope: detect and strip known anti-hijack prefixes before JSON parsing.
-  - [ ] Deliverables: sanitizer module + `sanitized=true/false` metadata field.
-  - [ ] Acceptance: anti-hijack fixture payloads parse successfully with provenance flag set.
+- [x] `P2-10` Anti-hijack sanitization stage.
+  - [x] Scope: detect and strip known anti-hijack prefixes before JSON parsing.
+  - [x] Deliverables: sanitizer module + `sanitized=true/false` metadata field.
+  - [x] Acceptance: anti-hijack fixture payloads parse successfully with provenance flag set.
 - [ ] `P2-11` MsgPack decode path.
   - [ ] Scope: content-type/heuristic detection, bounded decode limits, safe fallback to raw bytes.
   - [ ] Deliverables: msgpack parser module + limit configuration knobs.
@@ -314,7 +314,7 @@ This checklist turns `LIGHTWEIGHT_PROXY_REPO_IMPLEMENTATION_PLAN.md` into an exe
 - [ ] Decoder chain discipline:
   - [x] Complete `P2-08` gRPC 5-byte envelope parser with chunk-split and mismatch classification.
   - [x] Complete `P2-09` layered decoder chain with stage-level failure events.
-  - [ ] Complete `P2-10` anti-hijack sanitization with provenance metadata.
+  - [x] Complete `P2-10` anti-hijack sanitization with provenance metadata.
   - [ ] Complete `P2-11` msgpack parser with bounded decode/fallback safety.
 - [ ] Self-observability and differential validation:
   - [ ] Expose queue depth, flow duration, decoder failure, backpressure activation, and memory watermark metrics.
