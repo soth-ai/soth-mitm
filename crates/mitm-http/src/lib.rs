@@ -1,6 +1,12 @@
+mod decoder_chain;
 mod grpc_envelope;
 mod sse_parser;
 
+pub use decoder_chain::{
+    validate_stage_order, DecoderFailureCode, DecoderFrame, DecoderPipelineRegistry,
+    DecoderPipelineResult, DecoderStage, DecoderStageFailure, DecoderStageProcessor,
+    DecoderStageReport, DecoderStageStatus, LayeredDecoderPipeline, StageProcessOutcome,
+};
 pub use grpc_envelope::{
     GrpcEnvelopeFrame, GrpcEnvelopeMalformed, GrpcEnvelopeMalformedCode, GrpcEnvelopeParser,
     GrpcEnvelopeParserLimits, GrpcEnvelopeRecord,

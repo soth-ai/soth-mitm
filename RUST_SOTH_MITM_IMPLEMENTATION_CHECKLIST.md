@@ -200,10 +200,10 @@ This checklist turns `LIGHTWEIGHT_PROXY_REPO_IMPLEMENTATION_PLAN.md` into an exe
   - [x] Scope: parse 5-byte envelope (`compressed`, `message_length`) across chunk boundaries.
   - [x] Deliverables: parser + malformed-frame classification + boundary tests.
   - [x] Acceptance: partial-frame and malformed-frame tests pass with expected classifications.
-- [ ] `P2-09` Layered decoder chain.
-  - [ ] Scope: deterministic order: transfer/content decode -> protocol frame parse -> payload parse.
-  - [ ] Deliverables: decoder pipeline registry and per-stage failure reporting.
-  - [ ] Acceptance: decoder-order invariants enforced by unit tests.
+- [x] `P2-09` Layered decoder chain.
+  - [x] Scope: deterministic order: transfer/content decode -> protocol frame parse -> payload parse.
+  - [x] Deliverables: decoder pipeline registry and per-stage failure reporting.
+  - [x] Acceptance: decoder-order invariants enforced by unit tests.
 - [ ] `P2-10` Anti-hijack sanitization stage.
   - [ ] Scope: detect and strip known anti-hijack prefixes before JSON parsing.
   - [ ] Deliverables: sanitizer module + `sanitized=true/false` metadata field.
@@ -313,7 +313,7 @@ This checklist turns `LIGHTWEIGHT_PROXY_REPO_IMPLEMENTATION_PLAN.md` into an exe
   - [ ] Normalize field set to include: `normalized_reason`, `raw_provider_error`, `provider_identity`, `source_confidence`.
 - [ ] Decoder chain discipline:
   - [x] Complete `P2-08` gRPC 5-byte envelope parser with chunk-split and mismatch classification.
-  - [ ] Complete `P2-09` layered decoder chain with stage-level failure events.
+  - [x] Complete `P2-09` layered decoder chain with stage-level failure events.
   - [ ] Complete `P2-10` anti-hijack sanitization with provenance metadata.
   - [ ] Complete `P2-11` msgpack parser with bounded decode/fallback safety.
 - [ ] Self-observability and differential validation:
