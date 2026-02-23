@@ -248,6 +248,37 @@ fn has_header_token(headers: &[HttpHeader], name: &str, token: &str) -> bool {
         .any(|value| value.trim().eq_ignore_ascii_case(token))
 }
 
+fn has_header_value(headers: &[HttpHeader], name: &str, expected: &str) -> bool {
+    headers
+        .iter()
+        .filter(|header| header.name.eq_ignore_ascii_case(name))
+        .any(|header| header.value.trim().eq_ignore_ascii_case(expected))
+}
+
+fn is_sse_response(response: &HttpResponseHead) -> bool {
+    response.headers.iter().any(|header| {
+        header.name.eq_ignore_ascii_case("content-type")
+            && header
+                .value
+                .split(';')
+                .next()
+                .map(|value| value.trim().eq_ignore_ascii_case("text/event-stream"))
+                .unwrap_or(false)
+    })
+}
+
+fn is_websocket_upgrade_request(request: &HttpRequestHead) -> bool {
+    request.method.eq_ignore_ascii_case("GET")
+        && has_header_token(&request.headers, "connection", "upgrade")
+        && has_header_value(&request.headers, "upgrade", "websocket")
+}
+
+fn is_websocket_upgrade_response(response: &HttpResponseHead) -> bool {
+    response.status_code == 101
+        && has_header_token(&response.headers, "connection", "upgrade")
+        && has_header_value(&response.headers, "upgrade", "websocket")
+}
+
 fn is_connection_close(version: HttpVersion, headers: &[HttpHeader]) -> bool {
     if has_header_token(headers, "connection", "close") {
         return true;

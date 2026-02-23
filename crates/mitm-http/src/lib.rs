@@ -1,3 +1,7 @@
+mod sse_parser;
+
+pub use sse_parser::{SseEvent, SseParser};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ApplicationProtocol {
     Http1,

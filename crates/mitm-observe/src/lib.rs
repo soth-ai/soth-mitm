@@ -17,6 +17,12 @@ pub enum EventType {
     RequestBodyChunk,
     ResponseHeaders,
     ResponseBodyChunk,
+    SseEvent,
+    WebSocketOpened,
+    WebSocketFrame,
+    WebSocketTurnStarted,
+    WebSocketTurnCompleted,
+    WebSocketClosed,
     StreamClosed,
 }
 

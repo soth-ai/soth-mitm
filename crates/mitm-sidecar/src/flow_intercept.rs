@@ -273,6 +273,7 @@ where
         emit_request_headers_event(&engine, &http_context, &request);
         upstream_conn.stream.write_all(&request.raw).await?;
 
+        let mut request_observer = NoopHttpBodyObserver;
         bytes_from_client += relay_http_body(
             &engine,
             &http_context,
@@ -281,6 +282,7 @@ where
             &mut upstream_conn.stream,
             request.body_mode,
             max_http_head_bytes,
+            &mut request_observer,
         )
         .await?;
 
@@ -315,19 +317,55 @@ where
             }
         };
 
+        let websocket_upgrade =
+            is_websocket_upgrade_request(&request) && is_websocket_upgrade_response(&response);
+
         emit_response_headers_event(&engine, &http_context, &response);
         downstream_conn.stream.write_all(&response.raw).await?;
 
-        bytes_from_server += relay_http_body(
-            &engine,
-            &http_context,
-            EventType::ResponseBodyChunk,
-            &mut upstream_conn,
-            &mut downstream_conn.stream,
-            response.body_mode,
-            max_http_head_bytes,
-        )
-        .await?;
+        if websocket_upgrade {
+            return finalize_websocket_upgrade(
+                Arc::clone(&engine),
+                &tunnel_context,
+                downstream_conn,
+                upstream_conn,
+                bytes_from_client,
+                bytes_from_server,
+            )
+            .await;
+        }
+
+        if is_sse_response(&response) {
+            let sse_context = FlowContext {
+                protocol: ApplicationProtocol::Sse,
+                ..tunnel_context.clone()
+            };
+            let mut sse_observer = SseStreamObserver::new(Arc::clone(&engine), sse_context);
+            bytes_from_server += relay_http_body(
+                &engine,
+                &http_context,
+                EventType::ResponseBodyChunk,
+                &mut upstream_conn,
+                &mut downstream_conn.stream,
+                response.body_mode,
+                max_http_head_bytes,
+                &mut sse_observer,
+            )
+            .await?;
+        } else {
+            let mut response_observer = NoopHttpBodyObserver;
+            bytes_from_server += relay_http_body(
+                &engine,
+                &http_context,
+                EventType::ResponseBodyChunk,
+                &mut upstream_conn,
+                &mut downstream_conn.stream,
+                response.body_mode,
+                max_http_head_bytes,
+                &mut response_observer,
+            )
+            .await?;
+        }
 
         if request.connection_close
             || response.connection_close

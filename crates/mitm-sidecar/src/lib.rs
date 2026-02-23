@@ -87,6 +87,8 @@ enum CloseReasonCode {
     RelayError,
     MitmHttpCompleted,
     MitmHttpError,
+    WebSocketCompleted,
+    WebSocketError,
 }
 
 impl CloseReasonCode {
@@ -100,6 +102,8 @@ impl CloseReasonCode {
             Self::RelayError => "relay_error",
             Self::MitmHttpCompleted => "mitm_http_completed",
             Self::MitmHttpError => "mitm_http_error",
+            Self::WebSocketCompleted => "websocket_completed",
+            Self::WebSocketError => "websocket_error",
         }
     }
 }
@@ -361,6 +365,11 @@ where
 include!("flow_connect_tunnel.rs");
 include!("flow_intercept.rs");
 include!("http2_stream_relay.rs");
+include!("websocket_relay.rs");
+include!("websocket_relay_support.rs");
+include!("websocket_turn_tracker.rs");
+include!("websocket_events.rs");
 include!("http_head_parser.rs");
 include!("http_body_relay.rs");
 include!("event_emitters.rs");
+include!("sse_stream_observer.rs");

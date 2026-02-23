@@ -1,3 +1,19 @@
+trait HttpBodyObserver: Send {
+    fn on_chunk(&mut self, chunk: &[u8]) -> io::Result<()>;
+    fn on_complete(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+struct NoopHttpBodyObserver;
+
+impl HttpBodyObserver for NoopHttpBodyObserver {
+    fn on_chunk(&mut self, _chunk: &[u8]) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 async fn relay_http_body<RS, WS, P, S>(
     engine: &Arc<MitmEngine<P, S>>,
     context: &FlowContext,
@@ -6,6 +22,7 @@ async fn relay_http_body<RS, WS, P, S>(
     sink: &mut WS,
     mode: HttpBodyMode,
     max_http_head_bytes: usize,
+    observer: &mut dyn HttpBodyObserver,
 ) -> io::Result<u64>
 where
     RS: AsyncRead + Unpin,
@@ -13,10 +30,10 @@ where
     P: PolicyEngine + Send + Sync + 'static,
     S: EventSink + Send + Sync + 'static,
 {
-    match mode {
+    let total = match mode {
         HttpBodyMode::None => Ok(0),
         HttpBodyMode::ContentLength(length) => {
-            relay_exact(engine, context, event_kind, source, sink, length).await
+            relay_exact(engine, context, event_kind, source, sink, length, observer).await
         }
         HttpBodyMode::Chunked => {
             relay_chunked(
@@ -26,13 +43,16 @@ where
                 source,
                 sink,
                 max_http_head_bytes,
+                observer,
             )
             .await
         }
         HttpBodyMode::CloseDelimited => {
-            relay_until_eof(engine, context, event_kind, source, sink).await
+            relay_until_eof(engine, context, event_kind, source, sink, observer).await
         }
-    }
+    }?;
+    observer.on_complete()?;
+    Ok(total)
 }
 
 async fn relay_exact<RS, WS, P, S>(
@@ -42,6 +62,7 @@ async fn relay_exact<RS, WS, P, S>(
     source: &mut BufferedConn<RS>,
     sink: &mut WS,
     mut length: u64,
+    observer: &mut dyn HttpBodyObserver,
 ) -> io::Result<u64>
 where
     RS: AsyncRead + Unpin,
@@ -54,6 +75,7 @@ where
     if !source.read_buf.is_empty() && length > 0 {
         let take = std::cmp::min(length as usize, source.read_buf.len());
         sink.write_all(&source.read_buf[..take]).await?;
+        observer.on_chunk(&source.read_buf[..take])?;
         source.read_buf.drain(..take);
         length -= take as u64;
         total += take as u64;
@@ -73,6 +95,7 @@ where
             ));
         }
         sink.write_all(&chunk[..read]).await?;
+        observer.on_chunk(&chunk[..read])?;
         length -= read as u64;
         total += read as u64;
         emit_body_chunk_event(engine, context.clone(), event_kind, read as u64);
@@ -88,6 +111,7 @@ async fn relay_chunked<RS, WS, P, S>(
     source: &mut BufferedConn<RS>,
     sink: &mut WS,
     max_http_head_bytes: usize,
+    observer: &mut dyn HttpBodyObserver,
 ) -> io::Result<u64>
 where
     RS: AsyncRead + Unpin,
@@ -113,7 +137,7 @@ where
             return Ok(total);
         }
 
-        total += relay_exact(engine, context, event_kind, source, sink, chunk_len).await?;
+        total += relay_exact(engine, context, event_kind, source, sink, chunk_len, observer).await?;
 
         let chunk_terminator = read_exact_from_source(source, 2).await?;
         if chunk_terminator.as_slice() != b"\r\n" {
@@ -132,6 +156,7 @@ async fn relay_until_eof<RS, WS, P, S>(
     event_kind: EventType,
     source: &mut BufferedConn<RS>,
     sink: &mut WS,
+    observer: &mut dyn HttpBodyObserver,
 ) -> io::Result<u64>
 where
     RS: AsyncRead + Unpin,
@@ -142,6 +167,7 @@ where
     let mut total = 0_u64;
     if !source.read_buf.is_empty() {
         sink.write_all(&source.read_buf).await?;
+        observer.on_chunk(&source.read_buf)?;
         total += source.read_buf.len() as u64;
         emit_body_chunk_event(
             engine,
@@ -159,6 +185,7 @@ where
             break;
         }
         sink.write_all(&chunk[..read]).await?;
+        observer.on_chunk(&chunk[..read])?;
         total += read as u64;
         emit_body_chunk_event(engine, context.clone(), event_kind, read as u64);
     }

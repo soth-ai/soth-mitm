@@ -172,18 +172,21 @@ This checklist turns `LIGHTWEIGHT_PROXY_REPO_IMPLEMENTATION_PLAN.md` into an exe
   - [x] Deliverables: configurable limits + stress tests for large headers and parallel streams.
   - [x] Hardening: explicit HPACK-style header-list enforcement for request/response headers before forwarding.
   - [x] Acceptance: large-header and parallel-stream fixtures pass with deterministic close semantics and byte accounting.
-- [ ] `P2-03` WebSocket interception baseline.
-  - [ ] Scope: upgrade detection, frame pass-through, websocket lifecycle events.
-  - [ ] Deliverables: WS flow model + message metadata events.
-  - [ ] Acceptance: WS echo and binary fixtures pass without frame corruption.
-- [ ] `P2-04` WebSocket turn aggregator.
-  - [ ] Scope: deterministic turn boundaries independent of hudsucker.
-  - [ ] Deliverables: `ws_turn_started`/`ws_turn_completed` emission with flush on close/error/idle.
-  - [ ] Acceptance: client-initiated and server-initiated turn tests match expected boundaries.
-- [ ] `P2-05` SSE streaming parser.
-  - [ ] Scope: incremental `text/event-stream` parsing (`event`, `id`, `retry`, multi-line `data`).
-  - [ ] Deliverables: SSE parser state machine + deterministic stream-close flush.
-  - [ ] Acceptance: long-lived SSE fixtures produce correct event records with no full-body buffering.
+- [x] `P2-03` WebSocket interception baseline.
+  - [x] Scope: upgrade detection, frame pass-through, websocket lifecycle events.
+  - [x] Deliverables: WS flow model + message metadata events.
+  - [x] Hardening: frame parser handles variable length headers, mask keys, and close frame semantics without mutating payload bytes.
+  - [x] Acceptance: WS echo and binary fixtures pass without frame corruption.
+- [x] `P2-04` WebSocket turn aggregator.
+  - [x] Scope: deterministic turn boundaries independent of hudsucker.
+  - [x] Deliverables: `ws_turn_started`/`ws_turn_completed` emission with flush on close/error/idle.
+  - [x] Hardening: observer pipeline flushes pending turn state on close frames, relay errors, and idle timeouts without emitting post-close phantom turns.
+  - [x] Acceptance: client-initiated and server-initiated turn tests match expected boundaries.
+- [x] `P2-05` SSE streaming parser.
+  - [x] Scope: incremental `text/event-stream` parsing (`event`, `id`, `retry`, multi-line `data`).
+  - [x] Deliverables: SSE parser state machine + deterministic stream-close flush.
+  - [x] Hardening: parser ignores comment lines and invalid retry fields while preserving stream continuity.
+  - [x] Acceptance: long-lived SSE fixtures produce correct event records with no full-body buffering.
 - [ ] `P2-06` HTTP/3 passthrough mode.
   - [ ] Scope: tunnel-only for HTTP/3 with explicit passthrough telemetry.
   - [ ] Deliverables: policy integration + protocol/mode indicators in emitted events.
