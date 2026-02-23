@@ -187,10 +187,11 @@ This checklist turns `LIGHTWEIGHT_PROXY_REPO_IMPLEMENTATION_PLAN.md` into an exe
   - [x] Deliverables: SSE parser state machine + deterministic stream-close flush.
   - [x] Hardening: parser ignores comment lines and invalid retry fields while preserving stream continuity.
   - [x] Acceptance: long-lived SSE fixtures produce correct event records with no full-body buffering.
-- [ ] `P2-06` HTTP/3 passthrough mode.
-  - [ ] Scope: tunnel-only for HTTP/3 with explicit passthrough telemetry.
-  - [ ] Deliverables: policy integration + protocol/mode indicators in emitted events.
-  - [ ] Acceptance: HTTP/3 flows are tunneled and never decrypted in integration tests.
+- [x] `P2-06` HTTP/3 passthrough mode.
+  - [x] Scope: tunnel-only for HTTP/3 with explicit passthrough telemetry.
+  - [x] Deliverables: policy integration + protocol/mode indicators in emitted events.
+  - [x] Hardening: passthrough override respects policy blocks and records source hint + prior policy action for auditability.
+  - [x] Acceptance: HTTP/3-designated flows are tunneled and never decrypted in integration tests.
 - [ ] `P2-07` gRPC flow observation over HTTP/2.
   - [ ] Scope: detect gRPC (`content-type`, path patterns), capture headers/trailers deterministically.
   - [ ] Deliverables: gRPC metadata event schema additions.

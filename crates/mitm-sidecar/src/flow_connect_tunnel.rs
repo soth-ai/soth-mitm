@@ -102,7 +102,28 @@ where
         protocol: ApplicationProtocol::Tunnel,
     };
 
-    match outcome.action {
+    let http3_requested_by = if engine.config.http3_passthrough {
+        parse_http3_passthrough_hint(&input[..header_len])
+    } else {
+        None
+    };
+    if let Some(requested_by) = http3_requested_by {
+        if outcome.action != FlowAction::Block {
+            emit_http3_passthrough_event(
+                &engine,
+                context.clone(),
+                requested_by,
+                flow_action_label(outcome.action),
+            );
+        }
+    }
+    let action = if http3_requested_by.is_some() && outcome.action != FlowAction::Block {
+        FlowAction::Tunnel
+    } else {
+        outcome.action
+    };
+
+    match action {
         FlowAction::Block => {
             write_proxy_response(&mut downstream, "403 Forbidden", &outcome.reason).await?;
             emit_stream_closed(
@@ -130,6 +151,42 @@ where
             )
             .await
         }
+    }
+}
+
+fn parse_http3_passthrough_hint(connect_head: &[u8]) -> Option<&'static str> {
+    let head = std::str::from_utf8(connect_head).ok()?;
+    for line in head.split("\r\n").skip(1) {
+        if line.is_empty() {
+            break;
+        }
+        let (name, value) = match line.split_once(':') {
+            Some(parts) => parts,
+            None => continue,
+        };
+        let value = value.trim();
+        if name.eq_ignore_ascii_case("x-soth-proxy-protocol")
+            && value.eq_ignore_ascii_case("h3")
+        {
+            return Some("x-soth-proxy-protocol");
+        }
+        if name.eq_ignore_ascii_case("x-soth-http3-passthrough")
+            && (value == "1"
+                || value.eq_ignore_ascii_case("true")
+                || value.eq_ignore_ascii_case("yes"))
+        {
+            return Some("x-soth-http3-passthrough");
+        }
+    }
+    None
+}
+
+fn flow_action_label(action: FlowAction) -> &'static str {
+    match action {
+        FlowAction::Intercept => "intercept",
+        FlowAction::Tunnel => "tunnel",
+        FlowAction::Block => "block",
+        FlowAction::MetadataOnly => "metadata_only",
     }
 }
 

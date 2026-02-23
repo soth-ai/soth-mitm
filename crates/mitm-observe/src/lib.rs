@@ -23,6 +23,7 @@ pub enum EventType {
     WebSocketTurnStarted,
     WebSocketTurnCompleted,
     WebSocketClosed,
+    Http3Passthrough,
     StreamClosed,
 }
 

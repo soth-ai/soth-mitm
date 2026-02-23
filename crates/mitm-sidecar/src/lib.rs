@@ -372,4 +372,5 @@ include!("websocket_events.rs");
 include!("http_head_parser.rs");
 include!("http_body_relay.rs");
 include!("event_emitters.rs");
+include!("event_emitters_protocol.rs");
 include!("sse_stream_observer.rs");
