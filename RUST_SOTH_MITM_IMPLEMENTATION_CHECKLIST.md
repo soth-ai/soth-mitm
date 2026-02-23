@@ -196,10 +196,10 @@ This checklist turns `LIGHTWEIGHT_PROXY_REPO_IMPLEMENTATION_PLAN.md` into an exe
   - [x] Scope: detect gRPC (`content-type`, path patterns), capture headers/trailers deterministically.
   - [x] Deliverables: gRPC metadata event schema additions.
   - [x] Acceptance: unary + streaming fixtures emit stable header/trailer ordering.
-- [ ] `P2-08` gRPC envelope framing parser.
-  - [ ] Scope: parse 5-byte envelope (`compressed`, `message_length`) across chunk boundaries.
-  - [ ] Deliverables: parser + malformed-frame classification + boundary tests.
-  - [ ] Acceptance: partial-frame and malformed-frame tests pass with expected classifications.
+- [x] `P2-08` gRPC envelope framing parser.
+  - [x] Scope: parse 5-byte envelope (`compressed`, `message_length`) across chunk boundaries.
+  - [x] Deliverables: parser + malformed-frame classification + boundary tests.
+  - [x] Acceptance: partial-frame and malformed-frame tests pass with expected classifications.
 - [ ] `P2-09` Layered decoder chain.
   - [ ] Scope: deterministic order: transfer/content decode -> protocol frame parse -> payload parse.
   - [ ] Deliverables: decoder pipeline registry and per-stage failure reporting.
@@ -312,7 +312,7 @@ This checklist turns `LIGHTWEIGHT_PROXY_REPO_IMPLEMENTATION_PLAN.md` into an exe
   - [x] Host-scoped TLS failure counters present.
   - [ ] Normalize field set to include: `normalized_reason`, `raw_provider_error`, `provider_identity`, `source_confidence`.
 - [ ] Decoder chain discipline:
-  - [ ] Complete `P2-08` gRPC 5-byte envelope parser with chunk-split and mismatch classification.
+  - [x] Complete `P2-08` gRPC 5-byte envelope parser with chunk-split and mismatch classification.
   - [ ] Complete `P2-09` layered decoder chain with stage-level failure events.
   - [ ] Complete `P2-10` anti-hijack sanitization with provenance metadata.
   - [ ] Complete `P2-11` msgpack parser with bounded decode/fallback safety.

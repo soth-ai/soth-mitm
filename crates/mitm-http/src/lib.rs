@@ -1,5 +1,10 @@
+mod grpc_envelope;
 mod sse_parser;
 
+pub use grpc_envelope::{
+    GrpcEnvelopeFrame, GrpcEnvelopeMalformed, GrpcEnvelopeMalformedCode, GrpcEnvelopeParser,
+    GrpcEnvelopeParserLimits, GrpcEnvelopeRecord,
+};
 pub use sse_parser::{SseEvent, SseParser};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
