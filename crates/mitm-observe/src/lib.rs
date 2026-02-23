@@ -41,8 +41,11 @@ pub struct FlowContext {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Event {
+    pub sequence_id: u64,
+    pub flow_sequence_id: u64,
     pub kind: EventType,
     pub context: FlowContext,
+    pub occurred_at_monotonic_ns: u128,
     pub occurred_at_unix_ms: u128,
     pub attributes: BTreeMap<String, String>,
 }
@@ -50,8 +53,11 @@ pub struct Event {
 impl Event {
     pub fn new(kind: EventType, context: FlowContext) -> Self {
         Self {
+            sequence_id: 0,
+            flow_sequence_id: 0,
             kind,
             context,
+            occurred_at_monotonic_ns: 0,
             occurred_at_unix_ms: now_unix_ms(),
             attributes: BTreeMap::new(),
         }

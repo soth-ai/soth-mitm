@@ -1,9 +1,13 @@
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Instant;
 
 use mitm_http::ApplicationProtocol;
 use mitm_observe::{Event, EventSink, EventType, FlowContext};
 use mitm_policy::{FlowAction, PolicyDecision, PolicyEngine, PolicyInput};
+
+mod flow_state;
+use flow_state::FlowStateTracker;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConnectRequest {
@@ -191,6 +195,10 @@ where
     policy: P,
     sink: S,
     next_flow_id: AtomicU64,
+    next_sequence_id: AtomicU64,
+    flow_state_tracker: FlowStateTracker,
+    process_started_at: Instant,
+    last_monotonic_ns: AtomicU64,
 }
 
 impl<P, S> MitmEngine<P, S>
@@ -204,6 +212,10 @@ where
             policy,
             sink,
             next_flow_id: AtomicU64::new(1),
+            next_sequence_id: AtomicU64::new(1),
+            flow_state_tracker: FlowStateTracker::default(),
+            process_started_at: Instant::now(),
+            last_monotonic_ns: AtomicU64::new(0),
         }
     }
 
@@ -226,8 +238,7 @@ where
             protocol: ApplicationProtocol::Tunnel,
         };
 
-        self.sink
-            .emit(Event::new(EventType::ConnectReceived, context.clone()));
+        self.emit_event(Event::new(EventType::ConnectReceived, context.clone()));
 
         let input = PolicyInput {
             server_host: server_host.clone(),
@@ -247,15 +258,43 @@ where
     fn emit_connect_decision_event(&self, context: &FlowContext, decision: &PolicyDecision) {
         let mut event = Event::new(EventType::ConnectDecision, context.clone());
         event.attributes = BTreeMap::from([("reason".to_string(), decision.reason.clone())]);
-        self.sink.emit(event);
+        self.emit_event(event);
     }
 
-    pub fn emit_event(&self, event: Event) {
+    pub fn emit_event(&self, mut event: Event) {
+        event.sequence_id = self.next_sequence_id.fetch_add(1, Ordering::Relaxed);
+        event.flow_sequence_id = self
+            .flow_state_tracker
+            .on_event(event.context.flow_id, event.kind);
+        event.occurred_at_monotonic_ns = u128::from(self.reserve_monotonic_ns());
         self.sink.emit(event);
     }
 
     pub fn allocate_flow_id(&self) -> u64 {
         self.next_flow_id.fetch_add(1, Ordering::Relaxed)
+    }
+
+    fn reserve_monotonic_ns(&self) -> u64 {
+        let observed_ns = self
+            .process_started_at
+            .elapsed()
+            .as_nanos()
+            .min(u128::from(u64::MAX)) as u64;
+        loop {
+            let previous = self.last_monotonic_ns.load(Ordering::Relaxed);
+            let next = if observed_ns > previous {
+                observed_ns
+            } else {
+                previous.saturating_add(1)
+            };
+            if self
+                .last_monotonic_ns
+                .compare_exchange(previous, next, Ordering::SeqCst, Ordering::Relaxed)
+                .is_ok()
+            {
+                return next;
+            }
+        }
     }
 }
 

@@ -286,6 +286,43 @@ This checklist turns `LIGHTWEIGHT_PROXY_REPO_IMPLEMENTATION_PLAN.md` into an exe
 - [ ] `soth` adapter parity accepted and default cutover approved.
 - [ ] SSE/HTTP2/HTTP3/gRPC requirements met without relying on hudsucker fallback.
 
+## 11) Principal Engineer Charter Deltas
+
+- [x] Protocol coverage baseline aligned with charter:
+  - [x] HTTP/1 + HTTP/2 transport correctness and deterministic close semantics.
+  - [x] WebSocket interception with deterministic turn aggregation.
+  - [x] SSE incremental parsing with deterministic close flush.
+  - [x] HTTP/3 passthrough-only policy with explicit telemetry.
+  - [x] gRPC header/trailer observation over HTTP/2.
+- [ ] Deterministic event contract hardening:
+  - [x] Every event includes `flow_id`.
+  - [x] Add global per-flow `sequence_id` across all emitted events.
+  - [x] Move timestamps to monotonic ordering semantics for replay stability.
+  - [ ] Add replay assertions proving identical event sequence on deterministic fixture replays.
+- [ ] Flow state machine invariants:
+  - [x] Encode explicit flow state machine (`Accepted -> ... -> Closed`) in core flow runtime.
+  - [x] Add debug assertions for illegal transitions.
+  - [ ] Prove every flow path terminates with exactly one `stream_closed`.
+- [ ] Risk budget enforcement:
+  - [ ] Add explicit per-flow memory ceilings (body buffers, decoder buffers, pending metadata).
+  - [ ] Add global in-flight byte and concurrent flow caps.
+  - [x] Replace unbounded channels in core protocol paths with bounded/backpressure-aware queues.
+- [ ] TLS contract parity with charter:
+  - [x] Learning ignores inferred providers.
+  - [x] Host-scoped TLS failure counters present.
+  - [ ] Normalize field set to include: `normalized_reason`, `raw_provider_error`, `provider_identity`, `source_confidence`.
+- [ ] Decoder chain discipline:
+  - [ ] Complete `P2-08` gRPC 5-byte envelope parser with chunk-split and mismatch classification.
+  - [ ] Complete `P2-09` layered decoder chain with stage-level failure events.
+  - [ ] Complete `P2-10` anti-hijack sanitization with provenance metadata.
+  - [ ] Complete `P2-11` msgpack parser with bounded decode/fallback safety.
+- [ ] Self-observability and differential validation:
+  - [ ] Expose queue depth, flow duration, decoder failure, backpressure activation, and memory watermark metrics.
+  - [ ] Build replay/differential lane (`soth-mitm` vs mitmproxy; hudsucker limited to supported surface).
+- [ ] Chaos and adversarial suite:
+  - [ ] Add charter scenarios (TLS fragmenting, malformed HPACK, gRPC split frames, infinite SSE, jitter/loss).
+  - [ ] Gate merges/releases on no panic + deterministic close semantics under chaos corpus.
+
 ## Primary Rust Sources
 
 - https://github.com/omjadas/hudsucker

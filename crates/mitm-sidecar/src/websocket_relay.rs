@@ -2,6 +2,7 @@ const WS_FRAME_COPY_CHUNK_SIZE: usize = 8 * 1024;
 const WS_MAX_FRAME_HEADER_BYTES: usize = 14;
 const WS_OPCODE_CLOSE: u8 = 0x8;
 const WS_TURN_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(750);
+const WS_OBSERVER_CHANNEL_CAPACITY: usize = 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct WebSocketRelayOutcome {
@@ -133,7 +134,7 @@ where
         read_buf: upstream_prefetch,
     } = upstream;
 
-    let (observer_tx, observer_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (observer_tx, observer_rx) = tokio::sync::mpsc::channel(WS_OBSERVER_CHANNEL_CAPACITY);
     let observer_engine = Arc::clone(&engine);
     let observer_context = websocket_context.clone();
     let observer_task = tokio::spawn(async move {
@@ -173,7 +174,9 @@ where
         .unwrap_or_default();
 
     let final_flush_reason = websocket_final_flush_reason(&client_result, &server_result);
-    let _ = observer_tx.send(WebSocketObserverMessage::FinalFlushReason(final_flush_reason));
+    let _ = observer_tx
+        .send(WebSocketObserverMessage::FinalFlushReason(final_flush_reason))
+        .await;
     drop(observer_tx);
 
     let observer_result = match observer_task.await {
@@ -230,7 +233,7 @@ async fn relay_websocket_direction<R, W>(
     mut source: PrefixedReader<R>,
     mut sink: W,
     frame_sequence: Arc<std::sync::atomic::AtomicU64>,
-    observer_tx: tokio::sync::mpsc::UnboundedSender<WebSocketObserverMessage>,
+    observer_tx: tokio::sync::mpsc::Sender<WebSocketObserverMessage>,
 ) -> io::Result<WebSocketDirectionOutcome>
 where
     R: AsyncRead + Unpin,
@@ -307,7 +310,10 @@ where
         };
         observer_tx
             .send(WebSocketObserverMessage::Frame(observation))
-            .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "websocket observer channel closed"))?;
+            .await
+            .map_err(|_| {
+                io::Error::new(io::ErrorKind::BrokenPipe, "websocket observer channel closed")
+            })?;
 
         if opcode == WS_OPCODE_CLOSE {
             sink.flush().await?;

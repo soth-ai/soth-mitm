@@ -1,7 +1,7 @@
 async fn observe_websocket_frames<P, S>(
     engine: Arc<MitmEngine<P, S>>,
     websocket_context: FlowContext,
-    mut observer_rx: tokio::sync::mpsc::UnboundedReceiver<WebSocketObserverMessage>,
+    mut observer_rx: tokio::sync::mpsc::Receiver<WebSocketObserverMessage>,
 ) -> io::Result<()>
 where
     P: PolicyEngine + Send + Sync + 'static,

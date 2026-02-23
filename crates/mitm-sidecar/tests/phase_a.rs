@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::time::Duration;
 
 use mitm_core::{MitmConfig, MitmEngine};
@@ -51,6 +52,43 @@ async fn read_response_head(stream: &mut TcpStream) -> String {
     String::from_utf8_lossy(&data).to_string()
 }
 
+fn assert_event_ordering_metadata(events: &[mitm_observe::Event]) {
+    assert!(!events.is_empty(), "expected at least one event");
+
+    let mut last_sequence_id = 0_u64;
+    let mut last_monotonic_ns = 0_u128;
+    let mut per_flow_last = HashMap::<u64, u64>::new();
+
+    for event in events {
+        assert!(event.sequence_id > 0, "missing global sequence id");
+        assert!(
+            event.sequence_id > last_sequence_id,
+            "global sequence id must be strictly increasing"
+        );
+        last_sequence_id = event.sequence_id;
+
+        assert!(event.flow_sequence_id > 0, "missing flow sequence id");
+        let flow_last = per_flow_last
+            .entry(event.context.flow_id)
+            .or_insert(event.flow_sequence_id.saturating_sub(1));
+        assert!(
+            event.flow_sequence_id > *flow_last,
+            "flow sequence id must be strictly increasing per flow"
+        );
+        *flow_last = event.flow_sequence_id;
+
+        assert!(
+            event.occurred_at_monotonic_ns > 0,
+            "missing monotonic timestamp"
+        );
+        assert!(
+            event.occurred_at_monotonic_ns > last_monotonic_ns,
+            "monotonic timestamp must be strictly increasing"
+        );
+        last_monotonic_ns = event.occurred_at_monotonic_ns;
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn block_action_returns_403_and_emits_reason_code() {
     let sink = VecEventSink::default();
@@ -74,6 +112,7 @@ async fn block_action_returns_403_and_emits_reason_code() {
     proxy_task.abort();
 
     let events = sink.snapshot();
+    assert_event_ordering_metadata(&events);
     assert!(events.iter().any(|e| e.kind == EventType::ConnectReceived));
     assert!(events.iter().any(|e| e.kind == EventType::ConnectDecision));
 
@@ -112,6 +151,7 @@ async fn malformed_connect_emits_parse_failure_events() {
     proxy_task.abort();
 
     let events = sink.snapshot();
+    assert_event_ordering_metadata(&events);
     let parse_failed = events
         .iter()
         .find(|e| e.kind == EventType::ConnectParseFailed)
@@ -194,6 +234,7 @@ async fn tunnel_action_relays_data_end_to_end() {
     proxy_task.abort();
 
     let events = sink.snapshot();
+    assert_event_ordering_metadata(&events);
     assert!(events.iter().any(|e| e.kind == EventType::ConnectDecision));
     let stream_closed = events
         .iter()
