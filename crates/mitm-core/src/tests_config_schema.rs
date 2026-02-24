@@ -180,3 +180,67 @@ fn route_endpoint_rejects_empty_host() {
         }
     );
 }
+
+#[test]
+fn serde_round_trip_parses_compatibility_overrides() {
+    let json = r#"
+        {
+          "compatibility_overrides": [
+            {
+              "rule_id": "api-compat",
+              "host_pattern": "*.api.example.com",
+              "force_tunnel": true,
+              "disable_h2": true,
+              "strict_header_mode": true,
+              "skip_upstream_verify": false
+            }
+          ]
+        }
+    "#;
+    let parsed = serde_json::from_str::<super::MitmConfig>(json).expect("deserialize config");
+    assert_eq!(parsed.compatibility_overrides.len(), 1);
+    let rule = &parsed.compatibility_overrides[0];
+    assert_eq!(rule.rule_id, "api-compat");
+    assert_eq!(rule.host_pattern, "*.api.example.com");
+    assert!(rule.force_tunnel);
+    assert!(rule.disable_h2);
+    assert!(rule.strict_header_mode);
+    assert!(!rule.skip_upstream_verify);
+    assert!(parsed.validate().is_ok());
+}
+
+#[test]
+fn validation_rejects_noop_compatibility_override() {
+    let config = super::MitmConfig {
+        compatibility_overrides: vec![super::CompatibilityOverrideConfig {
+            rule_id: "noop".to_string(),
+            host_pattern: "example.com".to_string(),
+            ..super::CompatibilityOverrideConfig::default()
+        }],
+        ..super::MitmConfig::default()
+    };
+    let err = config
+        .validate()
+        .expect_err("noop compatibility override must fail");
+    assert_eq!(err, super::MitmConfigError::NoopCompatibilityOverride { index: 0 });
+}
+
+#[test]
+fn validation_rejects_invalid_compatibility_override_host_pattern() {
+    let config = super::MitmConfig {
+        compatibility_overrides: vec![super::CompatibilityOverrideConfig {
+            rule_id: "invalid-host-pattern".to_string(),
+            host_pattern: "*.*.example.com".to_string(),
+            force_tunnel: true,
+            ..super::CompatibilityOverrideConfig::default()
+        }],
+        ..super::MitmConfig::default()
+    };
+    let err = config
+        .validate()
+        .expect_err("invalid compatibility override host pattern must fail");
+    assert_eq!(
+        err,
+        super::MitmConfigError::InvalidCompatibilityOverrideHostPattern { index: 0 }
+    );
+}

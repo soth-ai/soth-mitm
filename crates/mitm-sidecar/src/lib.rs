@@ -315,13 +315,13 @@ where
     }
 
     pub async fn bind_listener(&self) -> io::Result<TcpListener> {
-        let bind_addr = format!("{}:{}", self.config.listen_addr, self.config.listen_port);
-        TcpListener::bind(&bind_addr).await
+        bind_listener_with_socket_hardening(&self.config).await
     }
 
     pub async fn run_with_listener(self, listener: TcpListener) -> io::Result<()> {
         loop {
             let (mut stream, client_addr) = listener.accept().await?;
+            apply_per_connection_socket_hardening(&stream);
             let Some(flow_permit) = self.runtime_governor.try_acquire_flow_permit() else {
                 self.runtime_governor.mark_budget_denial();
                 let _ = write_all_with_idle_timeout(
@@ -354,7 +354,9 @@ where
                 )
                 .await
                 {
-                    eprintln!("connection handling failed: {error}");
+                    if !is_benign_socket_close_error(&error) {
+                        eprintln!("connection handling failed: {error}");
+                    }
                 }
             });
         }
@@ -382,3 +384,4 @@ include!("http_body_relay.rs");
 include!("event_emitters.rs");
 include!("event_emitters_protocol.rs");
 include!("sse_stream_observer.rs");
+include!("socket_hardening.rs");

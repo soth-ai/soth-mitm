@@ -9,11 +9,11 @@ rust-version.workspace = true
 bytes = "1"
 h2 = { workspace = true }
 http = "1"
-mitm-core = { path = "../mitm-core" }
-mitm-http = { path = "../mitm-http" }
-mitm-observe = { path = "../mitm-observe" }
-mitm-policy = { path = "../mitm-policy" }
-mitm-tls = { path = "../mitm-tls" }
+mitm-core = { path = "../mitm-core", version = "0.1.0" }
+mitm-http = { path = "../mitm-http", version = "0.1.0" }
+mitm-observe = { path = "../mitm-observe", version = "0.1.0" }
+mitm-policy = { path = "../mitm-policy", version = "0.1.0" }
+mitm-tls = { path = "../mitm-tls", version = "0.1.0" }
 openssl = { version = "0.10", features = ["vendored"] }
 pin-project-lite = "0.2"
 serde = { workspace = true, features = ["derive"] }

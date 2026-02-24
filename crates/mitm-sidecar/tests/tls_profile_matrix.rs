@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use mitm_core::{MitmConfig, MitmEngine, TlsProfile, UpstreamSniMode};
+use mitm_core::{CompatibilityOverrideConfig, MitmConfig, MitmEngine, TlsProfile, UpstreamSniMode};
 use mitm_observe::{EventType, VecEventConsumer};
 use mitm_policy::DefaultPolicyEngine;
 use mitm_sidecar::{SidecarConfig, SidecarServer};
@@ -277,4 +277,98 @@ async fn compat_profile_succeeds_against_tls12_upstream_fixture() {
         }),
         "unexpected upstream TLS failure"
     );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn host_override_skip_upstream_verify_allows_self_signed_upstream() {
+    let upstream_listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind upstream listener");
+    let upstream_addr = upstream_listener.local_addr().expect("upstream addr");
+    let upstream_task = tokio::spawn(async move {
+        let acceptor = TlsAcceptor::from(tls12_only_server_config_for_host("127.0.0.1"));
+        let (tcp, _) = upstream_listener.accept().await.expect("accept upstream");
+        let mut tls = acceptor.accept(tcp).await.expect("accept upstream tls");
+        let request_head = read_http_head(&mut tls).await;
+        let request_text = String::from_utf8_lossy(&request_head);
+        assert!(
+            request_text.starts_with("GET /tls12-override HTTP/1.1"),
+            "{request_text}"
+        );
+        let response = b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok";
+        tls.write_all(response).await.expect("write response");
+        tls.shutdown().await.expect("shutdown upstream TLS");
+    });
+
+    let sink = VecEventConsumer::default();
+    let config = MitmConfig {
+        tls_profile: TlsProfile::Compat,
+        upstream_sni_mode: UpstreamSniMode::Auto,
+        upstream_tls_insecure_skip_verify: false,
+        compatibility_overrides: vec![CompatibilityOverrideConfig {
+            rule_id: "skip-verify-local".to_string(),
+            host_pattern: "127.0.0.1".to_string(),
+            skip_upstream_verify: true,
+            strict_header_mode: true,
+            ..CompatibilityOverrideConfig::default()
+        }],
+        ..MitmConfig::default()
+    };
+    let (proxy_addr, proxy_task, sink) = start_sidecar_with_sink(sink, config).await;
+
+    let mut tcp = TcpStream::connect(proxy_addr)
+        .await
+        .expect("connect sidecar");
+    let connect = format!(
+        "CONNECT 127.0.0.1:{} HTTP/1.1\r\nHost: 127.0.0.1:{}\r\n\r\n",
+        upstream_addr.port(),
+        upstream_addr.port()
+    );
+    tcp.write_all(connect.as_bytes())
+        .await
+        .expect("write CONNECT");
+    let connect_response = read_response_head(&mut tcp).await;
+    assert!(
+        connect_response.starts_with("HTTP/1.1 200 Connection Established"),
+        "{connect_response}"
+    );
+
+    let connector = TlsConnector::from(build_http1_client_config(true));
+    let server_name = ServerName::try_from("127.0.0.1".to_string()).expect("server name");
+    let mut tls = connector
+        .connect(server_name, tcp)
+        .await
+        .expect("TLS connect to sidecar");
+    tls.write_all(b"GET /tls12-override HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+        .await
+        .expect("write request");
+    tls.flush().await.expect("flush request");
+
+    let response = read_to_end_allow_unexpected_eof(&mut tls).await;
+    let response_text = String::from_utf8_lossy(&response);
+    assert!(
+        response_text.starts_with("HTTP/1.1 200 OK"),
+        "{response_text}"
+    );
+    assert!(response_text.ends_with("ok"), "{response_text}");
+
+    upstream_task.await.expect("upstream task");
+    tokio::time::sleep(Duration::from_millis(40)).await;
+    proxy_task.abort();
+
+    let events = sink.snapshot();
+    assert!(events.iter().any(|event| {
+        event.kind == EventType::ConnectDecision
+            && event.attributes.get("override_rule_id").map(String::as_str)
+                == Some("skip-verify-local")
+            && event
+                .attributes
+                .get("override_skip_upstream_verify")
+                .map(String::as_str)
+                == Some("true")
+    }));
+    assert!(events.iter().any(|event| {
+        event.kind == EventType::TlsHandshakeSucceeded
+            && event.attributes.get("peer").map(String::as_str) == Some("upstream")
+    }));
 }

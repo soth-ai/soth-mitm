@@ -10,7 +10,7 @@ default = []
 openssl-backend = ["dep:openssl"]
 
 [dependencies]
-mitm-http = { path = "../mitm-http" }
+mitm-http = { path = "../mitm-http", version = "0.1.0" }
 rcgen = { workspace = true, features = ["x509-parser"] }
 rustls = { workspace = true }
 webpki-roots = "1"

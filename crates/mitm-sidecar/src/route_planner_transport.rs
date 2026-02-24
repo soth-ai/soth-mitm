@@ -1,5 +1,6 @@
 async fn connect_via_route(route: &RouteBinding, intent: RouteConnectIntent) -> io::Result<TcpStream> {
     let mut stream = TcpStream::connect((&*route.next_hop_host, route.next_hop_port)).await?;
+    apply_per_connection_socket_hardening(&stream);
     match route.mode {
         mitm_core::RouteMode::Direct | mitm_core::RouteMode::Reverse => Ok(stream),
         mitm_core::RouteMode::UpstreamHttp => {

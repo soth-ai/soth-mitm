@@ -172,6 +172,7 @@ where
         downstream_conn,
         upstream_conn,
         max_http_head_bytes,
+        outcome.override_state.strict_header_mode,
     )
     .await
 }

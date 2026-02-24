@@ -201,6 +201,7 @@ where
                 tls_learning,
                 context,
                 route,
+                outcome.override_state,
                 downstream,
                 max_http_head_bytes,
             )

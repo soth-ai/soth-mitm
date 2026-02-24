@@ -7,6 +7,7 @@ async fn relay_http1_mitm_loop<P, S, D, U>(
     mut downstream_conn: BufferedConn<D>,
     mut upstream_conn: BufferedConn<U>,
     max_http_head_bytes: usize,
+    strict_header_mode: bool,
 ) -> io::Result<()>
 where
     P: PolicyEngine + Send + Sync + 'static,
@@ -51,7 +52,9 @@ where
                     &engine,
                     http_context.clone(),
                     CloseReasonCode::MitmHttpError,
-                    Some(format!("request parse error: {error}")),
+                    Some(format!(
+                        "request parse error (strict_header_mode={strict_header_mode}): {error}"
+                    )),
                     Some(bytes_from_client),
                     Some(bytes_from_server),
                 );
@@ -160,7 +163,9 @@ where
                     &engine,
                     http_context.clone(),
                     CloseReasonCode::MitmHttpError,
-                    Some(format!("response parse error: {error}")),
+                    Some(format!(
+                        "response parse error (strict_header_mode={strict_header_mode}): {error}"
+                    )),
                     Some(bytes_from_client),
                     Some(bytes_from_server),
                 );

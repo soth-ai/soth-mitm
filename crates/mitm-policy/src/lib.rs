@@ -23,6 +23,18 @@ pub struct PolicyInput {
 pub struct PolicyDecision {
     pub action: FlowAction,
     pub reason: String,
+    pub override_state: PolicyOverrideState,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct PolicyOverrideState {
+    pub applied: bool,
+    pub rule_id: Option<String>,
+    pub matched_host: Option<String>,
+    pub force_tunnel: bool,
+    pub disable_h2: bool,
+    pub strict_header_mode: bool,
+    pub skip_upstream_verify: bool,
 }
 
 pub trait PolicyEngine: Send + Sync {
@@ -54,6 +66,7 @@ impl PolicyEngine for DefaultPolicyEngine {
             return PolicyDecision {
                 action: FlowAction::Block,
                 reason: "blocked_host".to_string(),
+                override_state: PolicyOverrideState::default(),
             };
         }
 
@@ -65,12 +78,14 @@ impl PolicyEngine for DefaultPolicyEngine {
             return PolicyDecision {
                 action: FlowAction::Tunnel,
                 reason: "ignored_host".to_string(),
+                override_state: PolicyOverrideState::default(),
             };
         }
 
         PolicyDecision {
             action: FlowAction::Intercept,
             reason: "default_intercept".to_string(),
+            override_state: PolicyOverrideState::default(),
         }
     }
 }

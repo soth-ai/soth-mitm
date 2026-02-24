@@ -7,6 +7,7 @@ async fn intercept_http_connection<P, S>(
     tls_learning: Arc<TlsLearningGuardrails>,
     tunnel_context: FlowContext,
     route: RouteBinding,
+    policy_override_state: mitm_policy::PolicyOverrideState,
     mut downstream: TcpStream,
     max_http_head_bytes: usize,
 ) -> io::Result<()>
@@ -14,6 +15,10 @@ where
     P: PolicyEngine + Send + Sync + 'static,
     S: EventConsumer + Send + Sync + 'static,
 {
+    let http2_enabled_for_flow =
+        engine.config.http2_enabled && !policy_override_state.disable_h2;
+    let skip_upstream_verify_for_flow =
+        engine.config.upstream_tls_insecure_skip_verify || policy_override_state.skip_upstream_verify;
     let upstream_tcp = match connect_via_route(&route, RouteConnectIntent::TargetTunnel).await {
         Ok(stream) => stream,
         Err(error) => {
@@ -48,7 +53,7 @@ where
 
     let issued_server_config = match cert_store.server_config_for_host_with_http2(
         &handshake_context.server_host,
-        engine.config.http2_enabled,
+        http2_enabled_for_flow,
     ) {
         Ok(config) => config,
         Err(error) => {
@@ -83,7 +88,7 @@ where
         engine.config.downstream_tls_backend,
         downstream,
         &issued_server_config,
-        engine.config.http2_enabled,
+        http2_enabled_for_flow,
     )
     .await
     {
@@ -111,7 +116,7 @@ where
     };
     let downstream_alpn = downstream_tls.negotiated_alpn();
     let downstream_protocol =
-        protocol_from_negotiated_alpn(downstream_alpn.as_deref(), engine.config.http2_enabled);
+        protocol_from_negotiated_alpn(downstream_alpn.as_deref(), http2_enabled_for_flow);
     let downstream_context = FlowContext {
         protocol: downstream_protocol,
         ..tunnel_context.clone()
@@ -125,11 +130,11 @@ where
     );
 
     let should_offer_http2_upstream =
-        engine.config.http2_enabled && downstream_protocol == ApplicationProtocol::Http2;
+        http2_enabled_for_flow && downstream_protocol == ApplicationProtocol::Http2;
     let upstream_tls_profile = map_upstream_tls_profile(engine.config.tls_profile);
     let upstream_sni_mode = map_upstream_sni_mode(engine.config.upstream_sni_mode);
     let client_config = match build_http_client_config_with_policy(
-        engine.config.upstream_tls_insecure_skip_verify,
+        skip_upstream_verify_for_flow,
         should_offer_http2_upstream,
         upstream_tls_profile,
         upstream_sni_mode,
@@ -286,6 +291,7 @@ where
         downstream_conn,
         upstream_conn,
         max_http_head_bytes,
+        policy_override_state.strict_header_mode,
     )
     .await
 }

@@ -1,4 +1,3 @@
-use std::collections::BTreeMap;
 use std::collections::VecDeque;
 use std::net::IpAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -7,14 +6,15 @@ use std::time::Instant;
 
 use mitm_http::ApplicationProtocol;
 use mitm_observe::{Event, EventConsumer, EventEnvelope, EventType, FlowContext};
-use mitm_policy::{FlowAction, PolicyDecision, PolicyEngine, PolicyInput};
+use mitm_policy::{FlowAction, PolicyDecision, PolicyEngine, PolicyInput, PolicyOverrideState};
 
 mod config;
 mod flow_state;
 pub mod server;
 pub use config::{
-    ConnectParseMode, DownstreamCertProfile, DownstreamTlsBackend, EventSinkConfig, EventSinkKind,
-    MitmConfig, MitmConfigError, RouteEndpointConfig, RouteMode, TlsProfile, UpstreamSniMode,
+    CompatibilityOverrideConfig, ConnectParseMode, DownstreamCertProfile, DownstreamTlsBackend,
+    EventSinkConfig, EventSinkKind, MitmConfig, MitmConfigError, RouteEndpointConfig, RouteMode,
+    TlsProfile, UpstreamSniMode,
 };
 use flow_state::FlowStateTracker;
 
@@ -214,6 +214,7 @@ pub struct ConnectOutcome {
     pub flow_id: u64,
     pub action: FlowAction,
     pub reason: String,
+    pub override_state: PolicyOverrideState,
 }
 
 pub struct MitmEngine<P, S>
@@ -289,20 +290,17 @@ where
             server_port,
             path,
         };
-        let decision = self.policy.decide(&input);
+        let mut decision = self.policy.decide(&input);
+        self.config
+            .apply_compatibility_overrides(&server_host, &mut decision);
         self.emit_connect_decision_event(&context, &decision);
 
         ConnectOutcome {
             flow_id,
             action: decision.action,
             reason: decision.reason,
+            override_state: decision.override_state,
         }
-    }
-
-    fn emit_connect_decision_event(&self, context: &FlowContext, decision: &PolicyDecision) {
-        let mut event = Event::new(EventType::ConnectDecision, context.clone());
-        event.attributes = BTreeMap::from([("reason".to_string(), decision.reason.clone())]);
-        self.emit_event(event);
     }
 
     pub fn emit_event(&self, mut event: Event) {
@@ -371,6 +369,8 @@ where
         true
     }
 }
+
+include!("engine_policy_decision.rs");
 
 #[cfg(test)]
 mod tests {

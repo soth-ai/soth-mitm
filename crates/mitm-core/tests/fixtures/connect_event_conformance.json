@@ -27,6 +27,7 @@
           "flow_sequence_id": 2,
           "kind": "ConnectDecision",
           "attributes": {
+            "action": "intercept",
             "reason": "default_intercept"
           }
         }
@@ -61,6 +62,7 @@
           "flow_sequence_id": 2,
           "kind": "ConnectDecision",
           "attributes": {
+            "action": "tunnel",
             "reason": "ignored_host"
           }
         }
@@ -95,6 +97,7 @@
           "flow_sequence_id": 2,
           "kind": "ConnectDecision",
           "attributes": {
+            "action": "block",
             "reason": "blocked_host"
           }
         }

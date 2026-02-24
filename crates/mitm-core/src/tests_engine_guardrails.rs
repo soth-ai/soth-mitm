@@ -116,3 +116,53 @@ fn known_pinning_hosts_can_be_forced_to_tunnel_via_ignore_hosts() {
     assert_eq!(outcome.action, FlowAction::Tunnel);
     assert_eq!(outcome.reason, "ignored_host");
 }
+
+#[test]
+fn compatibility_override_decision_emits_provenance_fields() {
+    let sink = CaptureConsumer::default();
+    let config = MitmConfig {
+        compatibility_overrides: vec![super::CompatibilityOverrideConfig {
+            rule_id: "openai-compat".to_string(),
+            host_pattern: "*.openai.com".to_string(),
+            force_tunnel: true,
+            disable_h2: true,
+            strict_header_mode: true,
+            skip_upstream_verify: true,
+        }],
+        ..MitmConfig::default()
+    };
+    let policy = DefaultPolicyEngine::new(vec![], vec![]);
+    let engine = MitmEngine::new(config, policy, sink.clone());
+
+    let outcome = engine.decide_connect(
+        "127.0.0.1:40500".to_string(),
+        "api.openai.com".to_string(),
+        443,
+        None,
+    );
+    assert_eq!(outcome.action, FlowAction::Tunnel);
+    assert_eq!(outcome.reason, "compat_override_force_tunnel");
+    assert!(outcome.override_state.applied);
+    assert_eq!(outcome.override_state.rule_id.as_deref(), Some("openai-compat"));
+    assert!(outcome.override_state.disable_h2);
+    assert!(outcome.override_state.strict_header_mode);
+    assert!(outcome.override_state.skip_upstream_verify);
+
+    let events = sink.snapshot();
+    let decision = events
+        .iter()
+        .find(|event| event.event.kind == EventType::ConnectDecision)
+        .expect("missing connect decision event");
+    assert_eq!(
+        decision.event.attributes.get("override_rule_id").map(String::as_str),
+        Some("openai-compat")
+    );
+    assert_eq!(
+        decision
+            .event
+            .attributes
+            .get("override_disable_h2")
+            .map(String::as_str),
+        Some("true")
+    );
+}

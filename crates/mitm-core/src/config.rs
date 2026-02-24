@@ -1,7 +1,9 @@
+use mitm_policy::{FlowAction, PolicyDecision, PolicyOverrideState};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 include!("config_route.rs");
+include!("config_compat.rs");
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -158,6 +160,7 @@ pub struct MitmConfig {
     pub max_flow_event_backlog: usize,
     pub max_in_flight_bytes: usize,
     pub max_concurrent_flows: usize,
+    pub compatibility_overrides: Vec<CompatibilityOverrideConfig>,
     pub event_sink: EventSinkConfig,
 }
 
@@ -193,6 +196,7 @@ impl Default for MitmConfig {
             max_flow_event_backlog: 8 * 1024,
             max_in_flight_bytes: 64 * 1024 * 1024,
             max_concurrent_flows: 2048,
+            compatibility_overrides: Vec::new(),
             event_sink: EventSinkConfig::default(),
         }
     }
@@ -259,8 +263,38 @@ impl MitmConfig {
         )?;
         validate_host_list(&self.ignore_hosts, "ignore_hosts")?;
         validate_host_list(&self.blocked_hosts, "blocked_hosts")?;
+        validate_compatibility_overrides(&self.compatibility_overrides)?;
         self.event_sink.validate()?;
         Ok(())
+    }
+
+    pub fn apply_compatibility_overrides(&self, server_host: &str, decision: &mut PolicyDecision) {
+        if decision.action == FlowAction::Block {
+            return;
+        }
+        let rule = self
+            .compatibility_overrides
+            .iter()
+            .find(|candidate| host_matches_pattern(server_host, &candidate.host_pattern));
+        let Some(rule) = rule else {
+            return;
+        };
+
+        decision.override_state = PolicyOverrideState {
+            applied: true,
+            rule_id: Some(rule.rule_id.clone()),
+            matched_host: Some(rule.host_pattern.clone()),
+            force_tunnel: rule.force_tunnel,
+            disable_h2: rule.disable_h2,
+            strict_header_mode: rule.strict_header_mode,
+            skip_upstream_verify: rule.skip_upstream_verify,
+        };
+        if rule.force_tunnel {
+            decision.action = FlowAction::Tunnel;
+            decision.reason = "compat_override_force_tunnel".to_string();
+        } else if decision.reason == "default_intercept" {
+            decision.reason = "compat_override".to_string();
+        }
     }
 }
 
@@ -284,6 +318,14 @@ pub enum MitmConfigError {
     MissingEventSinkPath,
     #[error("event_sink.endpoint is required for event_sink kind grpc")]
     MissingEventSinkEndpoint,
+    #[error("compatibility_overrides[{index}].rule_id must not be empty")]
+    EmptyCompatibilityOverrideRuleId { index: usize },
+    #[error("compatibility_overrides[{index}].host_pattern must not be empty")]
+    EmptyCompatibilityOverrideHostPattern { index: usize },
+    #[error("compatibility_overrides[{index}] host pattern must be exact-host or *.suffix")]
+    InvalidCompatibilityOverrideHostPattern { index: usize },
+    #[error("compatibility_overrides[{index}] must set at least one override knob")]
+    NoopCompatibilityOverride { index: usize },
     #[error("tls_profile=strict requires upstream_sni_mode to be auto|required")]
     StrictTlsProfileRequiresSni,
     #[error("{field}.host must not be empty")]
