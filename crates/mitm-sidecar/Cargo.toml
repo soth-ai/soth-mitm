@@ -14,7 +14,10 @@ mitm-http = { path = "../mitm-http" }
 mitm-observe = { path = "../mitm-observe" }
 mitm-policy = { path = "../mitm-policy" }
 mitm-tls = { path = "../mitm-tls" }
+openssl = { version = "0.10", features = ["vendored"] }
+pin-project-lite = "0.2"
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
+tokio-openssl = "0.6"
 tokio-rustls = { workspace = true }
 
 [dev-dependencies]

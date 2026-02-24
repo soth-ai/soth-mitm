@@ -1,6 +1,8 @@
+#[allow(clippy::too_many_arguments)]
 async fn intercept_http_connection<P, S>(
     engine: Arc<MitmEngine<P, S>>,
     cert_store: Arc<MitmCertificateStore>,
+    runtime_governor: Arc<runtime_governor::RuntimeGovernor>,
     tls_diagnostics: Arc<TlsDiagnostics>,
     tls_learning: Arc<TlsLearningGuardrails>,
     tunnel_context: FlowContext,
@@ -9,7 +11,7 @@ async fn intercept_http_connection<P, S>(
 ) -> io::Result<()>
 where
     P: PolicyEngine + Send + Sync + 'static,
-    S: EventSink + Send + Sync + 'static,
+    S: EventConsumer + Send + Sync + 'static,
 {
     let upstream_tcp = match TcpStream::connect((
         &*tunnel_context.server_host,
@@ -75,8 +77,14 @@ where
         "downstream",
         issued_server_config.cache_status.as_str(),
     );
-    let acceptor = TlsAcceptor::from(issued_server_config.server_config);
-    let downstream_tls = match acceptor.accept(downstream).await {
+    let downstream_tls = match accept_downstream_tls(
+        engine.config.downstream_tls_backend,
+        downstream,
+        &issued_server_config,
+        engine.config.http2_enabled,
+    )
+    .await
+    {
         Ok(stream) => stream,
         Err(error) => {
             emit_tls_event_with_detail(
@@ -99,11 +107,7 @@ where
             return Ok(());
         }
     };
-    let downstream_alpn = downstream_tls
-        .get_ref()
-        .1
-        .alpn_protocol()
-        .map(ToOwned::to_owned);
+    let downstream_alpn = downstream_tls.negotiated_alpn();
     let downstream_protocol =
         protocol_from_negotiated_alpn(downstream_alpn.as_deref(), engine.config.http2_enabled);
     let downstream_context = FlowContext {
@@ -228,158 +232,15 @@ where
         .await;
     }
 
-    let http_context = FlowContext {
-        protocol: ApplicationProtocol::Http1,
-        ..tunnel_context.clone()
-    };
-    let mut downstream_conn = BufferedConn::new(downstream_tls);
-    let mut upstream_conn = BufferedConn::new(upstream_tls);
-    let mut bytes_from_client = 0_u64;
-    let mut bytes_from_server = 0_u64;
-
-    loop {
-        let request_raw =
-            match read_until_pattern(&mut downstream_conn, b"\r\n\r\n", max_http_head_bytes).await?
-            {
-                Some(value) => value,
-                None => {
-                    emit_stream_closed(
-                        &engine,
-                        http_context.clone(),
-                        CloseReasonCode::MitmHttpCompleted,
-                        None,
-                        Some(bytes_from_client),
-                        Some(bytes_from_server),
-                    );
-                    return Ok(());
-                }
-            };
-
-        let request = match parse_http_request_head(&request_raw) {
-            Ok(parsed) => parsed,
-            Err(error) => {
-                emit_stream_closed(
-                    &engine,
-                    http_context.clone(),
-                    CloseReasonCode::MitmHttpError,
-                    Some(format!("request parse error: {error}")),
-                    Some(bytes_from_client),
-                    Some(bytes_from_server),
-                );
-                return Ok(());
-            }
-        };
-
-        emit_request_headers_event(&engine, &http_context, &request);
-        upstream_conn.stream.write_all(&request.raw).await?;
-
-        let mut request_observer = NoopHttpBodyObserver;
-        bytes_from_client += relay_http_body(
-            &engine,
-            &http_context,
-            EventType::RequestBodyChunk,
-            &mut downstream_conn,
-            &mut upstream_conn.stream,
-            request.body_mode,
-            max_http_head_bytes,
-            &mut request_observer,
-        )
-        .await?;
-
-        let response_raw =
-            match read_until_pattern(&mut upstream_conn, b"\r\n\r\n", max_http_head_bytes).await? {
-                Some(value) => value,
-                None => {
-                    emit_stream_closed(
-                        &engine,
-                        http_context.clone(),
-                        CloseReasonCode::MitmHttpError,
-                        Some("upstream closed before response headers".to_string()),
-                        Some(bytes_from_client),
-                        Some(bytes_from_server),
-                    );
-                    return Ok(());
-                }
-            };
-
-        let response = match parse_http_response_head(&response_raw, &request.method) {
-            Ok(parsed) => parsed,
-            Err(error) => {
-                emit_stream_closed(
-                    &engine,
-                    http_context.clone(),
-                    CloseReasonCode::MitmHttpError,
-                    Some(format!("response parse error: {error}")),
-                    Some(bytes_from_client),
-                    Some(bytes_from_server),
-                );
-                return Ok(());
-            }
-        };
-
-        let websocket_upgrade =
-            is_websocket_upgrade_request(&request) && is_websocket_upgrade_response(&response);
-
-        emit_response_headers_event(&engine, &http_context, &response);
-        downstream_conn.stream.write_all(&response.raw).await?;
-
-        if websocket_upgrade {
-            return finalize_websocket_upgrade(
-                Arc::clone(&engine),
-                &tunnel_context,
-                downstream_conn,
-                upstream_conn,
-                bytes_from_client,
-                bytes_from_server,
-            )
-            .await;
-        }
-
-        if is_sse_response(&response) {
-            let sse_context = FlowContext {
-                protocol: ApplicationProtocol::Sse,
-                ..tunnel_context.clone()
-            };
-            let mut sse_observer = SseStreamObserver::new(Arc::clone(&engine), sse_context);
-            bytes_from_server += relay_http_body(
-                &engine,
-                &http_context,
-                EventType::ResponseBodyChunk,
-                &mut upstream_conn,
-                &mut downstream_conn.stream,
-                response.body_mode,
-                max_http_head_bytes,
-                &mut sse_observer,
-            )
-            .await?;
-        } else {
-            let mut response_observer = NoopHttpBodyObserver;
-            bytes_from_server += relay_http_body(
-                &engine,
-                &http_context,
-                EventType::ResponseBodyChunk,
-                &mut upstream_conn,
-                &mut downstream_conn.stream,
-                response.body_mode,
-                max_http_head_bytes,
-                &mut response_observer,
-            )
-            .await?;
-        }
-
-        if request.connection_close
-            || response.connection_close
-            || response.body_mode == HttpBodyMode::CloseDelimited
-        {
-            emit_stream_closed(
-                &engine,
-                http_context,
-                CloseReasonCode::MitmHttpCompleted,
-                None,
-                Some(bytes_from_client),
-                Some(bytes_from_server),
-            );
-            return Ok(());
-        }
-    }
+    let downstream_conn = BufferedConn::new(downstream_tls);
+    let upstream_conn = BufferedConn::new(upstream_tls);
+    relay_http1_mitm_loop(
+        engine,
+        runtime_governor,
+        tunnel_context,
+        downstream_conn,
+        upstream_conn,
+        max_http_head_bytes,
+    )
+    .await
 }

@@ -1,0 +1,35 @@
+services:
+  soth-mitm-tools:
+    build:
+      context: .
+      dockerfile: docker/tools.Dockerfile
+    image: soth-mitm-tools:local
+    container_name: soth-mitm-tools
+    working_dir: /workspace
+    init: true
+    stdin_open: true
+    tty: true
+    privileged: true
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    environment:
+      RUST_BACKTRACE: "1"
+      CARGO_TERM_COLOR: "always"
+    volumes:
+      - .:/workspace
+      - cargo-registry:/usr/local/cargo/registry
+      - cargo-git:/usr/local/cargo/git
+      - target-cache:/workspace/target
+      - fuzz-target-cache:/workspace/fuzz/target
+      - go-mod-cache:/go/pkg/mod
+      - go-build-cache:/root/.cache/go-build
+    command: ["bash", "-c", "sleep infinity"]
+
+volumes:
+  cargo-registry:
+  cargo-git:
+  target-cache:
+  fuzz-target-cache:
+  go-mod-cache:
+  go-build-cache:

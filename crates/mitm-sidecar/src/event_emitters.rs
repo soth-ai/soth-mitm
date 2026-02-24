@@ -4,7 +4,7 @@ fn emit_request_headers_event<P, S>(
     request: &HttpRequestHead,
 ) where
     P: PolicyEngine + Send + Sync + 'static,
-    S: EventSink + Send + Sync + 'static,
+    S: EventConsumer + Send + Sync + 'static,
 {
     let mut event = Event::new(EventType::RequestHeaders, context.clone());
     event
@@ -29,7 +29,7 @@ fn emit_response_headers_event<P, S>(
     response: &HttpResponseHead,
 ) where
     P: PolicyEngine + Send + Sync + 'static,
-    S: EventSink + Send + Sync + 'static,
+    S: EventConsumer + Send + Sync + 'static,
 {
     let mut event = Event::new(EventType::ResponseHeaders, context.clone());
     event
@@ -55,7 +55,7 @@ fn emit_body_chunk_event<P, S>(
     bytes: u64,
 ) where
     P: PolicyEngine + Send + Sync + 'static,
-    S: EventSink + Send + Sync + 'static,
+    S: EventConsumer + Send + Sync + 'static,
 {
     if bytes == 0 {
         return;
@@ -74,7 +74,7 @@ fn emit_tls_event<P, S>(
     peer: &str,
 ) where
     P: PolicyEngine + Send + Sync + 'static,
-    S: EventSink + Send + Sync + 'static,
+    S: EventConsumer + Send + Sync + 'static,
 {
     let mut event = Event::new(kind, context);
     event
@@ -91,7 +91,7 @@ fn emit_tls_event_with_negotiated_alpn<P, S>(
     negotiated_alpn: Option<&[u8]>,
 ) where
     P: PolicyEngine + Send + Sync + 'static,
-    S: EventSink + Send + Sync + 'static,
+    S: EventConsumer + Send + Sync + 'static,
 {
     let mut event = Event::new(kind, context);
     event
@@ -113,7 +113,7 @@ fn emit_tls_event_with_cache<P, S>(
     cert_cache_status: &str,
 ) where
     P: PolicyEngine + Send + Sync + 'static,
-    S: EventSink + Send + Sync + 'static,
+    S: EventConsumer + Send + Sync + 'static,
 {
     let mut event = Event::new(kind, context);
     event
@@ -136,7 +136,7 @@ fn emit_tls_event_with_detail<P, S>(
     detail: String,
 ) where
     P: PolicyEngine + Send + Sync + 'static,
-    S: EventSink + Send + Sync + 'static,
+    S: EventConsumer + Send + Sync + 'static,
 {
     let failure_metadata = if kind == EventType::TlsHandshakeFailed {
         let reason = classify_tls_error(&detail).code().to_string();
@@ -165,7 +165,7 @@ fn emit_tls_event_with_detail<P, S>(
     event
         .attributes
         .insert("peer".to_string(), peer.to_string());
-    event.attributes.insert("detail".to_string(), detail);
+    event.attributes.insert("detail".to_string(), detail.clone());
     if let Some((reason, source, provider, counters, learning_outcome)) = failure_metadata {
         event
             .attributes
@@ -176,6 +176,41 @@ fn emit_tls_event_with_detail<P, S>(
         event
             .attributes
             .insert("tls_ops_provider".to_string(), provider);
+        event.attributes.insert(
+            "normalized_reason".to_string(),
+            event
+                .attributes
+                .get("tls_failure_reason")
+                .cloned()
+                .unwrap_or_else(|| "other".to_string()),
+        );
+        event
+            .attributes
+            .insert("raw_provider_error".to_string(), detail.clone());
+        event.attributes.insert(
+            "provider_identity".to_string(),
+            event
+                .attributes
+                .get("tls_ops_provider")
+                .cloned()
+                .unwrap_or_else(|| "unknown".to_string()),
+        );
+        event.attributes.insert(
+            "source_confidence".to_string(),
+            tls_source_confidence(
+                event
+                    .attributes
+                    .get("tls_failure_source")
+                    .map(String::as_str)
+                    .unwrap_or("unknown"),
+                event
+                    .attributes
+                    .get("tls_ops_provider")
+                    .map(String::as_str)
+                    .unwrap_or("unknown"),
+            )
+            .to_string(),
+        );
         event.attributes.insert(
             "tls_failure_host_count".to_string(),
             counters.host_total_failures.to_string(),
@@ -228,7 +263,7 @@ fn ingest_tls_learning_signal_with_audit<P, S>(
 ) -> TlsLearningOutcome
 where
     P: PolicyEngine + Send + Sync + 'static,
-    S: EventSink + Send + Sync + 'static,
+    S: EventConsumer + Send + Sync + 'static,
 {
     let outcome = tls_learning.ingest(signal.clone());
     if outcome.decision == TlsLearningDecision::Ignored {
@@ -244,7 +279,7 @@ fn emit_tls_learning_audit_event<P, S>(
     outcome: TlsLearningOutcome,
 ) where
     P: PolicyEngine + Send + Sync + 'static,
-    S: EventSink + Send + Sync + 'static,
+    S: EventConsumer + Send + Sync + 'static,
 {
     let mut event = Event::new(EventType::TlsLearningAudit, context);
     event.attributes.insert(
@@ -290,7 +325,7 @@ fn emit_stream_closed<P, S>(
     bytes_from_server: Option<u64>,
 ) where
     P: PolicyEngine + Send + Sync + 'static,
-    S: EventSink + Send + Sync + 'static,
+    S: EventConsumer + Send + Sync + 'static,
 {
     let mut event = Event::new(EventType::StreamClosed, context);
     event
@@ -320,8 +355,9 @@ fn emit_connect_parse_failed<P, S>(
     parse_detail: Option<String>,
 ) where
     P: PolicyEngine + Send + Sync + 'static,
-    S: EventSink + Send + Sync + 'static,
+    S: EventConsumer + Send + Sync + 'static,
 {
+    runtime_governor::mark_decoder_failure_global();
     let mut event = Event::new(EventType::ConnectParseFailed, context);
     event.attributes.insert(
         "parse_error_code".to_string(),
@@ -347,4 +383,16 @@ fn unknown_context(flow_id: u64, client_addr: String) -> FlowContext {
 
 fn tls_error_to_io_invalid_input(error: TlsConfigError) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidInput, error.to_string())
+}
+
+fn tls_source_confidence(source: &str, provider: &str) -> &'static str {
+    let source_lower = source.to_ascii_lowercase();
+    let provider_lower = provider.to_ascii_lowercase();
+    if source_lower.contains("hudsucker") || provider_lower.contains("hudsucker") {
+        return "inferred";
+    }
+    if source_lower.contains("mitmproxy") || provider_lower.contains("mitmproxy") {
+        return "authoritative";
+    }
+    "authoritative"
 }

@@ -119,7 +119,7 @@ async fn relay_websocket_connection<P, S, D, U>(
 ) -> io::Result<WebSocketRelayOutcome>
 where
     P: PolicyEngine + Send + Sync + 'static,
-    S: EventSink + Send + Sync + 'static,
+    S: EventConsumer + Send + Sync + 'static,
     D: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     U: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {

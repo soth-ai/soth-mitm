@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use mitm_core::{MitmConfig, MitmEngine};
-use mitm_observe::{EventType, VecEventSink};
+use mitm_observe::{EventType, VecEventConsumer};
 use mitm_policy::DefaultPolicyEngine;
 use mitm_sidecar::{SidecarConfig, SidecarServer};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -9,20 +9,20 @@ use tokio::net::{TcpListener, TcpStream};
 
 fn build_engine(
     config: MitmConfig,
-    sink: VecEventSink,
-) -> MitmEngine<DefaultPolicyEngine, VecEventSink> {
+    sink: VecEventConsumer,
+) -> MitmEngine<DefaultPolicyEngine, VecEventConsumer> {
     let policy =
         DefaultPolicyEngine::new(config.ignore_hosts.clone(), config.blocked_hosts.clone());
     MitmEngine::new(config, policy, sink)
 }
 
 async fn start_sidecar_with_sink(
-    sink: VecEventSink,
+    sink: VecEventConsumer,
     config: MitmConfig,
 ) -> (
     std::net::SocketAddr,
     tokio::task::JoinHandle<std::io::Result<()>>,
-    VecEventSink,
+    VecEventConsumer,
 ) {
     let sidecar_config = SidecarConfig {
         listen_addr: "127.0.0.1".to_string(),
@@ -71,7 +71,7 @@ async fn http3_hint_forces_tunnel_passthrough_and_emits_telemetry() {
             .expect("write tunneled response");
     });
 
-    let sink = VecEventSink::default();
+    let sink = VecEventConsumer::default();
     let config = MitmConfig {
         http3_passthrough: true,
         ..MitmConfig::default()
@@ -85,7 +85,7 @@ async fn http3_hint_forces_tunnel_passthrough_and_emits_telemetry() {
         concat!(
             "CONNECT 127.0.0.1:{} HTTP/1.1\r\n",
             "Host: 127.0.0.1:{}\r\n",
-            "X-Soth-Proxy-Protocol: h3\r\n",
+            "X-Proxy-Protocol: h3\r\n",
             "\r\n"
         ),
         upstream_addr.port(),
@@ -126,8 +126,7 @@ async fn http3_hint_forces_tunnel_passthrough_and_emits_telemetry() {
                 .map(String::as_str)
                 == Some("http3")
             && event.attributes.get("passthrough_mode").map(String::as_str) == Some("tunnel")
-            && event.attributes.get("requested_by").map(String::as_str)
-                == Some("x-soth-proxy-protocol")
+            && event.attributes.get("requested_by").map(String::as_str) == Some("x-proxy-protocol")
             && event.attributes.get("policy_action").map(String::as_str) == Some("intercept")
     }));
     assert!(

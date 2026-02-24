@@ -10,3 +10,11 @@ mitm-http = { path = "../mitm-http" }
 mitm-observe = { path = "../mitm-observe" }
 mitm-policy = { path = "../mitm-policy" }
 mitm-tls = { path = "../mitm-tls" }
+serde = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["net", "io-util", "rt", "sync"] }
+
+[dev-dependencies]
+proptest = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net", "io-util"] }

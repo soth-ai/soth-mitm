@@ -1,0 +1,6 @@
+.git
+.github
+artifacts
+target
+fuzz/target
+**/*.log

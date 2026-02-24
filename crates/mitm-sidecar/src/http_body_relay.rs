@@ -22,13 +22,14 @@ async fn relay_http_body<RS, WS, P, S>(
     sink: &mut WS,
     mode: HttpBodyMode,
     max_http_head_bytes: usize,
+    runtime_governor: &Arc<runtime_governor::RuntimeGovernor>,
     observer: &mut dyn HttpBodyObserver,
 ) -> io::Result<u64>
 where
     RS: AsyncRead + Unpin,
     WS: AsyncWrite + Unpin,
     P: PolicyEngine + Send + Sync + 'static,
-    S: EventSink + Send + Sync + 'static,
+    S: EventConsumer + Send + Sync + 'static,
 {
     let total = match mode {
         HttpBodyMode::None => Ok(0),
@@ -43,6 +44,7 @@ where
                 source,
                 sink,
                 max_http_head_bytes,
+                runtime_governor,
                 observer,
             )
             .await
@@ -68,7 +70,7 @@ where
     RS: AsyncRead + Unpin,
     WS: AsyncWrite + Unpin,
     P: PolicyEngine + Send + Sync + 'static,
-    S: EventSink + Send + Sync + 'static,
+    S: EventConsumer + Send + Sync + 'static,
 {
     let mut total = 0_u64;
 
@@ -104,6 +106,7 @@ where
     Ok(total)
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn relay_chunked<RS, WS, P, S>(
     engine: &Arc<MitmEngine<P, S>>,
     context: &FlowContext,
@@ -111,21 +114,27 @@ async fn relay_chunked<RS, WS, P, S>(
     source: &mut BufferedConn<RS>,
     sink: &mut WS,
     max_http_head_bytes: usize,
+    runtime_governor: &Arc<runtime_governor::RuntimeGovernor>,
     observer: &mut dyn HttpBodyObserver,
 ) -> io::Result<u64>
 where
     RS: AsyncRead + Unpin,
     WS: AsyncWrite + Unpin,
     P: PolicyEngine + Send + Sync + 'static,
-    S: EventSink + Send + Sync + 'static,
+    S: EventConsumer + Send + Sync + 'static,
 {
     let mut total = 0_u64;
     loop {
-        let line = read_chunk_line(source).await?;
+        let line = read_chunk_line(source, runtime_governor).await?;
         sink.write_all(&line).await?;
         let chunk_len = parse_chunk_len(&line)?;
         if chunk_len == 0 {
-            let trailers = read_until_pattern(source, b"\r\n\r\n", max_http_head_bytes)
+            let trailers = read_until_pattern(
+                source,
+                b"\r\n\r\n",
+                max_http_head_bytes,
+                runtime_governor,
+            )
                 .await?
                 .ok_or_else(|| {
                     io::Error::new(
@@ -162,7 +171,7 @@ where
     RS: AsyncRead + Unpin,
     WS: AsyncWrite + Unpin,
     P: PolicyEngine + Send + Sync + 'static,
-    S: EventSink + Send + Sync + 'static,
+    S: EventConsumer + Send + Sync + 'static,
 {
     let mut total = 0_u64;
     if !source.read_buf.is_empty() {
@@ -194,8 +203,9 @@ where
 
 async fn read_chunk_line<S: AsyncRead + Unpin>(
     source: &mut BufferedConn<S>,
+    runtime_governor: &Arc<runtime_governor::RuntimeGovernor>,
 ) -> io::Result<Vec<u8>> {
-    let line = read_until_pattern(source, b"\r\n", CHUNK_LINE_LIMIT)
+    let line = read_until_pattern(source, b"\r\n", CHUNK_LINE_LIMIT, runtime_governor)
         .await?
         .ok_or_else(|| {
             io::Error::new(

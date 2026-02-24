@@ -1,0 +1,3 @@
+# case_id	description
+connect_block	CONNECT block decision and close ordering
+tls_unknown_ca	TLS unknown-ca failure ordering and taxonomy metadata

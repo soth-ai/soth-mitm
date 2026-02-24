@@ -1,0 +1,104 @@
+{
+  "cases": [
+    {
+      "name": "default-intercept",
+      "config": {
+        "ignore_hosts": [],
+        "blocked_hosts": []
+      },
+      "input": {
+        "client_addr": "127.0.0.1:51000",
+        "server_host": "api.example.com",
+        "server_port": 443
+      },
+      "expected_outcome": {
+        "action": "intercept",
+        "reason": "default_intercept"
+      },
+      "expected_events": [
+        {
+          "sequence_id": 1,
+          "flow_sequence_id": 1,
+          "kind": "ConnectReceived",
+          "attributes": {}
+        },
+        {
+          "sequence_id": 2,
+          "flow_sequence_id": 2,
+          "kind": "ConnectDecision",
+          "attributes": {
+            "reason": "default_intercept"
+          }
+        }
+      ]
+    },
+    {
+      "name": "tunnel-ignored-host",
+      "config": {
+        "ignore_hosts": [
+          "allowed.example.com"
+        ],
+        "blocked_hosts": []
+      },
+      "input": {
+        "client_addr": "127.0.0.1:51001",
+        "server_host": "allowed.example.com",
+        "server_port": 443
+      },
+      "expected_outcome": {
+        "action": "tunnel",
+        "reason": "ignored_host"
+      },
+      "expected_events": [
+        {
+          "sequence_id": 1,
+          "flow_sequence_id": 1,
+          "kind": "ConnectReceived",
+          "attributes": {}
+        },
+        {
+          "sequence_id": 2,
+          "flow_sequence_id": 2,
+          "kind": "ConnectDecision",
+          "attributes": {
+            "reason": "ignored_host"
+          }
+        }
+      ]
+    },
+    {
+      "name": "blocklisted-host",
+      "config": {
+        "ignore_hosts": [],
+        "blocked_hosts": [
+          "blocked.example.com"
+        ]
+      },
+      "input": {
+        "client_addr": "127.0.0.1:51002",
+        "server_host": "blocked.example.com",
+        "server_port": 443
+      },
+      "expected_outcome": {
+        "action": "block",
+        "reason": "blocked_host"
+      },
+      "expected_events": [
+        {
+          "sequence_id": 1,
+          "flow_sequence_id": 1,
+          "kind": "ConnectReceived",
+          "attributes": {}
+        },
+        {
+          "sequence_id": 2,
+          "flow_sequence_id": 2,
+          "kind": "ConnectDecision",
+          "attributes": {
+            "reason": "blocked_host"
+          }
+        }
+      ]
+    }
+  ]
+}

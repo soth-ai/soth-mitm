@@ -4,7 +4,7 @@ use std::time::Duration;
 use bytes::Bytes;
 use mitm_core::{MitmConfig, MitmEngine};
 use mitm_http::ApplicationProtocol;
-use mitm_observe::{Event, EventType, VecEventSink};
+use mitm_observe::{Event, EventType, VecEventConsumer};
 use mitm_policy::DefaultPolicyEngine;
 use mitm_sidecar::{SidecarConfig, SidecarServer};
 use mitm_tls::{
@@ -17,20 +17,20 @@ use tokio_rustls::{TlsAcceptor, TlsConnector};
 
 fn build_engine(
     config: MitmConfig,
-    sink: VecEventSink,
-) -> MitmEngine<DefaultPolicyEngine, VecEventSink> {
+    sink: VecEventConsumer,
+) -> MitmEngine<DefaultPolicyEngine, VecEventConsumer> {
     let policy =
         DefaultPolicyEngine::new(config.ignore_hosts.clone(), config.blocked_hosts.clone());
     MitmEngine::new(config, policy, sink)
 }
 
 async fn start_sidecar_with_sink(
-    sink: VecEventSink,
+    sink: VecEventConsumer,
     config: MitmConfig,
 ) -> (
     std::net::SocketAddr,
     tokio::task::JoinHandle<std::io::Result<()>>,
-    VecEventSink,
+    VecEventConsumer,
 ) {
     let sidecar_config = SidecarConfig {
         listen_addr: "127.0.0.1".to_string(),
@@ -159,7 +159,7 @@ async fn intercept_http2_over_tls_relays_and_marks_protocol() {
         .await;
     });
 
-    let sink = VecEventSink::default();
+    let sink = VecEventConsumer::default();
     let config = MitmConfig {
         upstream_tls_insecure_skip_verify: true,
         http2_enabled: true,
@@ -271,7 +271,7 @@ async fn http2_disabled_negotiates_http1_even_when_client_offers_h2() {
         tls.shutdown().await.expect("shutdown upstream TLS");
     });
 
-    let sink = VecEventSink::default();
+    let sink = VecEventConsumer::default();
     let config = MitmConfig {
         upstream_tls_insecure_skip_verify: true,
         http2_enabled: false,
@@ -357,7 +357,7 @@ async fn http2_oversized_headers_emit_mitm_http_error_close() {
         saw_request_stream
     });
 
-    let sink = VecEventSink::default();
+    let sink = VecEventConsumer::default();
     let config = MitmConfig {
         upstream_tls_insecure_skip_verify: true,
         http2_enabled: true,
@@ -483,7 +483,7 @@ async fn http2_parallel_stream_stress_keeps_completed_close_and_byte_accounting(
         }
     });
 
-    let sink = VecEventSink::default();
+    let sink = VecEventConsumer::default();
     let config = MitmConfig {
         upstream_tls_insecure_skip_verify: true,
         http2_enabled: true,

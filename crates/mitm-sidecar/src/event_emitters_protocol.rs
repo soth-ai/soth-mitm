@@ -5,7 +5,7 @@ fn emit_sse_event<P, S>(
     event: &mitm_http::SseEvent,
 ) where
     P: PolicyEngine + Send + Sync + 'static,
-    S: EventSink + Send + Sync + 'static,
+    S: EventConsumer + Send + Sync + 'static,
 {
     let mut emitted = Event::new(EventType::SseEvent, context);
     emitted
@@ -42,7 +42,7 @@ fn emit_http3_passthrough_event<P, S>(
     policy_action: &str,
 ) where
     P: PolicyEngine + Send + Sync + 'static,
-    S: EventSink + Send + Sync + 'static,
+    S: EventConsumer + Send + Sync + 'static,
 {
     let mut event = Event::new(EventType::Http3Passthrough, context);
     event
@@ -67,7 +67,7 @@ fn emit_grpc_request_headers_event<P, S>(
     headers: &http::HeaderMap,
 ) where
     P: PolicyEngine + Send + Sync + 'static,
-    S: EventSink + Send + Sync + 'static,
+    S: EventConsumer + Send + Sync + 'static,
 {
     let mut event = Event::new(EventType::GrpcRequestHeaders, context);
     insert_grpc_common_attrs(&mut event, observation);
@@ -93,7 +93,7 @@ fn emit_grpc_response_headers_event<P, S>(
     response: &http::response::Parts,
 ) where
     P: PolicyEngine + Send + Sync + 'static,
-    S: EventSink + Send + Sync + 'static,
+    S: EventConsumer + Send + Sync + 'static,
 {
     let mut event = Event::new(EventType::GrpcResponseHeaders, context);
     insert_grpc_common_attrs(&mut event, observation);
@@ -123,7 +123,7 @@ fn emit_grpc_response_trailers_event<P, S>(
     trailers: &http::HeaderMap,
 ) where
     P: PolicyEngine + Send + Sync + 'static,
-    S: EventSink + Send + Sync + 'static,
+    S: EventConsumer + Send + Sync + 'static,
 {
     let mut event = Event::new(EventType::GrpcResponseTrailers, context);
     insert_grpc_common_attrs(&mut event, observation);

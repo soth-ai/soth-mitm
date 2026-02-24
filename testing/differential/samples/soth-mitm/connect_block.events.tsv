@@ -1,0 +1,3 @@
+1	connect_received	flow-1	tunnel	-
+2	connect_decision	flow-1	tunnel	blocked_host
+3	stream_closed	flow-1	tunnel	blocked

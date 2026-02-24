@@ -1,0 +1,15 @@
+/artifacts
+/target
+/corpus/*
+!/corpus/connect_parser
+!/corpus/connect_parser/**
+!/corpus/tls_classification
+!/corpus/tls_classification/**
+!/corpus/http_header_parsing
+!/corpus/http_header_parsing/**
+!/corpus/grpc_framing
+!/corpus/grpc_framing/**
+!/corpus/sse_parser
+!/corpus/sse_parser/**
+!/corpus/msgpack_decoder
+!/corpus/msgpack_decoder/**

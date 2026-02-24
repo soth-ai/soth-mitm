@@ -1,3 +1,5 @@
+include!("flow_forward_proxy_http1.rs");
+
 async fn handle_client<P, S>(
     runtime: RuntimeHandles<P, S>,
     mut downstream: TcpStream,
@@ -7,14 +9,16 @@ async fn handle_client<P, S>(
 ) -> io::Result<()>
 where
     P: PolicyEngine + Send + Sync + 'static,
-    S: EventSink + Send + Sync + 'static,
+    S: EventConsumer + Send + Sync + 'static,
 {
     let engine = Arc::clone(&runtime.engine);
     let cert_store = Arc::clone(&runtime.cert_store);
+    let runtime_governor = Arc::clone(&runtime.runtime_governor);
     let tls_diagnostics = Arc::clone(&runtime.tls_diagnostics);
     let tls_learning = Arc::clone(&runtime.tls_learning);
 
-    let mut input = match read_connect_head(&mut downstream, max_connect_head_bytes).await {
+    let mut input =
+        match read_connect_head(&mut downstream, max_connect_head_bytes, &runtime_governor).await {
         Ok(parsed) => parsed,
         Err(error) => {
             let parse_code = match error.kind() {
@@ -58,8 +62,24 @@ where
         }
     };
 
-    let (connect, header_len) = match parse_connect_request_head(&input) {
+    let (connect, header_len) = match parse_connect_request_head_with_mode(
+        &input,
+        engine.config.connect_parse_mode,
+    ) {
         Ok(parsed) => parsed,
+        Err(ConnectParseError::MethodNotConnect)
+            if is_absolute_form_forward_http_request(&input) =>
+        {
+            return handle_forward_http1_proxy_request(
+                engine,
+                runtime_governor,
+                downstream,
+                client_addr,
+                input,
+                max_http_head_bytes,
+            )
+            .await;
+        }
         Err(parse_error) => {
             let flow_id = engine.allocate_flow_id();
             let context = unknown_context(flow_id, client_addr);
@@ -136,13 +156,14 @@ where
             );
             Ok(())
         }
-        FlowAction::Tunnel | FlowAction::MetadataOnly => {
+        FlowAction::Tunnel => {
             tunnel_connection(engine, context, &mut downstream, &mut input, header_len).await
         }
         FlowAction::Intercept => {
             intercept_http_connection(
                 engine,
                 cert_store,
+                runtime_governor,
                 tls_diagnostics,
                 tls_learning,
                 context,
@@ -165,17 +186,15 @@ fn parse_http3_passthrough_hint(connect_head: &[u8]) -> Option<&'static str> {
             None => continue,
         };
         let value = value.trim();
-        if name.eq_ignore_ascii_case("x-soth-proxy-protocol")
-            && value.eq_ignore_ascii_case("h3")
-        {
-            return Some("x-soth-proxy-protocol");
+        if name.eq_ignore_ascii_case("x-proxy-protocol") && value.eq_ignore_ascii_case("h3") {
+            return Some("x-proxy-protocol");
         }
-        if name.eq_ignore_ascii_case("x-soth-http3-passthrough")
+        if name.eq_ignore_ascii_case("x-http3-passthrough")
             && (value == "1"
                 || value.eq_ignore_ascii_case("true")
                 || value.eq_ignore_ascii_case("yes"))
         {
-            return Some("x-soth-http3-passthrough");
+            return Some("x-http3-passthrough");
         }
     }
     None
@@ -186,7 +205,6 @@ fn flow_action_label(action: FlowAction) -> &'static str {
         FlowAction::Intercept => "intercept",
         FlowAction::Tunnel => "tunnel",
         FlowAction::Block => "block",
-        FlowAction::MetadataOnly => "metadata_only",
     }
 }
 
@@ -199,7 +217,7 @@ async fn tunnel_connection<P, S>(
 ) -> io::Result<()>
 where
     P: PolicyEngine + Send + Sync + 'static,
-    S: EventSink + Send + Sync + 'static,
+    S: EventConsumer + Send + Sync + 'static,
 {
     let mut upstream = match TcpStream::connect((&*context.server_host, context.server_port)).await
     {
@@ -230,11 +248,23 @@ where
 
     match tokio::io::copy_bidirectional(downstream, &mut upstream).await {
         Ok((from_client, from_server)) => {
+            let per_flow_budget = engine.config.max_flow_body_buffer_bytes as u64;
+            let (reason, detail) = if from_client > per_flow_budget || from_server > per_flow_budget
+            {
+                (
+                    CloseReasonCode::MitmHttpError,
+                    Some(format!(
+                        "flow body budget exceeded (limit={per_flow_budget}, client_bytes={from_client}, server_bytes={from_server})"
+                    )),
+                )
+            } else {
+                (CloseReasonCode::RelayEof, None)
+            };
             emit_stream_closed(
                 &engine,
                 context,
-                CloseReasonCode::RelayEof,
-                None,
+                reason,
+                detail,
                 Some(from_client),
                 Some(from_server),
             );
@@ -251,5 +281,34 @@ where
             );
             Err(error)
         }
+    }
+}
+
+#[cfg(test)]
+mod flow_connect_tunnel_tests {
+    use super::parse_http3_passthrough_hint;
+
+    #[test]
+    fn detects_http3_passthrough_via_proxy_protocol_hint() {
+        let head = b"CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\nX-Proxy-Protocol: h3\r\n\r\n";
+        assert_eq!(
+            parse_http3_passthrough_hint(head),
+            Some("x-proxy-protocol")
+        );
+    }
+
+    #[test]
+    fn detects_http3_passthrough_via_boolean_flag_hint() {
+        let head = b"CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\nX-HTTP3-Passthrough: yes\r\n\r\n";
+        assert_eq!(
+            parse_http3_passthrough_hint(head),
+            Some("x-http3-passthrough")
+        );
+    }
+
+    #[test]
+    fn does_not_accept_vendor_specific_legacy_hint_headers() {
+        let head = b"CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\nX-Soth-Proxy-Protocol: h3\r\n\r\n";
+        assert_eq!(parse_http3_passthrough_hint(head), None);
     }
 }

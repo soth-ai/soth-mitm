@@ -29,7 +29,7 @@ Repo name: `soth-mitm`
 3. `mitm-http`
    - HTTP/1.1 + HTTP/2 request/response parsing, streaming body plumbing, WS upgrade support.
 4. `mitm-policy`
-   - Generic routing primitives (`intercept`, `tunnel`, `block`, `metadata_only`) and host/path matcher engine.
+   - Generic routing primitives (`intercept`, `tunnel`, `block`) and host/path matcher engine (`tunnel` covers metadata-only passthrough).
 5. `mitm-observe`
    - Event stream emitted by proxy core (transport lifecycle + parsed HTTP metadata).
 6. `mitm-sidecar` (optional)
@@ -38,7 +38,7 @@ Repo name: `soth-mitm`
 ## Integration Contract with `soth`
 `soth` remains source of truth for:
 1. Bundle rules and detection IDs (`soth-oisp`).
-2. Exchange assembly and upload contracts.
+2. Downstream assembly and upload contracts.
 3. Collector logic and cloud sync.
 
 `soth-mitm` provides:
@@ -48,9 +48,9 @@ Repo name: `soth-mitm`
 
 ### Adapter in `soth`
 Create `crates/soth-proxy-adapter` (or refactor current `soth-proxy`) that:
-1. Feeds bundle-derived decisions into proxy core.
-2. Converts proxy events into Exchange pipeline inputs.
-3. Applies SOTH-specific policy/budget/identity checks.
+1. Feeds downstream rule decisions into generic proxy handler interfaces.
+2. Converts proxy events into downstream pipeline inputs.
+3. Applies SOTH-specific policy/budget/identity checks outside proxy core.
 
 ## Required Behavior (Parity + Improvements)
 1. TLS failure learning only on classified TLS failures (not raw CONNECT retries).
@@ -126,7 +126,7 @@ Each event must include:
 ### Phase 3: SOTH Adapter
 1. Replace direct hudsucker dependency in `soth` with adapter to `soth-mitm`.
 2. Wire OISP decision engine into adapter callback path.
-3. Preserve current Exchange contract and event semantics.
+3. Preserve current downstream contract and event semantics.
 
 ### Phase 4: Hardening
 1. Fuzz parsers and CONNECT/TLS state machine (including gRPC framing/SSE/msgpack/layered decode paths).
@@ -155,7 +155,7 @@ Each event must include:
    - Mitigation: corpus + per-host failure reason telemetry + fast rollback.
 2. Performance regressions under streaming
    - Mitigation: benchmark gates in CI.
-3. Behavioral drift with Exchange pipeline
+3. Behavioral drift with downstream consumer pipeline
    - Mitigation: adapter conformance tests with fixed golden flows.
 
 ## Immediate Next Actions

@@ -1,7 +1,11 @@
 async fn read_connect_head(
     stream: &mut TcpStream,
     max_connect_head_bytes: usize,
+    runtime_governor: &Arc<runtime_governor::RuntimeGovernor>,
 ) -> io::Result<Vec<u8>> {
+    let _in_flight_lease = runtime_governor
+        .try_reserve_in_flight(max_connect_head_bytes)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::OutOfMemory, "global in-flight byte budget exceeded"))?;
     let mut data = Vec::with_capacity(1024);
     let mut byte = [0_u8; 1];
 
@@ -30,7 +34,11 @@ async fn read_until_pattern<S: AsyncRead + Unpin>(
     conn: &mut BufferedConn<S>,
     pattern: &[u8],
     max_bytes: usize,
+    runtime_governor: &Arc<runtime_governor::RuntimeGovernor>,
 ) -> io::Result<Option<Vec<u8>>> {
+    let _in_flight_lease = runtime_governor
+        .try_reserve_in_flight(max_bytes)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::OutOfMemory, "global in-flight byte budget exceeded"))?;
     loop {
         if let Some(start) = find_subsequence(&conn.read_buf, pattern) {
             let end = start + pattern.len();

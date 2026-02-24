@@ -5,7 +5,7 @@ async fn observe_websocket_frames<P, S>(
 ) -> io::Result<()>
 where
     P: PolicyEngine + Send + Sync + 'static,
-    S: EventSink + Send + Sync + 'static,
+    S: EventConsumer + Send + Sync + 'static,
 {
     let mut turn_aggregator = mitm_http::WebSocketTurnAggregator::new();
     let mut turn_state = WebSocketTurnTrackerState::default();
@@ -83,7 +83,7 @@ fn track_websocket_frame<P, S>(
     frame: WebSocketFrameObservation,
 ) where
     P: PolicyEngine + Send + Sync + 'static,
-    S: EventSink + Send + Sync + 'static,
+    S: EventConsumer + Send + Sync + 'static,
 {
     emit_websocket_frame_event(
         engine,
@@ -137,7 +137,7 @@ fn start_turn<P, S>(
     frame: &WebSocketFrameObservation,
 ) where
     P: PolicyEngine + Send + Sync + 'static,
-    S: EventSink + Send + Sync + 'static,
+    S: EventConsumer + Send + Sync + 'static,
 {
     let turn_id = turn_state.next_turn_id;
     turn_state.next_turn_id += 1;
@@ -160,7 +160,7 @@ fn flush_pending_turn<P, S>(
     reason: &str,
 ) where
     P: PolicyEngine + Send + Sync + 'static,
-    S: EventSink + Send + Sync + 'static,
+    S: EventConsumer + Send + Sync + 'static,
 {
     if let Some(turn) = turn_aggregator.flush() {
         emit_websocket_turn_completed_event(engine, websocket_context, &turn, reason);

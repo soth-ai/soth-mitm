@@ -39,7 +39,7 @@ fn is_h2_transport_close_error(error: &h2::Error) -> bool {
                 | io::ErrorKind::ConnectionAborted
         )
     } else {
-        error.is_go_away() && error.is_remote()
+        error.is_go_away() && error.is_remote() && error.reason() == Some(h2::Reason::NO_ERROR)
     }
 }
 

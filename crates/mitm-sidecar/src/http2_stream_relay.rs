@@ -21,7 +21,7 @@ async fn relay_http2_connection<P, S, D, U>(
 ) -> io::Result<()>
 where
     P: PolicyEngine + Send + Sync + 'static,
-    S: EventSink + Send + Sync + 'static,
+    S: EventConsumer + Send + Sync + 'static,
     D: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     U: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
@@ -179,7 +179,7 @@ async fn relay_http2_stream<P, S>(
 ) -> io::Result<()>
 where
     P: PolicyEngine + Send + Sync + 'static,
-    S: EventSink + Send + Sync + 'static,
+    S: EventConsumer + Send + Sync + 'static,
 {
     let (mut request_parts, mut downstream_request_body) = downstream_request.into_parts();
     enforce_h2_request_header_limit(&request_parts, max_header_list_size)?;
@@ -334,11 +334,15 @@ async fn wait_for_h2_capacity(
     sink: &mut h2::SendStream<bytes::Bytes>,
     desired: usize,
 ) -> io::Result<usize> {
+    runtime_governor::mark_backpressure_activation_global();
     sink.reserve_capacity(desired);
     loop {
         match std::future::poll_fn(|cx| sink.poll_capacity(cx)).await {
             Some(Ok(capacity)) if capacity > 0 => return Ok(capacity),
-            Some(Ok(_)) => continue,
+            Some(Ok(_)) => {
+                runtime_governor::mark_backpressure_activation_global();
+                continue;
+            }
             Some(Err(error)) => return Err(h2_error_to_io("polling HTTP/2 send capacity failed", error)),
             None => {
                 return Err(io::Error::new(

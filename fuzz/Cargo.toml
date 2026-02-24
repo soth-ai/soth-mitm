@@ -1,0 +1,66 @@
+[package]
+name = "soth-mitm-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+mitm-core = { path = "../crates/mitm-core" }
+mitm-http = { path = "../crates/mitm-http" }
+mitm-sidecar = { path = "../crates/mitm-sidecar" }
+mitm-tls = { path = "../crates/mitm-tls" }
+
+[[bin]]
+name = "connect_parser"
+path = "fuzz_targets/connect_parser.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "tls_classification"
+path = "fuzz_targets/tls_classification.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "http_header_parsing"
+path = "fuzz_targets/http_header_parsing.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "grpc_framing"
+path = "fuzz_targets/grpc_framing.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "sse_parser"
+path = "fuzz_targets/sse_parser.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "msgpack_decoder"
+path = "fuzz_targets/msgpack_decoder.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "decoder_layering_interactions"
+path = "fuzz_targets/decoder_layering_interactions.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]

@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use bytes::Bytes;
 use mitm_core::{MitmConfig, MitmEngine};
-use mitm_observe::{Event, EventType, VecEventSink};
+use mitm_observe::{Event, EventType, VecEventConsumer};
 use mitm_policy::DefaultPolicyEngine;
 use mitm_sidecar::{SidecarConfig, SidecarServer};
 use mitm_tls::{build_http_client_config, build_http_server_config_for_host};
@@ -14,20 +14,20 @@ use tokio_rustls::{TlsAcceptor, TlsConnector};
 
 fn build_engine(
     config: MitmConfig,
-    sink: VecEventSink,
-) -> MitmEngine<DefaultPolicyEngine, VecEventSink> {
+    sink: VecEventConsumer,
+) -> MitmEngine<DefaultPolicyEngine, VecEventConsumer> {
     let policy =
         DefaultPolicyEngine::new(config.ignore_hosts.clone(), config.blocked_hosts.clone());
     MitmEngine::new(config, policy, sink)
 }
 
 async fn start_sidecar_with_sink(
-    sink: VecEventSink,
+    sink: VecEventConsumer,
     config: MitmConfig,
 ) -> (
     std::net::SocketAddr,
     tokio::task::JoinHandle<std::io::Result<()>>,
-    VecEventSink,
+    VecEventConsumer,
 ) {
     let sidecar_config = SidecarConfig {
         listen_addr: "127.0.0.1".to_string(),
@@ -158,7 +158,7 @@ async fn grpc_unary_http2_emits_header_and_trailer_events_in_stable_sequence() {
         .await;
     });
 
-    let sink = VecEventSink::default();
+    let sink = VecEventConsumer::default();
     let config = MitmConfig {
         upstream_tls_insecure_skip_verify: true,
         http2_enabled: true,
@@ -347,7 +347,7 @@ async fn grpc_streaming_http2_path_pattern_detection_emits_stable_sequence() {
         .await;
     });
 
-    let sink = VecEventSink::default();
+    let sink = VecEventConsumer::default();
     let config = MitmConfig {
         upstream_tls_insecure_skip_verify: true,
         http2_enabled: true,

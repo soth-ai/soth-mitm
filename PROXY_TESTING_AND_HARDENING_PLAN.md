@@ -247,6 +247,12 @@ With `toxiproxy` and `tc netem`:
 6. upstream timeout
 7. DNS failure simulations
 8. proxy process restarts with in-flight streams
+9. charter chaos corpus:
+   - TLS fragmenting (`tls_fragmented_client_hello_emits_failed_handshake_close`)
+   - malformed HPACK (`malformed_hpack_payload_emits_http2_error_close`)
+   - gRPC split frames (`grpc_http2_mitm` split-frame coverage)
+   - infinite SSE stream budget enforcement (`infinite_sse_stream_hits_decoder_budget_and_closes_deterministically`)
+   - jitter/loss tunnel behavior (`jitter_and_loss_in_tunnel_path_emit_relay_error_close`)
 
 Expected:
 
@@ -254,6 +260,10 @@ Expected:
 2. bounded retry behavior
 3. deterministic `stream_closed` reason codes
 4. stable memory after fault storms
+
+Execution lane:
+
+1. `./scripts/p4_chaos_adversarial.sh` (CI job `phase4_chaos_adversarial`)
 
 ## 6.5 Performance and Soak
 
@@ -336,7 +346,7 @@ Release is blocked unless all are true:
 | TH-20 | property lane | `proptest` parsers/state | invariants hold across generated inputs |
 | TH-21 | differential lane | compare with mitmproxy | drift report generated per nightly run |
 | TH-22 | hudsucker fallback guard tests | inference suppression tests | inferred TLS does not update learning state |
-| TH-23 | CI artifacts and triage docs | saved logs/traces/corpus | actionable artifact bundle on failure |
+| TH-23 | CI artifacts and triage docs | saved logs/traces/corpus | actionable artifact package on failure |
 | TH-24 | RC gate automation | release checklist script | all gate checks pass before tag |
 | TH-25 | post-cutover regression lane | production-like canary replay | no high-severity regressions detected |
 

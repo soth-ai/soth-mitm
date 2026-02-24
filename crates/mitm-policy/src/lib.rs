@@ -1,9 +1,15 @@
+/// Policy actions returned by the proxy decision engine.
+///
+/// Use `Tunnel` for metadata-only observation use cases:
+/// lifecycle events are still emitted, but traffic is not decrypted/intercepted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FlowAction {
+    /// Intercept and decode protocol traffic when allowed by policy.
     Intercept,
+    /// Pass traffic through CONNECT tunnel while still emitting lifecycle metadata events.
     Tunnel,
+    /// Reject the flow and close early.
     Block,
-    MetadataOnly,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

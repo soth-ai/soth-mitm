@@ -9,7 +9,7 @@ async fn downstream_tls_failure_emits_source_provider_and_host_counter() {
         tokio::time::sleep(Duration::from_millis(150)).await;
     });
 
-    let sink = VecEventSink::default();
+    let sink = VecEventConsumer::default();
     let config = MitmConfig {
         upstream_tls_insecure_skip_verify: true,
         ..MitmConfig::default()
@@ -68,6 +68,26 @@ async fn downstream_tls_failure_emits_source_provider_and_host_counter() {
     assert_eq!(
         downstream_failure
             .attributes
+            .get("provider_identity")
+            .map(String::as_str),
+        Some("rustls")
+    );
+    assert_eq!(
+        downstream_failure
+            .attributes
+            .get("source_confidence")
+            .map(String::as_str),
+        Some("authoritative")
+    );
+    assert!(downstream_failure
+        .attributes
+        .contains_key("normalized_reason"));
+    assert!(downstream_failure
+        .attributes
+        .contains_key("raw_provider_error"));
+    assert_eq!(
+        downstream_failure
+            .attributes
             .get("tls_failure_host_count")
             .map(String::as_str),
         Some("1")
@@ -107,7 +127,7 @@ async fn intercept_reuses_cached_leaf_cert_for_same_host() {
         }
     });
 
-    let sink = VecEventSink::default();
+    let sink = VecEventConsumer::default();
     let config = MitmConfig {
         upstream_tls_insecure_skip_verify: true,
         ..MitmConfig::default()

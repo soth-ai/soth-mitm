@@ -39,11 +39,12 @@ impl MitmCertificateStore {
             .map_err(|_| TlsConfigError::LockPoisoned)?;
         self.maybe_rotate_locked(&mut state)?;
 
-        if let Some((server_config, leaf_cert_der)) =
+        if let Some((server_config, leaf_cert_der, leaf_identity)) =
             state.leaf_cache.get(&cache_key).map(|cached| {
                 (
                     Arc::clone(&cached.server_config),
                     cached.leaf_cert_der.clone(),
+                    cached.leaf_identity.clone(),
                 )
             })
         {
@@ -53,11 +54,12 @@ impl MitmCertificateStore {
                 server_config,
                 cache_status: LeafCacheStatus::Hit,
                 leaf_cert_der,
+                leaf_identity,
             });
         }
 
         self.cache_misses.fetch_add(1, Ordering::Relaxed);
-        let (server_config, leaf_cert_der) =
+        let (server_config, leaf_cert_der, leaf_identity) =
             issue_leaf_server_config(&state.ca, &normalized_host, http2_enabled)?;
         self.leaves_issued.fetch_add(1, Ordering::Relaxed);
 
@@ -70,6 +72,7 @@ impl MitmCertificateStore {
                 CachedLeaf {
                     server_config: Arc::clone(&server_config),
                     leaf_cert_der: leaf_cert_der.clone(),
+                    leaf_identity: leaf_identity.clone(),
                 },
             );
             touch_lru(&mut state.cache_lru, &cache_key);
@@ -79,6 +82,7 @@ impl MitmCertificateStore {
             server_config,
             cache_status: LeafCacheStatus::Miss,
             leaf_cert_der,
+            leaf_identity,
         })
     }
 
@@ -186,6 +190,7 @@ fn load_ca_material(
 ) -> Result<CaMaterial, TlsConfigError> {
     let cert_pem = fs::read_to_string(ca_cert_path)?;
     let key_pem = fs::read_to_string(ca_key_path)?;
+    validate_ca_material_with_openssl(ca_cert_path, &cert_pem, &key_pem)?;
     let cert_der = CertificateDer::from_pem_slice(cert_pem.as_bytes()).map_err(|error| {
         TlsConfigError::InvalidConfiguration(format!(
             "failed to parse CA certificate PEM from {ca_cert_path}: {error}"
@@ -205,7 +210,6 @@ fn load_ca_material(
         key_pem,
     })
 }
-
 fn persist_ca_material_if_configured(
     config: &CertificateAuthorityConfig,
     ca: &CaMaterial,
@@ -244,12 +248,21 @@ fn issue_leaf_server_config(
     ca: &CaMaterial,
     host: &str,
     http2_enabled: bool,
-) -> Result<(Arc<ServerConfig>, CertificateDer<'static>), TlsConfigError> {
+) -> Result<
+    (
+        Arc<ServerConfig>,
+        CertificateDer<'static>,
+        IssuedLeafIdentity,
+    ),
+    TlsConfigError,
+> {
     let leaf_params = build_leaf_params(host)?;
     let leaf_key = KeyPair::generate()?;
     let leaf_key_der = PrivatePkcs8KeyDer::from(leaf_key.serialize_der());
     let leaf_cert = leaf_params.signed_by(&leaf_key, &ca.issuer)?;
     let leaf_cert_der = leaf_cert.der().clone();
+    let leaf_cert_pem = leaf_cert.pem();
+    let leaf_key_pem = leaf_key.serialize_pem();
 
     let chain = vec![leaf_cert_der.clone(), ca.cert_der.clone()];
     let private_key = PrivateKeyDer::from(leaf_key_der);
@@ -259,7 +272,15 @@ fn issue_leaf_server_config(
         .with_single_cert(chain, private_key)?;
     server_config.alpn_protocols = configured_http_alpn_protocols(http2_enabled);
 
-    Ok((Arc::new(server_config), leaf_cert_der))
+    Ok((
+        Arc::new(server_config),
+        leaf_cert_der,
+        IssuedLeafIdentity {
+            leaf_cert_pem,
+            leaf_key_pem,
+            ca_cert_pem: ca.cert_pem.clone(),
+        },
+    ))
 }
 
 fn build_ca_params(config: &CertificateAuthorityConfig) -> CertificateParams {
@@ -369,4 +390,3 @@ impl ServerCertVerifier for InsecureSkipVerifyServerCertVerifier {
         ]
     }
 }
-

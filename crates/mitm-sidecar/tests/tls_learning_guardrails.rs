@@ -1,18 +1,18 @@
 use mitm_core::{MitmConfig, MitmEngine};
-use mitm_observe::{EventType, VecEventSink};
+use mitm_observe::{EventType, VecEventConsumer};
 use mitm_policy::DefaultPolicyEngine;
 use mitm_sidecar::{SidecarConfig, SidecarServer, TlsLearningDecision, TlsLearningSignal};
 
 fn build_engine(
     config: MitmConfig,
-    sink: VecEventSink,
-) -> MitmEngine<DefaultPolicyEngine, VecEventSink> {
+    sink: VecEventConsumer,
+) -> MitmEngine<DefaultPolicyEngine, VecEventConsumer> {
     let policy =
         DefaultPolicyEngine::new(config.ignore_hosts.clone(), config.blocked_hosts.clone());
     MitmEngine::new(config, policy, sink)
 }
 
-fn build_sidecar(sink: VecEventSink) -> SidecarServer<DefaultPolicyEngine, VecEventSink> {
+fn build_sidecar(sink: VecEventConsumer) -> SidecarServer<DefaultPolicyEngine, VecEventConsumer> {
     let config = MitmConfig::default();
     let engine = build_engine(config, sink);
     SidecarServer::new(SidecarConfig::default(), engine).expect("build sidecar")
@@ -20,7 +20,7 @@ fn build_sidecar(sink: VecEventSink) -> SidecarServer<DefaultPolicyEngine, VecEv
 
 #[test]
 fn authoritative_signal_is_learned() {
-    let sink = VecEventSink::default();
+    let sink = VecEventConsumer::default();
     let server = build_sidecar(sink.clone());
 
     let outcome = server.ingest_tls_learning_signal(TlsLearningSignal::new(
@@ -57,7 +57,7 @@ fn authoritative_signal_is_learned() {
 
 #[test]
 fn inferred_hudsucker_signal_is_ignored_and_audited_without_learning_mutation() {
-    let sink = VecEventSink::default();
+    let sink = VecEventConsumer::default();
     let server = build_sidecar(sink.clone());
 
     let first = server.ingest_tls_learning_signal(TlsLearningSignal::new(
@@ -127,7 +127,7 @@ fn inferred_hudsucker_signal_is_ignored_and_audited_without_learning_mutation() 
 
 #[test]
 fn non_authoritative_provider_is_ignored_and_does_not_create_host_state() {
-    let sink = VecEventSink::default();
+    let sink = VecEventConsumer::default();
     let server = build_sidecar(sink.clone());
 
     let outcome = server.ingest_tls_learning_signal(TlsLearningSignal::new(

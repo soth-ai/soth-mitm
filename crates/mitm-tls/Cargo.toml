@@ -5,11 +5,17 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
+[features]
+default = []
+openssl-backend = ["dep:openssl"]
+
 [dependencies]
 mitm-http = { path = "../mitm-http" }
 rcgen = { workspace = true, features = ["x509-parser"] }
 rustls = { workspace = true }
 webpki-roots = "1"
+openssl = { version = "0.10", optional = true, features = ["vendored"] }
 
 [dev-dependencies]
+proptest = { workspace = true }
 x509-parser = "0.18"

@@ -1,7 +1,7 @@
 fn emit_websocket_opened_event<P, S>(engine: &MitmEngine<P, S>, context: FlowContext)
 where
     P: PolicyEngine + Send + Sync + 'static,
-    S: EventSink + Send + Sync + 'static,
+    S: EventConsumer + Send + Sync + 'static,
 {
     let mut event = Event::new(EventType::WebSocketOpened, context);
     event
@@ -24,7 +24,7 @@ fn emit_websocket_frame_event<P, S>(
     frame_len: u64,
 ) where
     P: PolicyEngine + Send + Sync + 'static,
-    S: EventSink + Send + Sync + 'static,
+    S: EventConsumer + Send + Sync + 'static,
 {
     let mut event = Event::new(EventType::WebSocketFrame, context);
     event.attributes.insert(
@@ -67,7 +67,7 @@ fn emit_websocket_closed_event<P, S>(
     bytes_from_server: u64,
 ) where
     P: PolicyEngine + Send + Sync + 'static,
-    S: EventSink + Send + Sync + 'static,
+    S: EventConsumer + Send + Sync + 'static,
 {
     let mut event = Event::new(EventType::WebSocketClosed, context);
     event
@@ -98,7 +98,7 @@ fn emit_websocket_turn_started_event<P, S>(
     started_at_unix_ms: u128,
 ) where
     P: PolicyEngine + Send + Sync + 'static,
-    S: EventSink + Send + Sync + 'static,
+    S: EventConsumer + Send + Sync + 'static,
 {
     let mut event = Event::new(EventType::WebSocketTurnStarted, context);
     event
@@ -126,7 +126,7 @@ fn emit_websocket_turn_completed_event<P, S>(
     flush_reason: &str,
 ) where
     P: PolicyEngine + Send + Sync + 'static,
-    S: EventSink + Send + Sync + 'static,
+    S: EventConsumer + Send + Sync + 'static,
 {
     let mut event = Event::new(EventType::WebSocketTurnCompleted, context);
     event

@@ -285,6 +285,14 @@ pub struct IssuedServerConfig {
     pub server_config: Arc<ServerConfig>,
     pub cache_status: LeafCacheStatus,
     pub leaf_cert_der: CertificateDer<'static>,
+    pub leaf_identity: IssuedLeafIdentity,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IssuedLeafIdentity {
+    pub leaf_cert_pem: String,
+    pub leaf_key_pem: String,
+    pub ca_cert_pem: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -314,6 +322,7 @@ struct CertStoreState {
 struct CachedLeaf {
     server_config: Arc<ServerConfig>,
     leaf_cert_der: CertificateDer<'static>,
+    leaf_identity: IssuedLeafIdentity,
 }
 
 struct CaMaterial {
@@ -324,6 +333,7 @@ struct CaMaterial {
 }
 
 include!("certificate_store_impl.rs");
+include!("certificate_store_openssl.rs");
 
 #[cfg(test)]
 mod tests {

@@ -11,7 +11,7 @@ async fn intercept_upstream_tls_failure_emits_taxonomy_reason() {
         let _ = acceptor.accept(tcp).await;
     });
 
-    let sink = VecEventSink::default();
+    let sink = VecEventConsumer::default();
     let config = MitmConfig {
         upstream_tls_insecure_skip_verify: false,
         ..MitmConfig::default()
@@ -81,6 +81,30 @@ async fn intercept_upstream_tls_failure_emits_taxonomy_reason() {
             .map(String::as_str),
         Some("rustls")
     );
+    assert_eq!(
+        upstream_failed
+            .attributes
+            .get("normalized_reason")
+            .map(String::as_str),
+        Some("unknown_ca")
+    );
+    assert_eq!(
+        upstream_failed
+            .attributes
+            .get("provider_identity")
+            .map(String::as_str),
+        Some("rustls")
+    );
+    assert_eq!(
+        upstream_failed
+            .attributes
+            .get("source_confidence")
+            .map(String::as_str),
+        Some("authoritative")
+    );
+    assert!(upstream_failed
+        .attributes
+        .contains_key("raw_provider_error"));
     assert_eq!(
         upstream_failed
             .attributes
@@ -164,7 +188,7 @@ async fn repeated_upstream_tls_failures_increment_host_scoped_counters() {
         }
     });
 
-    let sink = VecEventSink::default();
+    let sink = VecEventConsumer::default();
     let config = MitmConfig {
         upstream_tls_insecure_skip_verify: false,
         ..MitmConfig::default()

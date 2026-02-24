@@ -1,5 +1,5 @@
 use mitm_core::{MitmConfig, MitmEngine};
-use mitm_observe::NoopEventSink;
+use mitm_observe::NoopEventConsumer;
 use mitm_policy::DefaultPolicyEngine;
 use mitm_sidecar::{SidecarConfig, SidecarServer};
 
@@ -10,7 +10,7 @@ async fn main() -> std::io::Result<()> {
         mitm_config.ignore_hosts.clone(),
         mitm_config.blocked_hosts.clone(),
     );
-    let sink = NoopEventSink;
+    let sink = NoopEventConsumer;
     let engine = MitmEngine::new(mitm_config.clone(), policy, sink);
 
     let sidecar_config = SidecarConfig {

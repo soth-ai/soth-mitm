@@ -124,6 +124,13 @@ pub fn adapt_mitmproxy_tls_callback(callback: &MitmproxyTlsCallback) -> Mitmprox
         attributes.insert("detail".to_string(), detail.clone());
         attributes.insert("tls_failure_reason".to_string(), reason.clone());
         attributes.insert("tls_failure_source".to_string(), source.clone());
+        attributes.insert("normalized_reason".to_string(), reason.clone());
+        attributes.insert("raw_provider_error".to_string(), detail.clone());
+        attributes.insert(
+            "provider_identity".to_string(),
+            MITMPROXY_PROVIDER.to_string(),
+        );
+        attributes.insert("source_confidence".to_string(), "authoritative".to_string());
         Some(MitmproxyTlsFailure {
             source,
             reason,

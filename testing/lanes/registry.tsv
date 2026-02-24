@@ -1,0 +1,8 @@
+# lane_id	category	script	supports_strict_tools	supports_skip_network	supports_enforce_faults	description
+phase4_performance_gates	stress	./scripts/p4_performance_gates.sh	0	0	0	Connection churn, long-lived streams, header stress, and memory ceilings.
+phase4_failure_injection	stress	./scripts/p4_failure_injection.sh	0	0	0	TLS and relay fault-injection behavior validation.
+phase4_chaos_adversarial	stress	./scripts/p4_chaos_adversarial.sh	0	0	0	Adversarial parser and fuzz-regression stress suite.
+phase4_chaos_network_faults	stress	./scripts/p4_chaos_network_faults.sh	1	0	1	Toxiproxy and tc netem tooling and live network fault probes.
+phase4_differential_validation	parity	./scripts/p4_differential_validation.sh	0	0	0	Differential behavior parity checks versus mitmproxy fixtures.
+phase4_tool_lanes	benchmark	./scripts/p4_tool_lanes.sh	1	1	0	External benchmark/load/tooling lane matrix (wrk/hey/h2load/ghz/etc).
+phase4_tls_hardening	benchmark	./scripts/p4_tls_hardening.sh	1	1	0	TLS hardening benchmark/probe lane.

@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use mitm_core::{MitmConfig, MitmEngine};
-use mitm_observe::{EventType, VecEventSink};
+use mitm_observe::{EventType, VecEventConsumer};
 use mitm_policy::DefaultPolicyEngine;
 use mitm_sidecar::{SidecarConfig, SidecarServer, TlsDiagnostics, TlsLearningGuardrails};
 use mitm_tls::{build_http1_client_config, build_http1_server_config_for_host};
@@ -13,20 +13,20 @@ use tokio_rustls::{TlsAcceptor, TlsConnector};
 
 fn build_engine(
     config: MitmConfig,
-    sink: VecEventSink,
-) -> MitmEngine<DefaultPolicyEngine, VecEventSink> {
+    sink: VecEventConsumer,
+) -> MitmEngine<DefaultPolicyEngine, VecEventConsumer> {
     let policy =
         DefaultPolicyEngine::new(config.ignore_hosts.clone(), config.blocked_hosts.clone());
     MitmEngine::new(config, policy, sink)
 }
 
 async fn start_sidecar_with_sink(
-    sink: VecEventSink,
+    sink: VecEventConsumer,
     config: MitmConfig,
 ) -> (
     std::net::SocketAddr,
     tokio::task::JoinHandle<std::io::Result<()>>,
-    VecEventSink,
+    VecEventConsumer,
     Arc<TlsDiagnostics>,
     Arc<TlsLearningGuardrails>,
 ) {

@@ -22,7 +22,7 @@ async fn intercept_get_over_tls_forwards_and_emits_http_events() {
         tls.shutdown().await.expect("shutdown upstream TLS");
     });
 
-    let sink = VecEventSink::default();
+    let sink = VecEventConsumer::default();
     let config = MitmConfig {
         upstream_tls_insecure_skip_verify: true,
         ..MitmConfig::default()
@@ -135,7 +135,7 @@ async fn intercept_post_emits_request_and_response_body_chunks() {
         tls.shutdown().await.expect("shutdown upstream TLS");
     });
 
-    let sink = VecEventSink::default();
+    let sink = VecEventConsumer::default();
     let config = MitmConfig {
         upstream_tls_insecure_skip_verify: true,
         ..MitmConfig::default()
@@ -213,4 +213,69 @@ async fn intercept_post_emits_request_and_response_body_chunks() {
         })
         .sum::<u64>();
     assert_eq!(response_body_total, 2);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn forward_http_absolute_form_request_relays_without_connect() {
+    let upstream_listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind upstream listener");
+    let upstream_addr = upstream_listener.local_addr().expect("upstream addr");
+    let upstream_task = tokio::spawn(async move {
+        let (mut upstream, _) = upstream_listener.accept().await.expect("accept upstream");
+        let request_head = read_http_head(&mut upstream).await;
+        let request_text = String::from_utf8_lossy(&request_head);
+        assert!(
+            request_text.starts_with("GET /plain HTTP/1.1"),
+            "{request_text}"
+        );
+
+        let response = b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\nConnection: close\r\n\r\npong";
+        upstream.write_all(response).await.expect("write response");
+        upstream.shutdown().await.expect("shutdown upstream");
+    });
+
+    let sink = VecEventConsumer::default();
+    let (proxy_addr, proxy_task, sink, _diagnostics, _learning) =
+        start_sidecar_with_sink(sink, MitmConfig::default()).await;
+
+    let mut client = TcpStream::connect(proxy_addr)
+        .await
+        .expect("connect sidecar");
+    let request = format!(
+        "GET http://127.0.0.1:{}/plain HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nConnection: close\r\n\r\n",
+        upstream_addr.port(),
+        upstream_addr.port()
+    );
+    client
+        .write_all(request.as_bytes())
+        .await
+        .expect("write request");
+    client.flush().await.expect("flush request");
+
+    let response = read_to_end_allow_unexpected_eof(&mut client).await;
+    let response_text = String::from_utf8_lossy(&response);
+    assert!(response_text.starts_with("HTTP/1.1 200 OK"), "{response_text}");
+    assert!(response_text.ends_with("pong"), "{response_text}");
+
+    upstream_task.await.expect("upstream task");
+    tokio::time::sleep(Duration::from_millis(25)).await;
+    proxy_task.abort();
+
+    let events = sink.snapshot();
+    assert!(events.iter().any(|event| event.kind == EventType::ConnectReceived));
+    assert!(events.iter().any(|event| event.kind == EventType::ConnectDecision));
+    assert!(events.iter().any(|event| event.kind == EventType::RequestHeaders));
+    assert!(events.iter().any(|event| event.kind == EventType::ResponseHeaders));
+    let stream_closed = events
+        .iter()
+        .find(|event| event.kind == EventType::StreamClosed)
+        .expect("stream closed event");
+    assert_eq!(
+        stream_closed
+            .attributes
+            .get("reason_code")
+            .map(String::as_str),
+        Some("mitm_http_completed")
+    );
 }

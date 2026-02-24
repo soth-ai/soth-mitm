@@ -1,0 +1,9 @@
+# lane	protocol	mode	notes
+connect_block_tunnel	connect	metadata_only	compare decision parity only
+http1_connect_passthrough	http1	tunnel	compare close reason and lifecycle metadata only
+# Explicitly out-of-scope for hudsucker differential lane:
+# websocket_turn_aggregation
+# sse
+# http2
+# http3_passthrough
+# grpc_http2

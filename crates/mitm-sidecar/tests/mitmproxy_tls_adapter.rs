@@ -1,20 +1,20 @@
 use mitm_core::{MitmConfig, MitmEngine};
 use mitm_http::ApplicationProtocol;
-use mitm_observe::{EventType, VecEventSink};
+use mitm_observe::{EventType, VecEventConsumer};
 use mitm_policy::DefaultPolicyEngine;
 use mitm_sidecar::{MitmproxyTlsCallback, MitmproxyTlsHook, SidecarConfig, SidecarServer};
 use mitm_tls::classify_tls_error;
 
 fn build_engine(
     config: MitmConfig,
-    sink: VecEventSink,
-) -> MitmEngine<DefaultPolicyEngine, VecEventSink> {
+    sink: VecEventConsumer,
+) -> MitmEngine<DefaultPolicyEngine, VecEventConsumer> {
     let policy =
         DefaultPolicyEngine::new(config.ignore_hosts.clone(), config.blocked_hosts.clone());
     MitmEngine::new(config, policy, sink)
 }
 
-fn build_sidecar(sink: VecEventSink) -> SidecarServer<DefaultPolicyEngine, VecEventSink> {
+fn build_sidecar(sink: VecEventConsumer) -> SidecarServer<DefaultPolicyEngine, VecEventConsumer> {
     let config = MitmConfig::default();
     let engine = build_engine(config, sink);
     SidecarServer::new(SidecarConfig::default(), engine).expect("build sidecar")
@@ -22,7 +22,7 @@ fn build_sidecar(sink: VecEventSink) -> SidecarServer<DefaultPolicyEngine, VecEv
 
 #[test]
 fn replayed_mitmproxy_failed_callbacks_match_native_taxonomy() {
-    let sink = VecEventSink::default();
+    let sink = VecEventConsumer::default();
     let server = build_sidecar(sink.clone());
 
     let fixtures = vec![
@@ -43,6 +43,12 @@ fn replayed_mitmproxy_failed_callbacks_match_native_taxonomy() {
             MitmproxyTlsHook::TlsFailedServer,
             "api.example.com",
             "remote error: tls: handshake failure",
+        ),
+        (
+            7_u64,
+            MitmproxyTlsHook::TlsFailedServer,
+            "api.example.com",
+            "certificate verify failed: invalid certificate chain",
         ),
         (
             4_u64,
@@ -112,6 +118,31 @@ fn replayed_mitmproxy_failed_callbacks_match_native_taxonomy() {
             event.attributes.get("tls_ops_provider").map(String::as_str),
             Some("mitmproxy")
         );
+        assert_eq!(
+            event
+                .attributes
+                .get("normalized_reason")
+                .map(String::as_str),
+            event
+                .attributes
+                .get("tls_failure_reason")
+                .map(String::as_str)
+        );
+        assert_eq!(
+            event
+                .attributes
+                .get("provider_identity")
+                .map(String::as_str),
+            Some("mitmproxy")
+        );
+        assert_eq!(
+            event
+                .attributes
+                .get("source_confidence")
+                .map(String::as_str),
+            Some("authoritative")
+        );
+        assert!(event.attributes.contains_key("raw_provider_error"));
         assert!(event.attributes.contains_key("tls_ops_provider_hook"));
         assert!(event
             .attributes
@@ -130,7 +161,7 @@ fn replayed_mitmproxy_failed_callbacks_match_native_taxonomy() {
             .get("api.example.com")
             .expect("api.example.com diagnostics")
             .total_failures,
-        2
+        3
     );
     assert_eq!(
         diagnostics
@@ -183,7 +214,7 @@ fn replayed_mitmproxy_failed_callbacks_match_native_taxonomy() {
 
 #[test]
 fn replayed_mitmproxy_started_and_succeeded_callbacks_emit_lifecycle_events() {
-    let sink = VecEventSink::default();
+    let sink = VecEventConsumer::default();
     let server = build_sidecar(sink.clone());
 
     let callbacks = vec![

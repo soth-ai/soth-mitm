@@ -1,12 +1,21 @@
 use std::collections::BTreeMap;
+use std::collections::VecDeque;
+use std::net::IpAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
 use std::time::Instant;
 
 use mitm_http::ApplicationProtocol;
-use mitm_observe::{Event, EventSink, EventType, FlowContext};
+use mitm_observe::{Event, EventConsumer, EventEnvelope, EventType, FlowContext};
 use mitm_policy::{FlowAction, PolicyDecision, PolicyEngine, PolicyInput};
 
+mod config;
 mod flow_state;
+pub mod server;
+pub use config::{
+    ConnectParseMode, DownstreamTlsBackend, EventSinkConfig, EventSinkKind, MitmConfig,
+    MitmConfigError,
+};
 use flow_state::FlowStateTracker;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -45,6 +54,13 @@ impl ConnectParseError {
 }
 
 pub fn parse_connect_request_line(request_line: &str) -> Result<ConnectRequest, ConnectParseError> {
+    parse_connect_request_line_with_mode(request_line, ConnectParseMode::Strict)
+}
+
+pub fn parse_connect_request_line_with_mode(
+    request_line: &str,
+    mode: ConnectParseMode,
+) -> Result<ConnectRequest, ConnectParseError> {
     let mut parts = request_line.split_whitespace();
     let method = parts.next().ok_or(ConnectParseError::EmptyRequestLine)?;
     let authority = parts.next().ok_or(ConnectParseError::InvalidRequestLine)?;
@@ -54,7 +70,11 @@ pub fn parse_connect_request_line(request_line: &str) -> Result<ConnectRequest, 
         return Err(ConnectParseError::InvalidRequestLine);
     }
 
-    if method != "CONNECT" {
+    let method_matches = match mode {
+        ConnectParseMode::Strict => method == "CONNECT",
+        ConnectParseMode::Lenient => method.eq_ignore_ascii_case("CONNECT"),
+    };
+    if !method_matches {
         return Err(ConnectParseError::MethodNotConnect);
     }
 
@@ -62,7 +82,9 @@ pub fn parse_connect_request_line(request_line: &str) -> Result<ConnectRequest, 
         return Err(ConnectParseError::InvalidHttpVersion);
     }
 
-    let (server_host, server_port) = parse_connect_authority(authority)?;
+    let normalized_authority = normalize_connect_authority(authority, mode);
+    let (server_host, server_port) =
+        parse_connect_authority_with_mode(&normalized_authority, mode)?;
     Ok(ConnectRequest {
         server_host,
         server_port,
@@ -72,6 +94,13 @@ pub fn parse_connect_request_line(request_line: &str) -> Result<ConnectRequest, 
 pub fn parse_connect_request_head(
     input: &[u8],
 ) -> Result<(ConnectRequest, usize), ConnectParseError> {
+    parse_connect_request_head_with_mode(input, ConnectParseMode::Strict)
+}
+
+pub fn parse_connect_request_head_with_mode(
+    input: &[u8],
+    mode: ConnectParseMode,
+) -> Result<(ConnectRequest, usize), ConnectParseError> {
     let header_end = header_terminator_index(input).ok_or(ConnectParseError::IncompleteHeaders)?;
     let head =
         std::str::from_utf8(&input[..header_end]).map_err(|_| ConnectParseError::InvalidUtf8)?;
@@ -79,7 +108,7 @@ pub fn parse_connect_request_head(
         .split("\r\n")
         .next()
         .ok_or(ConnectParseError::EmptyRequestLine)?;
-    let request = parse_connect_request_line(request_line)?;
+    let request = parse_connect_request_line_with_mode(request_line, mode)?;
     Ok((request, header_end))
 }
 
@@ -90,7 +119,10 @@ fn header_terminator_index(input: &[u8]) -> Option<usize> {
         .map(|index| index + 4)
 }
 
-fn parse_connect_authority(authority: &str) -> Result<(String, u16), ConnectParseError> {
+fn parse_connect_authority_with_mode(
+    authority: &str,
+    mode: ConnectParseMode,
+) -> Result<(String, u16), ConnectParseError> {
     if authority.starts_with('[') {
         let bracket_close = authority
             .find(']')
@@ -101,12 +133,21 @@ fn parse_connect_authority(authority: &str) -> Result<(String, u16), ConnectPars
         }
 
         let suffix = &authority[bracket_close + 1..];
+        if suffix.is_empty() {
+            if mode == ConnectParseMode::Lenient {
+                return Ok((host.to_string(), 443));
+            }
+            return Err(ConnectParseError::MissingPort);
+        }
         if !suffix.starts_with(':') {
             return Err(ConnectParseError::MissingPort);
         }
 
         let port_text = &suffix[1..];
         if port_text.is_empty() {
+            if mode == ConnectParseMode::Lenient {
+                return Ok((host.to_string(), 443));
+            }
             return Err(ConnectParseError::MissingPort);
         }
 
@@ -116,19 +157,32 @@ fn parse_connect_authority(authority: &str) -> Result<(String, u16), ConnectPars
         return Ok((host.to_string(), server_port));
     }
 
-    let (host, port_text) = authority
-        .rsplit_once(':')
-        .ok_or(ConnectParseError::MissingPort)?;
+    let (host, port_text) = match authority.rsplit_once(':') {
+        Some(pair) => pair,
+        None if mode == ConnectParseMode::Lenient => {
+            if authority.is_empty() {
+                return Err(ConnectParseError::InvalidAuthority);
+            }
+            return Ok((authority.to_string(), 443));
+        }
+        None => return Err(ConnectParseError::MissingPort),
+    };
 
     if host.is_empty() {
         return Err(ConnectParseError::InvalidAuthority);
     }
 
     if host.contains(':') {
+        if mode == ConnectParseMode::Lenient && authority.parse::<IpAddr>().is_ok() {
+            return Ok((authority.to_string(), 443));
+        }
         return Err(ConnectParseError::InvalidAuthority);
     }
 
     if port_text.is_empty() {
+        if mode == ConnectParseMode::Lenient {
+            return Ok((host.to_string(), 443));
+        }
         return Err(ConnectParseError::MissingPort);
     }
 
@@ -138,45 +192,21 @@ fn parse_connect_authority(authority: &str) -> Result<(String, u16), ConnectPars
     Ok((host.to_string(), server_port))
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MitmConfig {
-    pub listen_addr: String,
-    pub listen_port: u16,
-    pub max_http_head_bytes: usize,
-    pub ca_cert_pem_path: Option<String>,
-    pub ca_key_pem_path: Option<String>,
-    pub ca_common_name: String,
-    pub ca_organization: String,
-    pub leaf_cert_cache_capacity: usize,
-    pub ca_rotate_after_seconds: Option<u64>,
-    pub ignore_hosts: Vec<String>,
-    pub blocked_hosts: Vec<String>,
-    pub http2_enabled: bool,
-    pub http2_max_header_list_size: u32,
-    pub http3_passthrough: bool,
-    pub upstream_tls_insecure_skip_verify: bool,
-}
-
-impl Default for MitmConfig {
-    fn default() -> Self {
-        Self {
-            listen_addr: "127.0.0.1".to_string(),
-            listen_port: 8080,
-            max_http_head_bytes: 64 * 1024,
-            ca_cert_pem_path: None,
-            ca_key_pem_path: None,
-            ca_common_name: "soth-mitm Local CA".to_string(),
-            ca_organization: "soth-mitm".to_string(),
-            leaf_cert_cache_capacity: 1024,
-            ca_rotate_after_seconds: None,
-            ignore_hosts: Vec::new(),
-            blocked_hosts: Vec::new(),
-            http2_enabled: true,
-            http2_max_header_list_size: 64 * 1024,
-            http3_passthrough: true,
-            upstream_tls_insecure_skip_verify: false,
-        }
+fn normalize_connect_authority(authority: &str, mode: ConnectParseMode) -> String {
+    if mode == ConnectParseMode::Strict {
+        return authority.to_string();
     }
+    let trimmed = authority.trim();
+    let without_scheme = trimmed
+        .strip_prefix("http://")
+        .or_else(|| trimmed.strip_prefix("https://"))
+        .unwrap_or(trimmed);
+    let authority_only = without_scheme
+        .split('/')
+        .next()
+        .unwrap_or(without_scheme)
+        .trim();
+    authority_only.to_string()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -189,7 +219,7 @@ pub struct ConnectOutcome {
 pub struct MitmEngine<P, S>
 where
     P: PolicyEngine,
-    S: EventSink,
+    S: EventConsumer,
 {
     pub config: MitmConfig,
     policy: P,
@@ -199,14 +229,27 @@ where
     flow_state_tracker: FlowStateTracker,
     process_started_at: Instant,
     last_monotonic_ns: AtomicU64,
+    recently_closed_flows: Mutex<VecDeque<u64>>,
 }
 
 impl<P, S> MitmEngine<P, S>
 where
     P: PolicyEngine,
-    S: EventSink,
+    S: EventConsumer,
 {
     pub fn new(config: MitmConfig, policy: P, sink: S) -> Self {
+        config
+            .validate()
+            .expect("invalid MitmConfig: validation failed");
+        Self::new_unchecked(config, policy, sink)
+    }
+
+    pub fn new_checked(config: MitmConfig, policy: P, sink: S) -> Result<Self, MitmConfigError> {
+        config.validate()?;
+        Ok(Self::new_unchecked(config, policy, sink))
+    }
+
+    fn new_unchecked(config: MitmConfig, policy: P, sink: S) -> Self {
         Self {
             config,
             policy,
@@ -216,6 +259,7 @@ where
             flow_state_tracker: FlowStateTracker::default(),
             process_started_at: Instant::now(),
             last_monotonic_ns: AtomicU64::new(0),
+            recently_closed_flows: Mutex::new(VecDeque::new()),
         }
     }
 
@@ -262,12 +306,24 @@ where
     }
 
     pub fn emit_event(&self, mut event: Event) {
+        if event.kind == EventType::StreamClosed
+            && !self.register_stream_closed(event.context.flow_id)
+        {
+            return;
+        }
+
         event.sequence_id = self.next_sequence_id.fetch_add(1, Ordering::Relaxed);
-        event.flow_sequence_id = self
+        let flow_sequence_id = self
             .flow_state_tracker
             .on_event(event.context.flow_id, event.kind);
+        if flow_sequence_id as usize > self.config.max_flow_event_backlog
+            && event.kind != EventType::StreamClosed
+        {
+            return;
+        }
+        event.flow_sequence_id = flow_sequence_id;
         event.occurred_at_monotonic_ns = u128::from(self.reserve_monotonic_ns());
-        self.sink.emit(event);
+        self.sink.consume(EventEnvelope::from_event(event));
     }
 
     pub fn allocate_flow_id(&self) -> u64 {
@@ -296,54 +352,27 @@ where
             }
         }
     }
+
+    fn register_stream_closed(&self, flow_id: u64) -> bool {
+        const RECENT_CLOSED_FLOW_IDS: usize = 16_384;
+        let mut closed = self
+            .recently_closed_flows
+            .lock()
+            .expect("recently_closed_flows lock poisoned");
+        if closed.iter().any(|existing| *existing == flow_id) {
+            return false;
+        }
+        closed.push_back(flow_id);
+        while closed.len() > RECENT_CLOSED_FLOW_IDS {
+            closed.pop_front();
+        }
+        true
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_connect_request_head, parse_connect_request_line, ConnectParseError};
-
-    #[test]
-    fn parses_connect_request_line_with_domain_authority() {
-        let parsed =
-            parse_connect_request_line("CONNECT api.example.com:443 HTTP/1.1").expect("must parse");
-        assert_eq!(parsed.server_host, "api.example.com");
-        assert_eq!(parsed.server_port, 443);
-    }
-
-    #[test]
-    fn parses_connect_request_line_with_ipv6_authority() {
-        let parsed =
-            parse_connect_request_line("CONNECT [2001:db8::1]:8443 HTTP/1.1").expect("must parse");
-        assert_eq!(parsed.server_host, "2001:db8::1");
-        assert_eq!(parsed.server_port, 8443);
-    }
-
-    #[test]
-    fn rejects_non_connect_method() {
-        let error = parse_connect_request_line("GET / HTTP/1.1").expect_err("must fail");
-        assert_eq!(error, ConnectParseError::MethodNotConnect);
-    }
-
-    #[test]
-    fn rejects_unbracketed_ipv6_authority() {
-        let error =
-            parse_connect_request_line("CONNECT 2001:db8::1:443 HTTP/1.1").expect_err("must fail");
-        assert_eq!(error, ConnectParseError::InvalidAuthority);
-    }
-
-    #[test]
-    fn parses_connect_head_and_returns_header_len() {
-        let raw = b"CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\nhello";
-        let (parsed, header_len) = parse_connect_request_head(raw).expect("must parse");
-        assert_eq!(parsed.server_host, "example.com");
-        assert_eq!(parsed.server_port, 443);
-        assert_eq!(&raw[header_len..], b"hello");
-    }
-
-    #[test]
-    fn rejects_incomplete_headers() {
-        let raw = b"CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n";
-        let error = parse_connect_request_head(raw).expect_err("must fail");
-        assert_eq!(error, ConnectParseError::IncompleteHeaders);
-    }
+    include!("tests_config_schema.rs");
+    include!("tests_connect_parser.rs");
+    include!("tests_engine_guardrails.rs");
 }

@@ -4,98 +4,98 @@ This checklist turns `LIGHTWEIGHT_PROXY_REPO_IMPLEMENTATION_PLAN.md` into an exe
 
 ## 0) Naming and Workspace Contract
 
-- [ ] Repo name is `soth-mitm` and all docs/config/labels use this naming consistently.
-- [ ] Rust workspace created with crates:
-  - [ ] `mitm-core`
-  - [ ] `mitm-tls`
-  - [ ] `mitm-http`
-  - [ ] `mitm-policy`
-  - [ ] `mitm-observe`
-  - [ ] `mitm-sidecar` (optional).
-- [ ] `soth` integration crate agreed: `crates/soth-proxy-adapter`.
+- [x] Repo name is `soth-mitm` and all docs/config/labels use this naming consistently.
+- [x] Rust workspace created with crates:
+  - [x] `mitm-core`
+  - [x] `mitm-tls`
+  - [x] `mitm-http`
+  - [x] `mitm-policy`
+  - [x] `mitm-observe`
+  - [x] `mitm-sidecar` (optional).
+- [x] Consumer integration crate contract agreed (implemented outside proxy core; see `docs/consumer/soth-proxy-adapter-contract.md`, e.g. `soth-proxy-adapter` in `soth` repo).
 
 ## 1) Runtime and Dependency Baseline
 
-- [ ] Pin toolchain:
-  - [ ] `rust-toolchain.toml`
-  - [ ] MSRV policy documented.
-- [ ] Pin core runtime libs:
-  - [ ] `tokio` (async runtime)
-  - [ ] `hyper` + `hyper-util` (HTTP/1.1 + HTTP/2 plumbing)
-  - [ ] `h2` (fine HTTP/2 control if needed)
-  - [ ] `tokio-rustls` + `rustls` (TLS)
-  - [ ] `rcgen` (default CA/leaf issuance path)
-  - [ ] optional `openssl` path behind feature flag
-  - [ ] `serde`/`serde_json` (contracts)
-  - [ ] `tracing` + `metrics` (telemetry).
-- [ ] Record current hudsucker capability gaps as hard requirements for `soth-mitm`:
-  - [ ] SSE support
-  - [ ] HTTP/2 support
-  - [ ] HTTP/3 passthrough handling
-  - [ ] gRPC stream observation.
-- [ ] Use direct custom stack path in `mitm-core`/`mitm-http` for required protocols (no hudsucker dependency for these paths).
-- [ ] Capture hudsucker TLS observability constraint in design docs:
-  - [ ] `should_intercept` is available for CONNECT decision.
-  - [ ] no direct client-TLS-failure callback (no `tls_failed_client` equivalent).
-  - [ ] hudsucker TLS-failure attribution must be treated as inferred/best-effort.
-- [ ] Adopt TLS-ops source priority:
-  - [ ] `mitmproxy` callbacks as authoritative (`tls_failed_client` class surface).
-  - [ ] custom/native path next when semantics are equivalent and validated.
-  - [ ] hudsucker path marked inferred.
+- [x] Pin toolchain:
+  - [x] `rust-toolchain.toml`
+  - [x] MSRV policy documented.
+- [x] Pin core runtime libs:
+  - [x] `tokio` (async runtime)
+  - [x] `hyper` + `hyper-util` (HTTP/1.1 + HTTP/2 plumbing)
+  - [x] `h2` (fine HTTP/2 control if needed)
+  - [x] `tokio-rustls` + `rustls` (TLS)
+  - [x] `rcgen` (default CA/leaf issuance path)
+  - [x] optional `openssl` path behind feature flag
+  - [x] `serde`/`serde_json` (contracts)
+  - [x] `tracing` + `metrics` (telemetry).
+- [x] Record current hudsucker capability gaps as hard requirements for `soth-mitm`:
+  - [x] SSE support
+  - [x] HTTP/2 support
+  - [x] HTTP/3 passthrough handling
+  - [x] gRPC stream observation.
+- [x] Use direct custom stack path in `mitm-core`/`mitm-http` for required protocols (no hudsucker dependency for these paths).
+- [x] Capture hudsucker TLS observability constraint in design docs:
+  - [x] `should_intercept` is available for CONNECT decision.
+  - [x] no direct client-TLS-failure callback (no `tls_failed_client` equivalent).
+  - [x] hudsucker TLS-failure attribution must be treated as inferred/best-effort.
+- [x] Adopt TLS-ops source priority:
+  - [x] `mitmproxy` callbacks as authoritative (`tls_failed_client` class surface).
+  - [x] custom/native path next when semantics are equivalent and validated.
+  - [x] hudsucker path marked inferred.
 
 ## 2) Config and Contract Freeze
 
-- [ ] Define config schema with serde + validation:
-  - [ ] listen addr/port
-  - [ ] `ignore_hosts`
-  - [ ] `http2_enabled`
-  - [ ] `http2_max_header_list_size`
-  - [ ] `http3_passthrough` (initially tunnel-only)
-  - [ ] certificate paths/rotation settings
-  - [ ] event sink settings (UDS/gRPC/file/queue).
-- [ ] Freeze event schema (`v1`) before heavy implementation.
-- [ ] Define compatibility policy for minor/patch versions.
+- [x] Define config schema with serde + validation:
+  - [x] listen addr/port
+  - [x] `ignore_hosts`
+  - [x] `http2_enabled`
+  - [x] `http2_max_header_list_size`
+  - [x] `http3_passthrough` (initially tunnel-only)
+  - [x] certificate paths/rotation settings
+  - [x] event sink settings (UDS/gRPC/file/queue).
+- [x] Freeze event schema (`v1`) before heavy implementation.
+- [x] Define compatibility policy for minor/patch versions.
 
 ## 3) Event API (Must Be Deterministic)
 
-- [ ] Implement event types:
-  - [ ] `connect_received`
-  - [ ] `connect_decision`
-  - [ ] `tls_handshake_started`
-  - [ ] `tls_handshake_succeeded`
-  - [ ] `tls_handshake_failed`
-  - [ ] `request_headers`
-  - [ ] `request_body_chunk`
-  - [ ] `response_headers`
-  - [ ] `response_body_chunk`
-  - [ ] `stream_closed`.
-- [ ] Ensure every event includes:
-  - [ ] `flow_id`
-  - [ ] `client_addr`
-  - [ ] `server_host`
-  - [ ] `server_port`
-  - [ ] `protocol`
-  - [ ] timestamp.
-- [ ] Add ordering invariants and sequence ids for replay/debug.
-- [ ] Add WebSocket turn-level event contract:
-  - [ ] `ws_turn_started`
-  - [ ] `ws_turn_completed`
-  - [ ] turn id, initiator direction, frame counts, byte counts, start/end timestamps.
+- [x] Implement event types:
+  - [x] `connect_received`
+  - [x] `connect_decision`
+  - [x] `tls_handshake_started`
+  - [x] `tls_handshake_succeeded`
+  - [x] `tls_handshake_failed`
+  - [x] `request_headers`
+  - [x] `request_body_chunk`
+  - [x] `response_headers`
+  - [x] `response_body_chunk`
+  - [x] `stream_closed`.
+- [x] Ensure every event includes:
+  - [x] `flow_id`
+  - [x] `client_addr`
+  - [x] `server_host`
+  - [x] `server_port`
+  - [x] `protocol`
+  - [x] timestamp.
+- [x] Add ordering invariants and sequence ids for replay/debug.
+- [x] Add WebSocket turn-level event contract:
+  - [x] `ws_turn_started`
+  - [x] `ws_turn_completed`
+  - [x] turn id, initiator direction, frame counts, byte counts, start/end timestamps.
 
 ## 4) Phase 0: Bootstrap
 
-- [ ] Create workspace skeleton and crate boundaries.
+- [x] Create workspace skeleton and crate boundaries.
 - [x] Add CI jobs:
   - [x] `cargo fmt --check`
   - [x] `cargo clippy -- -D warnings`
   - [x] `cargo test`
   - [x] integration smoke tests.
-- [ ] Add fixture harness:
+- [x] Add fixture harness:
   - [x] Phase A CONNECT fixtures (`block`, `tunnel`, parse-failure, 500 concurrent short-lived tunnels).
-  - [ ] HTTP/1.1 upstream
-  - [ ] HTTP/2 upstream
-  - [ ] WS/SSE upstream
-  - [ ] TLS failure fixtures (unknown CA, invalid chain, timeout/reset).
+  - [x] HTTP/1.1 upstream
+  - [x] HTTP/2 upstream
+  - [x] WS/SSE upstream
+  - [x] TLS failure fixtures (unknown CA, invalid chain, timeout/reset).
 
 ## 5) Phase 1: Transport Core (Rust)
 
@@ -112,18 +112,18 @@ This checklist turns `LIGHTWEIGHT_PROXY_REPO_IMPLEMENTATION_PLAN.md` into an exe
   - [x] HTTP/1.1 MITM baseline implemented for `intercept` decision path (downstream TLS terminate + upstream TLS relay + HTTP lifecycle events)
   - [x] CA-backed certificate store implemented (load/generate, leaf cache, force-rotate hook, cache hit/miss metrics)
 
-- [ ] `P1-01` Listener and flow lifecycle in `mitm-core`.
-  - [ ] Scope: TCP accept loop, flow id allocation, connect/disconnect lifecycle events.
-  - [ ] Deliverables: `mitm_core::server` module + integration test for concurrent connections.
-  - [ ] Acceptance: 500 parallel short-lived connections complete without panics or leaked tasks.
-- [ ] `P1-02` CONNECT parser and policy dispatch.
-  - [ ] Scope: parse `host:port`, call policy engine, emit `connect_received` + `connect_decision`.
-  - [ ] Deliverables: CONNECT parser with strict/lenient modes, policy decision trace fields.
-  - [ ] Acceptance: golden tests for valid/invalid CONNECT lines and deterministic decisions.
-- [ ] `P1-03` Action handlers: `block` and `tunnel`.
-  - [ ] Scope: deterministic deny response for `block`, raw relay for `tunnel`.
-  - [ ] Deliverables: response templates, structured reason codes, bypass metrics.
-  - [ ] Acceptance: blocked hosts never open upstream sockets; tunneled hosts never trigger MITM path.
+- [x] `P1-01` Listener and flow lifecycle in `mitm-core`.
+  - [x] Scope: TCP accept loop, flow id allocation, connect/disconnect lifecycle events.
+  - [x] Deliverables: `mitm_core::server` module + integration test for concurrent connections.
+  - [x] Acceptance: 500 parallel short-lived connections complete without panics or leaked tasks.
+- [x] `P1-02` CONNECT parser and policy dispatch.
+  - [x] Scope: parse `host:port`, call policy engine, emit `connect_received` + `connect_decision`.
+  - [x] Deliverables: CONNECT parser with strict/lenient modes, policy decision trace fields.
+  - [x] Acceptance: golden tests for valid/invalid CONNECT lines and deterministic decisions.
+- [x] `P1-03` Action handlers: `block` and `tunnel`.
+  - [x] Scope: deterministic deny response for `block`, raw relay for `tunnel`.
+  - [x] Deliverables: response templates, structured reason codes, bypass metrics.
+  - [x] Acceptance: blocked hosts never open upstream sockets; tunneled hosts never trigger MITM path.
 - [x] `P1-04` HTTP/1.1 MITM baseline.
   - [x] Scope: downstream TLS termination + upstream TLS/client relay for HTTP/1.1.
   - [x] Deliverables: request/response forwarding with header and body chunk event emission.
@@ -212,79 +212,116 @@ This checklist turns `LIGHTWEIGHT_PROXY_REPO_IMPLEMENTATION_PLAN.md` into an exe
   - [x] Scope: content-type/heuristic detection, bounded decode limits, safe fallback to raw bytes.
   - [x] Deliverables: msgpack parser module + limit configuration knobs.
   - [x] Acceptance: malformed/oversized msgpack inputs fail safely without process instability.
-- [ ] `P2-12` Phase-2 protocol test gate.
-  - [ ] Scope: protocol matrix CI for HTTP/2, WS, SSE, HTTP/3 passthrough, gRPC, msgpack.
-  - [ ] Deliverables: matrix test job + failure triage output artifact.
-  - [ ] Acceptance: all P2 protocol fixtures green on CI before Phase 3 adapter integration.
+- [x] `P2-12` Phase-2 protocol test gate.
+  - [x] Scope: protocol matrix CI for HTTP/2, WS, SSE, HTTP/3 passthrough, gRPC, msgpack.
+  - [x] Deliverables: matrix test job + failure triage output artifact.
+  - [x] Acceptance: gate enforces all required P2 protocol fixtures and fails on missing coverage or failing lanes.
+- [x] `P2-13` Protocol triage aggregation.
+  - [x] Scope: merge lane artifacts into a single actionable summary.
+  - [x] Deliverables: `status_aggregate.tsv`, `summary.md`, `failed_lanes.txt`, `missing_protocols.txt`.
+  - [x] Acceptance: triage job exits non-zero on lane failures or missing required protocol coverage.
+- [x] `P2-14` Local Phase-2 matrix orchestrator.
+  - [x] Scope: deterministic local execution of all P2 protocol lanes.
+  - [x] Deliverables: `scripts/p2_protocol_matrix.sh`.
+  - [x] Acceptance: local command runs all lanes then triage with a single pass/fail result.
+- [x] `P2-15` Required protocol-coverage assertions.
+  - [x] Scope: enforce `http2`, `websocket`, `sse`, `http3_passthrough`, `grpc_http2`, `msgpack`.
+  - [x] Deliverables: triage-time required-protocol coverage checks.
+  - [x] Acceptance: missing protocol coverage hard-fails the gate.
+- [x] `P2-16` CI lane matrix job.
+  - [x] Scope: split Phase-2 protocol suites into per-lane CI jobs.
+  - [x] Deliverables: `phase2_protocol_matrix` GitHub Actions job.
+  - [x] Acceptance: one artifact package uploaded per lane.
+- [x] `P2-17` CI triage aggregation job.
+  - [x] Scope: collect lane artifacts and compute final protocol-gate verdict.
+  - [x] Deliverables: `phase2_protocol_triage` GitHub Actions job + triage artifact upload.
+  - [x] Acceptance: CI gate fails when triage identifies failing lanes or missing protocol coverage.
+- [x] `P2-18` Protocol matrix runbook.
+  - [x] Scope: document matrix lanes, required coverage, and local usage.
+  - [x] Deliverables: `docs/testing/protocol-matrix.md`.
+  - [x] Acceptance: runbook maps every required protocol to its lane command.
+- [x] `P2-19` CI gates runbook.
+  - [x] Scope: document CI job contract and triage artifact schema.
+  - [x] Deliverables: `docs/testing/ci-gates.md`.
+  - [x] Acceptance: runbook covers job roles, fail conditions, and artifact paths.
+- [x] `P2-20` Developer testing entrypoint update.
+  - [x] Scope: expose new P2 commands in top-level docs.
+  - [x] Deliverables: `README.md` testing section updates.
+  - [x] Acceptance: README includes direct local commands for Phase-2 gate execution.
+- [x] `P2-21` Matrix manifest-driven lane source of truth.
+  - [x] Scope: centralize lane definitions in a versioned manifest.
+  - [x] Deliverables: `scripts/p2_protocol_matrix.tsv`.
+  - [x] Acceptance: lane runner and local orchestrator both read the same manifest file.
 
-## 7) Phase 3: SOTH Adapter
+## 7) Phase 3: Consumer Adapter Surface (Proxy-Core First)
 
-- [ ] Adapter consumes bundle rules and maps to `mitm-policy`.
-- [ ] Adapter converts proxy events to Exchange inputs without semantic drift.
-- [ ] Preserve existing SOTH identity/budget/routing checks.
-- [ ] Add conformance tests with golden flow fixtures.
+- [x] Expose stable handler interfaces for decisions (`intercept|tunnel|block`) without product-specific rule logic (`tunnel` is metadata-only passthrough mode).
+- [x] Expose stable event-consumer interfaces for deterministic proxy event streams.
+- [x] Keep `soth-mitm` free of vendor/product-specific behavior; downstream consumers map their own rules into proxy handlers.
+- [x] Add consumer-agnostic conformance tests with golden flow fixtures.
 
 ## 8) Phase 4: Hardening
 
-- [ ] Fuzz targets:
-  - [ ] CONNECT parser/state machine
-  - [ ] TLS classification parser
-  - [ ] HTTP header parsing boundaries.
-  - [ ] gRPC framing parser boundaries (length mismatches, chunk splits, compression flag handling).
-  - [ ] SSE incremental parser boundaries (line breaks, partial fields, very long events).
-  - [ ] msgpack decoder bounds (depth, map size, malformed input).
-  - [ ] layered decoder ordering/interaction invariants.
-- [ ] Performance gates:
-  - [ ] connection churn
-  - [ ] long-lived streams
-  - [ ] header stress
-  - [ ] memory ceiling checks.
-- [ ] Failure injection:
-  - [ ] reset/timeout
-  - [ ] invalid cert chains
-  - [ ] upstream EOF mid-stream.
-- [ ] Adopt and execute `PROXY_TESTING_AND_HARDENING_PLAN.md` as the authoritative hardening work plan.
-- [ ] Implement required tool lanes from plan:
-  - [ ] `h2spec`
-  - [ ] `h2load`
-  - [ ] `curl` (`--proxy`, `--http2`, `--http3`)
-  - [ ] `websocat` + Autobahn Test Suite
-  - [ ] `grpcurl` + `ghz`
-  - [ ] `openssl s_client` + `testssl.sh` + `badssl.com`
-  - [ ] `wrk` + `hey`
-  - [ ] `toxiproxy` + `tc netem`
-  - [ ] `proptest` + `cargo-fuzz`.
-- [ ] Differential validation lanes:
-  - [ ] compare `soth-mitm` vs mitmproxy event ordering on shared fixture corpus
-  - [ ] compare TLS taxonomy and source-confidence metadata
-  - [ ] keep hudsucker comparison lane scoped to supported protocol/mode surface only.
-- [ ] Do not use deprecated mitmproxy `pathod/pathoc` tooling for new test harnesses.
+- [x] Fuzz targets:
+  - [x] CONNECT parser/state machine
+  - [x] TLS classification parser
+  - [x] HTTP header parsing boundaries.
+  - [x] gRPC framing parser boundaries (length mismatches, chunk splits, compression flag handling).
+  - [x] SSE incremental parser boundaries (line breaks, partial fields, very long events).
+  - [x] msgpack decoder bounds (depth, map size, malformed input).
+  - [x] layered decoder ordering/interaction invariants.
+- [x] Performance gates:
+  - [x] connection churn
+  - [x] long-lived streams
+  - [x] header stress
+  - [x] memory ceiling checks.
+- [x] Failure injection:
+  - [x] reset/timeout
+  - [x] invalid cert chains
+  - [x] upstream EOF mid-stream.
+- [x] Adopt and execute `PROXY_TESTING_AND_HARDENING_PLAN.md` as the authoritative hardening work plan.
+- [x] Implement required tool lanes from plan:
+  - [x] `h2spec`
+  - [x] `h2load`
+  - [x] `curl` (`--proxy`, `--http2`, `--http3`)
+  - [x] `websocat` + Autobahn Test Suite
+  - [x] `grpcurl` + `ghz`
+  - [x] `openssl s_client` + `testssl.sh` + `badssl.com`
+  - [x] `wrk` + `hey`
+  - [x] `toxiproxy` + `tc netem`
+  - [x] `proptest` + `cargo-fuzz`.
+- [x] Differential validation lanes:
+  - [x] compare `soth-mitm` vs mitmproxy event ordering on shared fixture corpus
+  - [x] compare TLS taxonomy and source-confidence metadata
+  - [x] keep hudsucker comparison lane scoped to supported protocol/mode surface only.
+- [x] Do not use deprecated mitmproxy `pathod/pathoc` tooling for new test harnesses.
 
 ## 9) Migration in `soth`
 
-- [ ] Dual engine config:
-  - [ ] `proxy_engine: hudsucker`
-  - [ ] `proxy_engine: soth-mitm`.
-- [ ] Shadow mode:
-  - [ ] compare decisions
-  - [ ] compare TLS outcomes
-  - [ ] compare emitted events/order.
-- [ ] Cutover gates:
-  - [ ] parity threshold hit
-  - [ ] soak period passes
-  - [ ] rollback tested.
-- [ ] Do not route SSE/HTTP2/HTTP3/gRPC traffic to hudsucker during migration cohorts.
-- [ ] Do not use hudsucker cohorts as source-of-truth for TLS failure learning metrics.
-- [ ] Start TLS-learning rollouts with mitmproxy-backed cohorts first.
+- [x] Migration/cutover playbook documented in `docs/migration/soth-cutover.md`.
+- [x] Dual engine config:
+  - [x] `proxy_engine: hudsucker`
+  - [x] `proxy_engine: soth-mitm`.
+- [x] Shadow mode:
+  - [x] compare decisions
+  - [x] compare TLS outcomes
+  - [x] compare emitted events/order.
+- [x] Cutover gates:
+  - [x] parity threshold hit
+  - [x] soak period passes
+  - [x] rollback tested.
+- [x] Do not route SSE/HTTP2/HTTP3/gRPC traffic to hudsucker during migration cohorts.
+- [x] Do not use hudsucker cohorts as source-of-truth for TLS failure learning metrics.
+- [x] Start TLS-learning rollouts with mitmproxy-backed cohorts first.
 
 ## 10) Definition of Done
 
-- [ ] Rust proxy emits all required events with deterministic ordering.
-- [ ] TLS taxonomy correctness validated by fixture corpus.
-- [ ] Pinning bypass behavior validated for known problematic hosts.
-- [ ] Performance + memory budgets pass in CI.
-- [ ] `soth` adapter parity accepted and default cutover approved.
-- [ ] SSE/HTTP2/HTTP3/gRPC requirements met without relying on hudsucker fallback.
+- [x] Rust proxy emits all required events with deterministic ordering.
+- [x] TLS taxonomy correctness validated by fixture corpus.
+- [x] Pinning bypass behavior validated for known problematic hosts.
+- [x] Performance + memory budgets pass in CI.
+- [ ] Consumer adapter parity accepted and downstream cutover approved.
+- [x] SSE/HTTP2/HTTP3/gRPC requirements met without relying on hudsucker fallback.
 
 ## 11) Principal Engineer Charter Deltas
 
@@ -294,34 +331,35 @@ This checklist turns `LIGHTWEIGHT_PROXY_REPO_IMPLEMENTATION_PLAN.md` into an exe
   - [x] SSE incremental parsing with deterministic close flush.
   - [x] HTTP/3 passthrough-only policy with explicit telemetry.
   - [x] gRPC header/trailer observation over HTTP/2.
-- [ ] Deterministic event contract hardening:
+- [x] Deterministic event contract hardening:
   - [x] Every event includes `flow_id`.
   - [x] Add global per-flow `sequence_id` across all emitted events.
   - [x] Move timestamps to monotonic ordering semantics for replay stability.
-  - [ ] Add replay assertions proving identical event sequence on deterministic fixture replays.
-- [ ] Flow state machine invariants:
+  - [x] Add replay assertions proving identical event sequence on deterministic fixture replays.
+- [x] Flow state machine invariants:
   - [x] Encode explicit flow state machine (`Accepted -> ... -> Closed`) in core flow runtime.
   - [x] Add debug assertions for illegal transitions.
-  - [ ] Prove every flow path terminates with exactly one `stream_closed`.
-- [ ] Risk budget enforcement:
-  - [ ] Add explicit per-flow memory ceilings (body buffers, decoder buffers, pending metadata).
-  - [ ] Add global in-flight byte and concurrent flow caps.
+  - [x] Prove every flow path terminates with exactly one `stream_closed`.
+- [x] Risk budget enforcement:
+  - [x] Add explicit per-flow memory ceilings (body buffers, decoder buffers, pending metadata).
+  - [x] Add global in-flight byte and concurrent flow caps.
   - [x] Replace unbounded channels in core protocol paths with bounded/backpressure-aware queues.
-- [ ] TLS contract parity with charter:
+- [x] TLS contract parity with charter:
   - [x] Learning ignores inferred providers.
   - [x] Host-scoped TLS failure counters present.
-  - [ ] Normalize field set to include: `normalized_reason`, `raw_provider_error`, `provider_identity`, `source_confidence`.
-- [ ] Decoder chain discipline:
+  - [x] Normalize field set to include: `normalized_reason`, `raw_provider_error`, `provider_identity`, `source_confidence`.
+- [x] Decoder chain discipline:
   - [x] Complete `P2-08` gRPC 5-byte envelope parser with chunk-split and mismatch classification.
   - [x] Complete `P2-09` layered decoder chain with stage-level failure events.
   - [x] Complete `P2-10` anti-hijack sanitization with provenance metadata.
   - [x] Complete `P2-11` msgpack parser with bounded decode/fallback safety.
-- [ ] Self-observability and differential validation:
-  - [ ] Expose queue depth, flow duration, decoder failure, backpressure activation, and memory watermark metrics.
-  - [ ] Build replay/differential lane (`soth-mitm` vs mitmproxy; hudsucker limited to supported surface).
-- [ ] Chaos and adversarial suite:
-  - [ ] Add charter scenarios (TLS fragmenting, malformed HPACK, gRPC split frames, infinite SSE, jitter/loss).
-  - [ ] Gate merges/releases on no panic + deterministic close semantics under chaos corpus.
+  - [x] Complete `P2-12`..`P2-21` protocol matrix/triage gate, CI lanes, and runbooks for Phase-2 coverage.
+- [x] Self-observability and differential validation:
+  - [x] Expose queue depth, flow duration, decoder failure, backpressure activation, and memory watermark metrics.
+  - [x] Build replay/differential lane (`soth-mitm` vs mitmproxy; hudsucker limited to supported surface).
+- [x] Chaos and adversarial suite:
+  - [x] Add charter scenarios (TLS fragmenting, malformed HPACK, gRPC split frames, infinite SSE, jitter/loss).
+  - [x] Gate merges/releases on no panic + deterministic close semantics under chaos corpus.
 
 ## Primary Rust Sources
 
