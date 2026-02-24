@@ -1,0 +1,45 @@
+name: soth-mitm-release-readiness
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "soth-mitm-v*"
+
+permissions:
+  contents: read
+
+jobs:
+  release_readiness:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@cargo-deny
+
+      - name: Enforce dependency policy
+        run: cargo deny check bans licenses sources
+
+      - name: Enforce prohibition policy
+        run: ./scripts/check_prohibitions.sh
+
+      - name: Run P6 release readiness gate
+        env:
+          P6_PUBLISH_ALLOW_DIRTY: "0"
+        run: ./scripts/p6_release_readiness.sh --report-dir artifacts/p6-release-readiness
+
+      - name: Upload release readiness artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: p6-release-readiness
+          path: artifacts/p6-release-readiness
+          if-no-files-found: error

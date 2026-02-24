@@ -36,6 +36,10 @@ sources=(
   artifacts/p5-http2-resilience
   artifacts/p5-event-log-contract
   artifacts/p5-runtime-soak
+  artifacts/p6-reliability-integration
+  artifacts/p6-performance
+  artifacts/p6-acceptance
+  artifacts/p6-release-readiness
   artifacts/fuzz-corpus
 )
 
