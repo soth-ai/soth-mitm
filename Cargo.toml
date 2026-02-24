@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "crates/soth-mitm",
     "crates/mitm-core",
     "crates/mitm-http",
     "crates/mitm-observe",
@@ -33,3 +34,4 @@ tracing = "0.1"
 metrics = "0.24"
 thiserror = "2"
 proptest = "1"
+uuid = { version = "1", features = ["v4"] }

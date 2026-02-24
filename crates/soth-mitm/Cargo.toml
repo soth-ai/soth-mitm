@@ -4,6 +4,11 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
+description = "Rust intercepting proxy crate with deterministic handler/event contracts for SOTH."
+readme = "README.md"
+repository = "https://github.com/soth/soth-mitm"
+keywords = ["proxy", "mitm", "http", "tls"]
+categories = ["network-programming"]
 
 [package.metadata.p6_27]
 forbidden_action_variants = ["Delay", "Hold"]
@@ -34,15 +39,29 @@ forbidden_telemetry_deps = [
 [dependencies]
 bytes = "1"
 http = "1"
-mitm-core = { path = "../mitm-core" }
-mitm-http = { path = "../mitm-http" }
-mitm-observe = { path = "../mitm-observe" }
-mitm-policy = { path = "../mitm-policy" }
-mitm-sidecar = { path = "../mitm-sidecar" }
+mitm-core = { path = "../mitm-core", version = "0.1.0" }
+mitm-http = { path = "../mitm-http", version = "0.1.0" }
+mitm-observe = { path = "../mitm-observe", version = "0.1.0" }
+mitm-policy = { path = "../mitm-policy", version = "0.1.0" }
+mitm-sidecar = { path = "../mitm-sidecar", version = "0.1.0" }
 rcgen = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["process", "rt", "sync", "time"] }
 uuid = { workspace = true }
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+mitm-tls = { path = "../mitm-tls", version = "0.1.0" }
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
+tokio-rustls = { workspace = true }
+
+[[bench]]
+name = "forwarding_latency"
+harness = false
+
+[[bench]]
+name = "handshake_overhead"
+harness = false
+
+[[bench]]
+name = "sse_first_chunk"
+harness = false
