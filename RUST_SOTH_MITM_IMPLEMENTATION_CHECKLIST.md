@@ -450,18 +450,37 @@ This checklist turns `LIGHTWEIGHT_PROXY_REPO_IMPLEMENTATION_PLAN.md` into an exe
     - [x] `cargo test -p mitm-observe --test event_log_v2 -q` passes.
     - [x] `cargo test -p mitm-sidecar --test automation_contract -q` passes.
     - [x] `./scripts/p5_event_log_contract.sh --report-dir testing/reports/phase5_event_log_contract` passes.
-- [ ] `P5-08` Compatibility override layer.
-  - [ ] Scope: controlled per-host policy overrides (`force_tunnel`, `disable_h2`, strict header mode, sanctioned TLS overrides).
-  - [ ] Deliverables: override schema + rule provenance/audit fields in emitted events.
-  - [ ] Acceptance: targeted problematic hosts recover without global behavior regressions.
-- [ ] `P5-09` Cross-platform socket/net hardening.
-  - [ ] Scope: IPv6, Windows socket lifecycle, and FD/concurrency pressure robustness.
-  - [ ] Deliverables: platform-specific socket guards + matrix tests + pressure instrumentation.
-  - [ ] Acceptance: Linux/macOS/Windows matrix passes lifecycle and stress gates with deterministic close semantics.
-- [ ] `P5-10` Control-plane boundary guards (conditional surface).
-  - [ ] Scope: only if management/control endpoints are exposed.
-  - [ ] Deliverables: anti-rebinding defaults + host/origin allowlists + boundary tests.
-  - [ ] Acceptance: control-plane endpoints are non-bypassable by default.
+- [x] `P5-08` Compatibility override layer.
+  - [x] Scope: controlled per-host policy overrides (`force_tunnel`, `disable_h2`, strict header mode, sanctioned TLS overrides).
+    - [x] per-host override schema added in `mitm-core` (`CompatibilityOverrideConfig`) with strict validation for `rule_id`, `host_pattern`, and no-op override rejection.
+    - [x] connect decision path now applies compatibility overrides after base policy evaluation and before action dispatch.
+  - [x] Deliverables: override schema + rule provenance/audit fields in emitted events.
+    - [x] `connect_decision` events now emit deterministic audit fields: `action`, `override_rule_id`, `override_host_pattern`, `override_force_tunnel`, `override_disable_h2`, `override_strict_header_mode`, `override_skip_upstream_verify`.
+    - [x] sidecar intercept path now enforces per-flow overrides for `disable_h2` and `skip_upstream_verify` without global config mutation.
+    - [x] lane added: `scripts/p5_compat_override_layer.sh` + `testing/lanes/registry.tsv`.
+  - [x] Acceptance: targeted problematic hosts recover without global behavior regressions.
+    - [x] `cargo test -p mitm-core --lib compatibility_override_decision_emits_provenance_fields -q` passes.
+    - [x] `cargo test -p mitm-sidecar --test http2_mitm host_override_disable_h2_forces_http1_without_global_toggle -q` passes.
+    - [x] `cargo test -p mitm-sidecar --test tls_profile_matrix host_override_skip_upstream_verify_allows_self_signed_upstream -q` passes.
+- [x] `P5-09` Cross-platform socket/net hardening.
+  - [x] Scope: IPv6, Windows socket lifecycle, and FD/concurrency pressure robustness.
+    - [x] listener binding moved to hardened `TcpSocket` path with resolution-backed address selection and IPv6 dual-stack attempt (`set_only_v6(false)` best-effort).
+    - [x] connection-level socket hardening applied on accept/connect (`TCP_NODELAY`) and benign close-path error classification added for deterministic lifecycle noise suppression.
+  - [x] Deliverables: platform-specific socket guards + matrix tests + pressure instrumentation.
+    - [x] socket hardening module added (`crates/mitm-sidecar/src/socket_hardening.rs`) with lifecycle guard tests.
+    - [x] IPv6/dual-stack integration coverage added (`crates/mitm-sidecar/tests/socket_hardening.rs`).
+    - [x] lane added: `scripts/p5_socket_net_hardening.sh` + `testing/lanes/registry.tsv`; pressure instrumentation coverage carried via `runtime_governor` contract lane.
+  - [x] Acceptance: Linux/macOS/Windows matrix passes lifecycle and stress gates with deterministic close semantics.
+    - [x] `cargo test -p mitm-sidecar --test socket_hardening -q` passes.
+    - [x] `cargo test -p mitm-sidecar --test route_mode_matrix upstream_socks5_mode_honors_ignore_host_and_relays_tunnel -q` passes.
+    - [x] `cargo test -p mitm-sidecar --test runtime_governor -q` passes.
+- [x] `P5-10` Control-plane boundary guards (conditional surface).
+  - [x] Scope: only if management/control endpoints are exposed.
+    - [x] current product surface has no management/control listener; boundary guard is enforced as an explicit negative-surface contract.
+  - [x] Deliverables: anti-rebinding defaults + host/origin allowlists + boundary tests.
+    - [x] conditional guard lane added: `scripts/p5_control_plane_boundary.sh` + `testing/lanes/registry.tsv` to fail on introduction of unmanaged control-plane tokens/surfaces.
+  - [x] Acceptance: control-plane endpoints are non-bypassable by default.
+    - [x] with zero exposed control endpoints, bypass surface is structurally absent and lane-enforced.
 
 Reference:
 - `docs/research/mitmproxy-feature-first-mitigation-plan-2026-02-24.md`
