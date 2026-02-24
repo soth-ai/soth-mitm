@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 use std::env;
 use std::future::Future;
 use std::io;
@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use mitm_core::{MitmConfig, MitmEngine};
+use mitm_observe::{EventConsumer, EventType, VecEventConsumer};
 use mitm_policy::DefaultPolicyEngine;
 use mitm_sidecar::{RuntimeGovernor, SidecarConfig, SidecarServer};
 use mitm_tls::{
@@ -53,6 +54,15 @@ fn soak_bind_retry_delay() -> Duration {
     Duration::from_millis(millis.max(1))
 }
 
+fn soak_h2_upstream_accept_timeout() -> Duration {
+    let secs = env::var("SOTH_MITM_SOAK_H2_UPSTREAM_ACCEPT_TIMEOUT_SECONDS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(10);
+    Duration::from_secs(secs)
+}
+
 fn should_retry_bind(error: &io::Error) -> bool {
     matches!(
         error.kind(),
@@ -81,12 +91,19 @@ async fn bind_loopback_listener_with_retry(label: &str) -> TcpListener {
     unreachable!("bind retries exhausted unexpectedly")
 }
 
+fn build_engine_with_sink<S>(config: MitmConfig, sink: S) -> MitmEngine<DefaultPolicyEngine, S>
+where
+    S: EventConsumer + Send + Sync + 'static,
+{
+    let policy =
+        DefaultPolicyEngine::new(config.ignore_hosts.clone(), config.blocked_hosts.clone());
+    MitmEngine::new(config, policy, sink)
+}
+
 fn build_engine(
     config: MitmConfig,
 ) -> MitmEngine<DefaultPolicyEngine, mitm_observe::NoopEventConsumer> {
-    let policy =
-        DefaultPolicyEngine::new(config.ignore_hosts.clone(), config.blocked_hosts.clone());
-    MitmEngine::new(config, policy, mitm_observe::NoopEventConsumer)
+    build_engine_with_sink(config, mitm_observe::NoopEventConsumer)
 }
 
 async fn run_with_timeout<F>(label: &str, future: F) -> io::Result<()>
@@ -143,6 +160,32 @@ async fn start_sidecar(
     let addr = listener.local_addr().expect("listener local addr");
     let handle = tokio::spawn(server.run_with_listener(listener));
     (addr, handle, runtime)
+}
+
+async fn start_sidecar_with_vec_sink(
+    config: MitmConfig,
+    sink: VecEventConsumer,
+) -> (
+    std::net::SocketAddr,
+    tokio::task::JoinHandle<std::io::Result<()>>,
+    std::sync::Arc<RuntimeGovernor>,
+    VecEventConsumer,
+) {
+    let sidecar_config = SidecarConfig {
+        listen_addr: "127.0.0.1".to_string(),
+        listen_port: 0,
+        max_connect_head_bytes: 64 * 1024,
+        max_http_head_bytes: 64 * 1024,
+        idle_watchdog_timeout: std::time::Duration::from_secs(30),
+        stream_stage_timeout: std::time::Duration::from_secs(15),
+    };
+    let engine = build_engine_with_sink(config, sink.clone());
+    let server = SidecarServer::new(sidecar_config, engine).expect("build sidecar");
+    let runtime = server.runtime_observability_handle();
+    let listener = bind_loopback_listener_with_retry("bind sidecar").await;
+    let addr = listener.local_addr().expect("listener local addr");
+    let handle = tokio::spawn(server.run_with_listener(listener));
+    (addr, handle, runtime, sink)
 }
 
 async fn read_response_head(stream: &mut TcpStream) -> String {
@@ -298,6 +341,7 @@ async fn start_tls_h2_upstream() -> (u16, tokio::task::JoinHandle<()>) {
         let server_config = mitm_tls::build_http_server_config_for_host("127.0.0.1", true)
             .expect("h2 server config");
         let acceptor = TlsAcceptor::from(server_config);
+        let h2_accept_timeout = soak_h2_upstream_accept_timeout();
         loop {
             let (tcp, _) = match listener.accept().await {
                 Ok(value) => value,
@@ -326,9 +370,15 @@ async fn start_tls_h2_upstream() -> (u16, tokio::task::JoinHandle<()>) {
                     }
                     Err(_) => return,
                 };
-                let stream_result = match timeout(Duration::from_secs(3), h2_conn.accept()).await {
+                let stream_result = match timeout(h2_accept_timeout, h2_conn.accept()).await {
                     Ok(Some(result)) => result,
-                    _ => return,
+                    Ok(None) => return,
+                    Err(_) => {
+                        soak_debug(format!(
+                            "[h2-upstream:{conn_id}] timed out waiting for request stream"
+                        ));
+                        return;
+                    }
                 };
                 soak_debug(format!("[h2-upstream:{conn_id}] got request stream"));
                 let (request, mut respond) = match stream_result {
@@ -916,6 +966,120 @@ async fn mixed_traffic_soak_respects_runtime_budget_envelope() {
         snapshot.stuck_flow_count <= (iterations * 2),
         "stuck-flow telemetry exceeded bounded allowance: stuck_flows={} iterations={iterations}",
         snapshot.stuck_flow_count
+    );
+
+    proxy_task.abort();
+    tunnel_task.abort();
+    plain_http_task.abort();
+    tls_http1_task.abort();
+    tls_h2_task.abort();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn mixed_traffic_close_reasons_are_deterministic() {
+    let config = MitmConfig {
+        upstream_tls_insecure_skip_verify: true,
+        http2_enabled: true,
+        max_concurrent_flows: 256,
+        max_in_flight_bytes: 32 * 1024 * 1024,
+        ..MitmConfig::default()
+    };
+    let sink = VecEventConsumer::default();
+
+    let (tunnel_port, tunnel_task) = start_tunnel_upstream().await;
+    let (plain_http_port, plain_http_task) = start_plain_http_upstream().await;
+    let (tls_http1_port, tls_http1_task) = start_tls_http1_upstream().await;
+    let (tls_h2_port, tls_h2_task) = start_tls_h2_upstream().await;
+    let (proxy_addr, proxy_task, runtime, sink) = start_sidecar_with_vec_sink(config, sink).await;
+
+    run_with_timeout(
+        "tunnel_exchange",
+        run_tunnel_exchange(proxy_addr, tunnel_port),
+    )
+    .await
+    .expect("tunnel exchange should succeed");
+    run_with_timeout(
+        "forward_http_exchange",
+        run_forward_http_exchange(proxy_addr, plain_http_port),
+    )
+    .await
+    .expect("forward HTTP exchange should succeed");
+    run_with_timeout(
+        "tls_http1_exchange",
+        run_tls_http1_exchange(proxy_addr, tls_http1_port),
+    )
+    .await
+    .expect("TLS/H1 exchange should succeed");
+    run_with_timeout(
+        "tls_sse_exchange",
+        run_tls_sse_exchange(proxy_addr, tls_http1_port),
+    )
+    .await
+    .expect("TLS/SSE exchange should succeed");
+    run_with_timeout(
+        "tls_h2_exchange",
+        run_tls_h2_exchange(proxy_addr, tls_h2_port),
+    )
+    .await
+    .expect("TLS/H2 exchange should succeed");
+
+    timeout(Duration::from_secs(5), async {
+        loop {
+            let snapshot = runtime.snapshot();
+            if snapshot.active_flows == 0 {
+                break;
+            }
+            sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("runtime should settle after mixed traffic exchange");
+
+    let allowed_reasons: BTreeSet<&'static str> = BTreeSet::from([
+        "blocked",
+        "connect_parse_failed",
+        "tls_handshake_failed",
+        "route_planner_failed",
+        "upstream_connect_failed",
+        "relay_eof",
+        "relay_error",
+        "idle_watchdog_timeout",
+        "stream_stage_timeout",
+        "mitm_http_completed",
+        "mitm_http_error",
+        "websocket_completed",
+        "websocket_error",
+    ]);
+
+    let events = sink.snapshot();
+    let mut seen_flows = HashSet::new();
+    let mut unknown_reasons = BTreeSet::new();
+    for event in events
+        .iter()
+        .filter(|event| event.kind == EventType::StreamClosed)
+    {
+        assert!(
+            seen_flows.insert(event.context.flow_id),
+            "duplicate stream_closed event for flow_id={}",
+            event.context.flow_id
+        );
+        let reason = event
+            .attributes
+            .get("reason_code")
+            .map(String::as_str)
+            .unwrap_or("<missing>");
+        if !allowed_reasons.contains(reason) {
+            unknown_reasons.insert(reason.to_string());
+        }
+    }
+    assert!(
+        !seen_flows.is_empty(),
+        "expected at least one stream_closed event"
+    );
+    assert!(
+        unknown_reasons.is_empty(),
+        "unexpected stream_closed reason codes: {:?}",
+        unknown_reasons
     );
 
     proxy_task.abort();
