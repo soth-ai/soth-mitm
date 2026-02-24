@@ -361,6 +361,111 @@ This checklist turns `LIGHTWEIGHT_PROXY_REPO_IMPLEMENTATION_PLAN.md` into an exe
   - [x] Add charter scenarios (TLS fragmenting, malformed HPACK, gRPC split frames, infinite SSE, jitter/loss).
   - [x] Gate merges/releases on no panic + deterministic close semantics under chaos corpus.
 
+## 12) Phase 5: Feature-First Mitigation Packs (from mitmproxy Top-100 Audit)
+
+- [ ] `P5-01` Runtime budget envelope everywhere.
+  - [ ] Scope: extend runtime-governor enforcement across all protocol paths (`HTTP/1`, `HTTP/2`, `WS`, `SSE`, gRPC relay).
+  - [ ] Deliverables: per-protocol budget hooks + leak tripwire metrics + soak-gate assertions.
+  - [ ] Acceptance: no unbounded RSS/queue growth in 6-12h mixed-traffic soak.
+  - [x] Implementation start: runtime budget hooks wired into HTTP body relay (`content-length`, `chunked`, `close-delimited`), WebSocket frame/payload relay, and HTTP/2 data/trailer forwarding.
+  - [x] Implementation start: runtime tripwire metric `budget_denial_count` added and incremented on in-flight reservation denial + flow-permit saturation.
+  - [x] Implementation closure: mixed-traffic soak gate lane added (`crates/mitm-sidecar/tests/mixed_traffic_soak.rs`, `scripts/p5_runtime_soak.sh`) and wired into configurable profiles (`testing/lanes/registry.tsv`, `scripts/run_testing_plan.sh`).
+  - [x] Reliability contract `1-6` implementation:
+    - [x] failure-class matrix and hard invariants documented (`docs/testing/reliability-invariants.md`).
+    - [x] invariants wired to executable gate lane (`scripts/p5_reliability_contract.sh`, `testing/lanes/registry.tsv`).
+    - [x] central idle watchdog wrappers enforced across core relay/parser I/O paths.
+    - [x] per-stream stage timeout budget wrapper enforced on HTTP/2 relay stages.
+    - [x] structured stuck-flow telemetry counters and timeout close reason codes (`idle_watchdog_timeout`, `stream_stage_timeout`).
+    - [x] parity guidance codified as invariant-first, not blind lockstep parity.
+  - [ ] Pending: execute and gate the full 6-12h mixed-traffic soak for final `P5-01` completion.
+- [x] `P5-02` Flow FSM + transition validator.
+  - [x] Scope: explicit protocol state machines with legal transition checks and deterministic close mapping.
+  - [x] Deliverables: flow transition tables + invariants + panic-free terminalization path.
+    - [x] protocol-machine-aware transition validator implemented in `crates/mitm-core/src/flow_state.rs`.
+    - [x] dedicated transition-table doc added: `docs/testing/flow-fsm-transition-table.md`.
+    - [x] panic-free terminalization path on illegal transitions (`StreamClosing` fallback + invalid-transition counters).
+  - [x] Acceptance: exactly one `stream_closed` per flow and no illegal transition panics under chaos lanes.
+    - [x] single-close guardrail test: `suppresses_duplicate_stream_closed_for_same_flow`.
+    - [x] illegal-transition terminalization test: `invalid_transition_terminalizes_without_panic_and_allows_close`.
+    - [x] `phase5_reliability_contract` lane now runs FSM validator + single-close guardrail checks.
+- [x] `P5-03` HTTP/1 canonicalization + smuggling guard.
+  - [x] Scope: strict request/response head canonicalization and TE/CL conflict handling.
+  - [x] Deliverables: centralized parser/canonicalizer + malformed/smuggling fixture corpus.
+  - [x] Acceptance: RFC-conflict fixtures hard-fail deterministically; absolute-form proxy semantics preserved.
+  - [x] Implementation start:
+    - [x] centralized header canonicalization path added (`crates/mitm-sidecar/src/http_head_parser_smuggling.rs`).
+    - [x] request/response TE+CL conflict hard-fail and unsupported transfer-coding rejection.
+    - [x] conflicting multi-value `Content-Length` hard-fail; identical repeated values accepted.
+    - [x] folded header rejection and strict header-name/value validation.
+    - [x] parser fixture coverage expanded in `http_head_parser_api_tests` for smuggling/absolute-form behavior.
+  - [x] Implementation closure:
+    - [x] strict parser guards extended for signed `Content-Length`, duplicate `chunked`, and header-name colon whitespace.
+    - [x] fixture corpus lane added (`crates/mitm-sidecar/tests/http1_head_corpus.rs`) covering malformed/smuggling request+response heads.
+    - [x] deterministic runtime rejection fixtures added (`crates/mitm-sidecar/tests/http1_mitm_cases/smuggling_guards.rs`) for forward-proxy and intercept paths.
+    - [x] gate lane added (`scripts/p5_http1_smuggling_guard.sh`, `testing/lanes/registry.tsv`) and validated through `run_testing_plan`.
+    - [x] absolute-form proxy semantics preserved in relay fixture (`crates/mitm-sidecar/tests/http1_mitm_cases/success_paths.rs`).
+- [x] `P5-04` TLS policy matrix + cert compatibility profiles.
+  - [x] Scope: formal `strict|default|compat` TLS profiles with explicit SNI/cipher/protocol policy and cert profile controls.
+  - [x] Deliverables: profile config schema + matrix tests (`openssl`, `badssl`, fixture cert chains).
+    - [x] profile schema added in `mitm-core` (`tls_profile`, `upstream_sni_mode`, `downstream_cert_profile`) with strict/SNI validation.
+    - [x] upstream policy builder added in `mitm-tls` (`build_http_client_config_with_policy`) with deterministic protocol/cipher + SNI behavior.
+    - [x] downstream cert compatibility profiles wired (`modern|compat`) into CA leaf issuance path.
+    - [x] sidecar handshake path now enforces TLS profile policy and emits deterministic handshake taxonomy on profile failures.
+    - [x] profile-matrix lane added (`scripts/p5_tls_profile_matrix.sh`, `testing/lanes/registry.tsv`) with `openssl` and optional `badssl` probe coverage.
+  - [x] Acceptance: deterministic TLS taxonomy outcomes across profile matrix with no unexpected handshake regressions.
+    - [x] `cargo test -p mitm-sidecar --test tls_profile_matrix -q` passes.
+    - [x] `./scripts/p5_tls_profile_matrix.sh --report-dir testing/reports/phase5_tls_profile_matrix --skip-network` passes (`badssl_probe` skipped by explicit flag).
+- [x] `P5-05` Upstream route planner abstraction.
+  - [x] Scope: route modes `direct|reverse|upstream-http|upstream-socks5` with immutable per-flow route binding.
+  - [x] Deliverables: route planner module + config validation + deterministic policy integration.
+    - [x] route-mode config schema and strict validation added in `mitm-core` (`route_mode`, `reverse_upstream`, `upstream_http_proxy`, `upstream_socks5_proxy`).
+    - [x] immutable per-flow route binding implemented in sidecar route planner (`FlowRoutePlanner::bind_once`) with explicit rebind rejection.
+    - [x] CONNECT tunnel + intercept + forward HTTP paths now route through shared planner (`direct`, `reverse`, upstream HTTP CONNECT chain, upstream SOCKS5 chain).
+    - [x] policy integration remains target-based in chained mode (policy input uses `target_host:target_port`, never proxy next-hop).
+  - [x] Acceptance: route mode matrix passes; host allow/ignore semantics remain correct in chained mode.
+    - [x] `cargo test -p mitm-sidecar --test route_mode_matrix -q` passes.
+    - [x] `./scripts/p5_route_mode_matrix.sh --report-dir testing/reports/phase5_route_mode_matrix` passes.
+- [x] `P5-06` HTTP/2 resilience pack.
+  - [x] Scope: stream lifecycle hardening, GOAWAY/reset handling, and header-limit parity.
+    - [x] stream-task error handling now classifies benign remote GOAWAY/reset paths and avoids escalating them to flow-fatal errors.
+    - [x] non-fatal stream-level failures now reset only affected streams (no connection-wide abort for benign cancel/refused/stream-closed paths).
+    - [x] per-stream header-limit violations now hard-reset the offending stream deterministically.
+  - [x] Deliverables: H2 state/flow-control improvements + `h2spec` blocking criteria.
+    - [x] H2 resilience helpers added (`is_h2_nonfatal_stream_error`, benign stream-io classification, downstream reset reason mapping).
+    - [x] HTTP/2 relay path hardened for upstream sender readiness, send-request failures, response-header awaits, and downstream response send failures.
+    - [x] new integration fixture added: upstream `RST_STREAM(CANCEL)` on one stream does not fail whole flow.
+    - [x] resilience lane added: `scripts/p5_http2_resilience.sh` + `testing/lanes/registry.tsv` + `docs/testing/h2spec-blocking-criteria.md`.
+  - [x] Acceptance: no assertion/panic under parallel H2 stream stress; protocol matrix remains green.
+    - [x] `cargo test -p mitm-sidecar --test http2_mitm -q` passes.
+    - [x] `./scripts/p5_http2_resilience.sh --report-dir testing/reports/phase5_http2_resilience` passes.
+- [x] `P5-07` Deterministic event log v2 + automation contract.
+  - [x] Scope: stream-aware stable serialization and machine-readable failure/exit contracts.
+    - [x] deterministic event log v2 serializer added in `mitm-observe` (`schema: soth-mitm-event-log-v2`) with protocol-aware `stream_key` derivation.
+    - [x] sidecar now emits structured status lines (`SOTH_MITM_STATUS\t<json>`) with deterministic exit classes/codes for automation.
+  - [x] Deliverables: deterministic event serialization spec + replay indexability + parent-process output guarantees.
+    - [x] event log v2 sink supports flush cadence and byte-based segment rotation with index rows (`segment_id`, `byte_offset`, `line_bytes`).
+    - [x] differential replay lane now prefers `.events.v2.jsonl` fixtures and falls back to legacy `.events.tsv`.
+    - [x] contract docs + lane added (`docs/testing/event-log-v2-contract.md`, `scripts/p5_event_log_contract.sh`, `testing/lanes/registry.tsv`).
+  - [x] Acceptance: replay diffs are stable across repeated runs; automation can classify failures via exit/status contracts.
+    - [x] `cargo test -p mitm-observe --test event_log_v2 -q` passes.
+    - [x] `cargo test -p mitm-sidecar --test automation_contract -q` passes.
+    - [x] `./scripts/p5_event_log_contract.sh --report-dir testing/reports/phase5_event_log_contract` passes.
+- [ ] `P5-08` Compatibility override layer.
+  - [ ] Scope: controlled per-host policy overrides (`force_tunnel`, `disable_h2`, strict header mode, sanctioned TLS overrides).
+  - [ ] Deliverables: override schema + rule provenance/audit fields in emitted events.
+  - [ ] Acceptance: targeted problematic hosts recover without global behavior regressions.
+- [ ] `P5-09` Cross-platform socket/net hardening.
+  - [ ] Scope: IPv6, Windows socket lifecycle, and FD/concurrency pressure robustness.
+  - [ ] Deliverables: platform-specific socket guards + matrix tests + pressure instrumentation.
+  - [ ] Acceptance: Linux/macOS/Windows matrix passes lifecycle and stress gates with deterministic close semantics.
+- [ ] `P5-10` Control-plane boundary guards (conditional surface).
+  - [ ] Scope: only if management/control endpoints are exposed.
+  - [ ] Deliverables: anti-rebinding defaults + host/origin allowlists + boundary tests.
+  - [ ] Acceptance: control-plane endpoints are non-bypassable by default.
+
+Reference:
+- `docs/research/mitmproxy-feature-first-mitigation-plan-2026-02-24.md`
+
 ## Primary Rust Sources
 
 - https://github.com/omjadas/hudsucker

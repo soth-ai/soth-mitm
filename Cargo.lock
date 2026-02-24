@@ -406,6 +406,8 @@ name = "mitm-observe"
 version = "0.1.0"
 dependencies = [
  "mitm-http",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -426,6 +428,8 @@ dependencies = [
  "mitm-tls",
  "openssl",
  "pin-project-lite",
+ "serde",
+ "serde_json",
  "tokio",
  "tokio-openssl",
  "tokio-rustls",

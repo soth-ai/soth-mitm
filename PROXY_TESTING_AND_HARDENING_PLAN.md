@@ -391,6 +391,8 @@ Required docs to maintain with this plan:
 5. `docs/testing/perf-baselines.md`
 6. `docs/testing/differential-vs-mitmproxy.md`
 7. `docs/testing/ci-gates.md`
+8. `docs/testing/reliability-invariants.md`
+9. `docs/testing/flow-fsm-transition-table.md`
 
 ## 11) Definition of Done for This Plan
 

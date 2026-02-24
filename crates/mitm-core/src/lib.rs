@@ -13,8 +13,8 @@ mod config;
 mod flow_state;
 pub mod server;
 pub use config::{
-    ConnectParseMode, DownstreamTlsBackend, EventSinkConfig, EventSinkKind, MitmConfig,
-    MitmConfigError,
+    ConnectParseMode, DownstreamCertProfile, DownstreamTlsBackend, EventSinkConfig, EventSinkKind,
+    MitmConfig, MitmConfigError, RouteEndpointConfig, RouteMode, TlsProfile, UpstreamSniMode,
 };
 use flow_state::FlowStateTracker;
 
@@ -313,9 +313,11 @@ where
         }
 
         event.sequence_id = self.next_sequence_id.fetch_add(1, Ordering::Relaxed);
-        let flow_sequence_id = self
-            .flow_state_tracker
-            .on_event(event.context.flow_id, event.kind);
+        let flow_sequence_id = self.flow_state_tracker.on_event(
+            event.context.flow_id,
+            event.context.protocol,
+            event.kind,
+        );
         if flow_sequence_id as usize > self.config.max_flow_event_backlog
             && event.kind != EventType::StreamClosed
         {

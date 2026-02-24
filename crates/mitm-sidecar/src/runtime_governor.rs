@@ -1,4 +1,5 @@
 use std::collections::VecDeque;
+use std::io;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
@@ -30,7 +31,11 @@ pub struct RuntimeObservabilitySnapshot {
     pub flow_duration_total_ms: u64,
     pub flow_duration_max_ms: u64,
     pub backpressure_activation_count: u64,
+    pub budget_denial_count: u64,
     pub decoder_failure_count: u64,
+    pub idle_timeout_count: u64,
+    pub stream_stage_timeout_count: u64,
+    pub stuck_flow_count: u64,
     pub event_queue_depth: u64,
     pub event_queue_depth_watermark: u64,
 }
@@ -46,7 +51,11 @@ pub struct RuntimeGovernor {
     flow_duration_total_ms: AtomicU64,
     flow_duration_max_ms: AtomicU64,
     backpressure_activation_count: AtomicU64,
+    budget_denial_count: AtomicU64,
     decoder_failure_count: AtomicU64,
+    idle_timeout_count: AtomicU64,
+    stream_stage_timeout_count: AtomicU64,
+    stuck_flow_count: AtomicU64,
     event_queue_depth: AtomicU64,
     event_queue_depth_watermark: AtomicU64,
     closed_flow_ids: Mutex<VecDeque<u64>>,
@@ -69,7 +78,11 @@ impl RuntimeGovernor {
             flow_duration_total_ms: AtomicU64::new(0),
             flow_duration_max_ms: AtomicU64::new(0),
             backpressure_activation_count: AtomicU64::new(0),
+            budget_denial_count: AtomicU64::new(0),
             decoder_failure_count: AtomicU64::new(0),
+            idle_timeout_count: AtomicU64::new(0),
+            stream_stage_timeout_count: AtomicU64::new(0),
+            stuck_flow_count: AtomicU64::new(0),
             event_queue_depth: AtomicU64::new(0),
             event_queue_depth_watermark: AtomicU64::new(0),
             closed_flow_ids: Mutex::new(VecDeque::new()),
@@ -117,13 +130,45 @@ impl RuntimeGovernor {
         }
     }
 
+    pub fn reserve_in_flight_or_error(
+        self: &Arc<Self>,
+        bytes: usize,
+        context: &'static str,
+    ) -> io::Result<InFlightLease> {
+        self.try_reserve_in_flight(bytes).ok_or_else(|| {
+            self.mark_budget_denial();
+            io::Error::new(
+                io::ErrorKind::OutOfMemory,
+                format!("{context}: global in-flight byte budget exceeded"),
+            )
+        })
+    }
+
     pub fn mark_backpressure_activation(&self) {
         self.backpressure_activation_count
             .fetch_add(1, Ordering::Relaxed);
     }
 
+    pub fn mark_budget_denial(&self) {
+        self.budget_denial_count.fetch_add(1, Ordering::Relaxed);
+        self.mark_backpressure_activation();
+    }
+
     pub fn mark_decoder_failure(&self) {
         self.decoder_failure_count.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn mark_idle_timeout(&self) {
+        self.idle_timeout_count.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn mark_stream_stage_timeout(&self) {
+        self.stream_stage_timeout_count
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn mark_stuck_flow(&self) {
+        self.stuck_flow_count.fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn set_event_queue_depth(&self, depth: u64) {
@@ -159,7 +204,11 @@ impl RuntimeGovernor {
             backpressure_activation_count: self
                 .backpressure_activation_count
                 .load(Ordering::Relaxed),
+            budget_denial_count: self.budget_denial_count.load(Ordering::Relaxed),
             decoder_failure_count: self.decoder_failure_count.load(Ordering::Relaxed),
+            idle_timeout_count: self.idle_timeout_count.load(Ordering::Relaxed),
+            stream_stage_timeout_count: self.stream_stage_timeout_count.load(Ordering::Relaxed),
+            stuck_flow_count: self.stuck_flow_count.load(Ordering::Relaxed),
             event_queue_depth: self.event_queue_depth.load(Ordering::Relaxed),
             event_queue_depth_watermark: self.event_queue_depth_watermark.load(Ordering::Relaxed),
         }
@@ -179,6 +228,24 @@ pub fn mark_backpressure_activation_global() {
 pub fn mark_decoder_failure_global() {
     if let Some(governor) = GLOBAL_RUNTIME_GOVERNOR.get() {
         governor.mark_decoder_failure();
+    }
+}
+
+pub fn mark_idle_timeout_global() {
+    if let Some(governor) = GLOBAL_RUNTIME_GOVERNOR.get() {
+        governor.mark_idle_timeout();
+    }
+}
+
+pub fn mark_stream_stage_timeout_global() {
+    if let Some(governor) = GLOBAL_RUNTIME_GOVERNOR.get() {
+        governor.mark_stream_stage_timeout();
+    }
+}
+
+pub fn mark_stuck_flow_global() {
+    if let Some(governor) = GLOBAL_RUNTIME_GOVERNOR.get() {
+        governor.mark_stuck_flow();
     }
 }
 
@@ -283,8 +350,24 @@ mod tests {
             .try_reserve_in_flight(8)
             .expect("second reservation should succeed");
         assert!(governor.try_reserve_in_flight(1).is_none());
+        governor.mark_budget_denial();
         drop(a);
         assert!(governor.try_reserve_in_flight(1).is_some());
         drop(b);
+        let snapshot = governor.snapshot();
+        assert!(snapshot.budget_denial_count >= 1);
+        assert!(snapshot.backpressure_activation_count >= 1);
+    }
+
+    #[test]
+    fn timeout_and_stuck_flow_counters_are_recorded() {
+        let governor = RuntimeGovernor::new(RuntimeBudgetConfig::default());
+        governor.mark_idle_timeout();
+        governor.mark_stream_stage_timeout();
+        governor.mark_stuck_flow();
+        let snapshot = governor.snapshot();
+        assert_eq!(snapshot.idle_timeout_count, 1);
+        assert_eq!(snapshot.stream_stage_timeout_count, 1);
+        assert_eq!(snapshot.stuck_flow_count, 1);
     }
 }

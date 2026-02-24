@@ -4,7 +4,14 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use mitm_http::ApplicationProtocol;
 
-pub const EVENT_SCHEMA_VERSION: &str = "v1";
+mod event_log_v2;
+
+pub use event_log_v2::{
+    deterministic_event_record_v2, DeterministicEventRecordV2, EventLogV2Config,
+    EventLogV2Consumer, DETERMINISTIC_EVENT_LOG_V2_SCHEMA,
+};
+
+pub const EVENT_SCHEMA_VERSION: &str = "v2";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EventType {
@@ -30,6 +37,35 @@ pub enum EventType {
     WebSocketClosed,
     Http3Passthrough,
     StreamClosed,
+}
+
+impl EventType {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ConnectReceived => "connect_received",
+            Self::ConnectParseFailed => "connect_parse_failed",
+            Self::ConnectDecision => "connect_decision",
+            Self::TlsHandshakeStarted => "tls_handshake_started",
+            Self::TlsHandshakeSucceeded => "tls_handshake_succeeded",
+            Self::TlsHandshakeFailed => "tls_handshake_failed",
+            Self::TlsLearningAudit => "tls_learning_audit",
+            Self::RequestHeaders => "request_headers",
+            Self::RequestBodyChunk => "request_body_chunk",
+            Self::ResponseHeaders => "response_headers",
+            Self::ResponseBodyChunk => "response_body_chunk",
+            Self::GrpcRequestHeaders => "grpc_request_headers",
+            Self::GrpcResponseHeaders => "grpc_response_headers",
+            Self::GrpcResponseTrailers => "grpc_response_trailers",
+            Self::SseEvent => "sse_event",
+            Self::WebSocketOpened => "websocket_opened",
+            Self::WebSocketFrame => "websocket_frame",
+            Self::WebSocketTurnStarted => "websocket_turn_started",
+            Self::WebSocketTurnCompleted => "websocket_turn_completed",
+            Self::WebSocketClosed => "websocket_closed",
+            Self::Http3Passthrough => "http3_passthrough",
+            Self::StreamClosed => "stream_closed",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -93,6 +129,12 @@ pub struct NoopEventConsumer;
 
 impl EventConsumer for NoopEventConsumer {
     fn consume(&self, _envelope: EventEnvelope) {}
+}
+
+impl EventConsumer for Box<dyn EventConsumer + Send + Sync> {
+    fn consume(&self, envelope: EventEnvelope) {
+        (**self).consume(envelope);
+    }
 }
 
 #[derive(Debug, Default, Clone)]

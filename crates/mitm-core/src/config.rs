@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+include!("config_route.rs");
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ConnectParseMode {
@@ -24,6 +26,47 @@ pub enum DownstreamTlsBackend {
 impl Default for DownstreamTlsBackend {
     fn default() -> Self {
         Self::Rustls
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TlsProfile {
+    Strict,
+    Default,
+    Compat,
+}
+
+impl Default for TlsProfile {
+    fn default() -> Self {
+        Self::Default
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UpstreamSniMode {
+    Required,
+    Auto,
+    Disabled,
+}
+
+impl Default for UpstreamSniMode {
+    fn default() -> Self {
+        Self::Auto
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DownstreamCertProfile {
+    Modern,
+    Compat,
+}
+
+impl Default for DownstreamCertProfile {
+    fn default() -> Self {
+        Self::Modern
     }
 }
 
@@ -102,6 +145,13 @@ pub struct MitmConfig {
     pub http2_enabled: bool,
     pub http2_max_header_list_size: u32,
     pub http3_passthrough: bool,
+    pub route_mode: RouteMode,
+    pub reverse_upstream: Option<RouteEndpointConfig>,
+    pub upstream_http_proxy: Option<RouteEndpointConfig>,
+    pub upstream_socks5_proxy: Option<RouteEndpointConfig>,
+    pub tls_profile: TlsProfile,
+    pub upstream_sni_mode: UpstreamSniMode,
+    pub downstream_cert_profile: DownstreamCertProfile,
     pub upstream_tls_insecure_skip_verify: bool,
     pub max_flow_body_buffer_bytes: usize,
     pub max_flow_decoder_buffer_bytes: usize,
@@ -130,6 +180,13 @@ impl Default for MitmConfig {
             http2_enabled: true,
             http2_max_header_list_size: 64 * 1024,
             http3_passthrough: true,
+            route_mode: RouteMode::Direct,
+            reverse_upstream: None,
+            upstream_http_proxy: None,
+            upstream_socks5_proxy: None,
+            tls_profile: TlsProfile::Default,
+            upstream_sni_mode: UpstreamSniMode::Auto,
+            downstream_cert_profile: DownstreamCertProfile::Modern,
             upstream_tls_insecure_skip_verify: false,
             max_flow_body_buffer_bytes: 8 * 1024 * 1024,
             max_flow_decoder_buffer_bytes: 4 * 1024 * 1024,
@@ -181,6 +238,15 @@ impl MitmConfig {
         if self.ca_cert_pem_path.is_some() != self.ca_key_pem_path.is_some() {
             return Err(MitmConfigError::InvalidCaPathPair);
         }
+        validate_route_endpoint(self.reverse_upstream.as_ref(), "reverse_upstream")?;
+        validate_route_endpoint(self.upstream_http_proxy.as_ref(), "upstream_http_proxy")?;
+        validate_route_endpoint(self.upstream_socks5_proxy.as_ref(), "upstream_socks5_proxy")?;
+        validate_route_mode_bindings(self)?;
+        if self.tls_profile == TlsProfile::Strict
+            && self.upstream_sni_mode == UpstreamSniMode::Disabled
+        {
+            return Err(MitmConfigError::StrictTlsProfileRequiresSni);
+        }
         require_non_empty(
             Some(&self.ca_common_name),
             "ca_common_name",
@@ -218,6 +284,22 @@ pub enum MitmConfigError {
     MissingEventSinkPath,
     #[error("event_sink.endpoint is required for event_sink kind grpc")]
     MissingEventSinkEndpoint,
+    #[error("tls_profile=strict requires upstream_sni_mode to be auto|required")]
+    StrictTlsProfileRequiresSni,
+    #[error("{field}.host must not be empty")]
+    EmptyRouteEndpointHost { field: &'static str },
+    #[error("{field}.port must be greater than zero")]
+    ZeroRouteEndpointPort { field: &'static str },
+    #[error("route_mode={route_mode} requires {field}")]
+    MissingRouteEndpoint {
+        route_mode: &'static str,
+        field: &'static str,
+    },
+    #[error("route_mode={route_mode} does not allow {field}")]
+    UnexpectedRouteEndpoint {
+        route_mode: &'static str,
+        field: &'static str,
+    },
 }
 
 fn validate_host_list(hosts: &[String], field: &'static str) -> Result<(), MitmConfigError> {

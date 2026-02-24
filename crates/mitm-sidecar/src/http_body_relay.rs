@@ -33,9 +33,17 @@ where
 {
     let total = match mode {
         HttpBodyMode::None => Ok(0),
-        HttpBodyMode::ContentLength(length) => {
-            relay_exact(engine, context, event_kind, source, sink, length, observer).await
-        }
+        HttpBodyMode::ContentLength(length) => relay_exact(
+            engine,
+            context,
+            event_kind,
+            source,
+            sink,
+            length,
+            runtime_governor,
+            observer,
+        )
+        .await,
         HttpBodyMode::Chunked => {
             relay_chunked(
                 engine,
@@ -49,9 +57,16 @@ where
             )
             .await
         }
-        HttpBodyMode::CloseDelimited => {
-            relay_until_eof(engine, context, event_kind, source, sink, observer).await
-        }
+        HttpBodyMode::CloseDelimited => relay_until_eof(
+            engine,
+            context,
+            event_kind,
+            source,
+            sink,
+            runtime_governor,
+            observer,
+        )
+        .await,
     }?;
     observer.on_complete()?;
     Ok(total)
@@ -64,6 +79,7 @@ async fn relay_exact<RS, WS, P, S>(
     source: &mut BufferedConn<RS>,
     sink: &mut WS,
     mut length: u64,
+    runtime_governor: &Arc<runtime_governor::RuntimeGovernor>,
     observer: &mut dyn HttpBodyObserver,
 ) -> io::Result<u64>
 where
@@ -76,7 +92,10 @@ where
 
     if !source.read_buf.is_empty() && length > 0 {
         let take = std::cmp::min(length as usize, source.read_buf.len());
-        sink.write_all(&source.read_buf[..take]).await?;
+        let _in_flight_lease = runtime_governor
+            .reserve_in_flight_or_error(take, "http1_body_prefetch_write")?;
+        write_all_with_idle_timeout(sink, &source.read_buf[..take], "http1_body_prefetch_write")
+            .await?;
         observer.on_chunk(&source.read_buf[..take])?;
         source.read_buf.drain(..take);
         length -= take as u64;
@@ -86,17 +105,21 @@ where
 
     let mut chunk = [0_u8; IO_CHUNK_SIZE];
     while length > 0 {
-        let read = source
-            .stream
-            .read(&mut chunk[..std::cmp::min(IO_CHUNK_SIZE, length as usize)])
-            .await?;
+        let read = read_with_idle_timeout(
+            &mut source.stream,
+            &mut chunk[..std::cmp::min(IO_CHUNK_SIZE, length as usize)],
+            "http1_body_chunk_read",
+        )
+        .await?;
         if read == 0 {
             return Err(io::Error::new(
                 io::ErrorKind::UnexpectedEof,
                 "connection closed before body completed",
             ));
         }
-        sink.write_all(&chunk[..read]).await?;
+        let _in_flight_lease = runtime_governor
+            .reserve_in_flight_or_error(read, "http1_body_chunk_write")?;
+        write_all_with_idle_timeout(sink, &chunk[..read], "http1_body_chunk_write").await?;
         observer.on_chunk(&chunk[..read])?;
         length -= read as u64;
         total += read as u64;
@@ -126,7 +149,9 @@ where
     let mut total = 0_u64;
     loop {
         let line = read_chunk_line(source, runtime_governor).await?;
-        sink.write_all(&line).await?;
+        let _in_flight_lease =
+            runtime_governor.reserve_in_flight_or_error(line.len(), "http1_chunk_line_write")?;
+        write_all_with_idle_timeout(sink, &line, "http1_chunk_line_write").await?;
         let chunk_len = parse_chunk_len(&line)?;
         if chunk_len == 0 {
             let trailers = read_until_pattern(
@@ -142,20 +167,39 @@ where
                         "connection closed before chunked trailers completed",
                     )
                 })?;
-            sink.write_all(&trailers).await?;
+            let _in_flight_lease = runtime_governor
+                .reserve_in_flight_or_error(trailers.len(), "http1_chunk_trailers_write")?;
+            write_all_with_idle_timeout(sink, &trailers, "http1_chunk_trailers_write").await?;
             return Ok(total);
         }
 
-        total += relay_exact(engine, context, event_kind, source, sink, chunk_len, observer).await?;
+        total += relay_exact(
+            engine,
+            context,
+            event_kind,
+            source,
+            sink,
+            chunk_len,
+            runtime_governor,
+            observer,
+        )
+        .await?;
 
-        let chunk_terminator = read_exact_from_source(source, 2).await?;
+        let chunk_terminator = read_exact_from_source(source, 2, runtime_governor).await?;
         if chunk_terminator.as_slice() != b"\r\n" {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "invalid chunk terminator",
             ));
         }
-        sink.write_all(&chunk_terminator).await?;
+        let _in_flight_lease = runtime_governor
+            .reserve_in_flight_or_error(chunk_terminator.len(), "http1_chunk_terminator_write")?;
+        write_all_with_idle_timeout(
+            sink,
+            &chunk_terminator,
+            "http1_chunk_terminator_write",
+        )
+        .await?;
     }
 }
 
@@ -165,6 +209,7 @@ async fn relay_until_eof<RS, WS, P, S>(
     event_kind: EventType,
     source: &mut BufferedConn<RS>,
     sink: &mut WS,
+    runtime_governor: &Arc<runtime_governor::RuntimeGovernor>,
     observer: &mut dyn HttpBodyObserver,
 ) -> io::Result<u64>
 where
@@ -175,7 +220,16 @@ where
 {
     let mut total = 0_u64;
     if !source.read_buf.is_empty() {
-        sink.write_all(&source.read_buf).await?;
+        let _in_flight_lease = runtime_governor.reserve_in_flight_or_error(
+            source.read_buf.len(),
+            "http1_close_delimited_prefetch_write",
+        )?;
+        write_all_with_idle_timeout(
+            sink,
+            &source.read_buf,
+            "http1_close_delimited_prefetch_write",
+        )
+        .await?;
         observer.on_chunk(&source.read_buf)?;
         total += source.read_buf.len() as u64;
         emit_body_chunk_event(
@@ -189,11 +243,15 @@ where
 
     let mut chunk = [0_u8; IO_CHUNK_SIZE];
     loop {
-        let read = source.stream.read(&mut chunk).await?;
+        let read =
+            read_with_idle_timeout(&mut source.stream, &mut chunk, "http1_close_delimited_read")
+                .await?;
         if read == 0 {
             break;
         }
-        sink.write_all(&chunk[..read]).await?;
+        let _in_flight_lease = runtime_governor
+            .reserve_in_flight_or_error(read, "http1_close_delimited_chunk_write")?;
+        write_all_with_idle_timeout(sink, &chunk[..read], "http1_close_delimited_write").await?;
         observer.on_chunk(&chunk[..read])?;
         total += read as u64;
         emit_body_chunk_event(engine, context.clone(), event_kind, read as u64);
@@ -236,10 +294,18 @@ fn parse_chunk_len(line: &[u8]) -> io::Result<u64> {
 async fn read_exact_from_source<S: AsyncRead + Unpin>(
     source: &mut BufferedConn<S>,
     exact_len: usize,
+    runtime_governor: &Arc<runtime_governor::RuntimeGovernor>,
 ) -> io::Result<Vec<u8>> {
+    let _in_flight_lease = runtime_governor
+        .reserve_in_flight_or_error(exact_len, "http1_fixed_read_exact")?;
     while source.read_buf.len() < exact_len {
         let mut chunk = [0_u8; IO_CHUNK_SIZE];
-        let read = source.stream.read(&mut chunk).await?;
+        let read = read_with_idle_timeout(
+            &mut source.stream,
+            &mut chunk,
+            "http1_fixed_read_exact_chunk",
+        )
+        .await?;
         if read == 0 {
             return Err(io::Error::new(
                 io::ErrorKind::UnexpectedEof,
@@ -256,5 +322,5 @@ async fn write_proxy_response(stream: &mut TcpStream, status: &str, body: &str) 
         "HTTP/1.1 {status}\r\nConnection: close\r\nContent-Type: text/plain\r\nContent-Length: {}\r\n\r\n{body}",
         body.len()
     );
-    stream.write_all(response.as_bytes()).await
+    write_all_with_idle_timeout(stream, response.as_bytes(), "proxy_error_response_write").await
 }

@@ -49,6 +49,24 @@ record_status() {
   printf '%s\t%s\t%s\n' "$case_id" "$status" "$detail" >>"$status_tsv"
 }
 
+select_case_inputs() {
+  local case_id="$1"
+  local soth_v2="$input_root/soth-mitm/${case_id}.events.v2.jsonl"
+  local mitm_v2="$input_root/mitmproxy/${case_id}.events.v2.jsonl"
+  local soth_tsv="$input_root/soth-mitm/${case_id}.events.tsv"
+  local mitm_tsv="$input_root/mitmproxy/${case_id}.events.tsv"
+
+  if [[ -f "$soth_v2" && -f "$mitm_v2" ]]; then
+    printf '%s\t%s\t%s\n' "$soth_v2" "$mitm_v2" "v2_jsonl"
+    return 0
+  fi
+  if [[ -f "$soth_tsv" && -f "$mitm_tsv" ]]; then
+    printf '%s\t%s\t%s\n' "$soth_tsv" "$mitm_tsv" "v1_tsv"
+    return 0
+  fi
+  return 1
+}
+
 : >"$status_tsv"
 printf 'case_id\tstatus\tdetail\n' >>"$status_tsv"
 
@@ -57,10 +75,8 @@ while IFS=$'\t' read -r case_id _description; do
     continue
   fi
 
-  soth_file="$input_root/soth-mitm/${case_id}.events.tsv"
-  mitm_file="$input_root/mitmproxy/${case_id}.events.tsv"
-
-  if [[ ! -f "$soth_file" || ! -f "$mitm_file" ]]; then
+  inputs="$(select_case_inputs "$case_id" || true)"
+  if [[ -z "$inputs" ]]; then
     if [[ "$strict_input" -eq 1 ]]; then
       record_status "$case_id" "fail" "missing_input"
     else
@@ -68,12 +84,13 @@ while IFS=$'\t' read -r case_id _description; do
     fi
     continue
   fi
+  IFS=$'\t' read -r soth_file mitm_file input_format <<<"$inputs"
 
   if diff -u "$soth_file" "$mitm_file" >"$drift_root/${case_id}.diff"; then
     rm -f "$drift_root/${case_id}.diff"
-    record_status "$case_id" "pass" "no_drift"
+    record_status "$case_id" "pass" "no_drift:${input_format}"
   else
-    record_status "$case_id" "fail" "drift_detected"
+    record_status "$case_id" "fail" "drift_detected:${input_format}"
   fi
 
 done <"$manifest"

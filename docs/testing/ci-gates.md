@@ -16,6 +16,9 @@ This repository enforces protocol and reliability gates through GitHub Actions.
 10. `phase4_tool_lanes`
 11. `phase4_chaos_network_faults`
 12. `phase4_chaos_adversarial`
+13. `phase5_reliability_contract`
+14. `phase5_event_log_contract`
+15. `phase5_runtime_soak`
 
 ## Phase-2 Gate Contract
 
@@ -43,3 +46,6 @@ The triage output artifact is uploaded as `p2-protocol-triage` and contains:
 - Local tool lanes report: `artifacts/p4-tool-lanes`
 - Local chaos network fault report: `artifacts/p4-chaos-network`
 - Local chaos/adversarial report: `artifacts/p4-chaos`
+- Local phase-5 reliability contract report: `artifacts/p5-reliability-contract`
+- Local phase-5 event log contract report: `artifacts/p5-event-log-contract`
+- Local phase-5 runtime soak report: `artifacts/p5-runtime-soak`

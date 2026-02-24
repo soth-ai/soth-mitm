@@ -31,7 +31,12 @@ The collector inspects these paths when present:
 9. `artifacts/p4-chaos-network`
 10. `artifacts/p4-tool-lanes`
 11. `artifacts/p4-hardening`
-12. `artifacts/fuzz-corpus`
+12. `artifacts/p5-reliability-contract`
+13. `artifacts/p5-route-mode-matrix`
+14. `artifacts/p5-http2-resilience`
+15. `artifacts/p5-event-log-contract`
+16. `artifacts/p5-runtime-soak`
+17. `artifacts/fuzz-corpus`
 
 ## Triage Order
 

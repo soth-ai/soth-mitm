@@ -13,6 +13,14 @@ fn serde_round_trip_preserves_core_flags() {
           "http2_enabled": false,
           "downstream_tls_backend": "openssl",
           "http3_passthrough": true,
+          "route_mode": "upstream_http",
+          "upstream_http_proxy": {
+            "host": "127.0.0.1",
+            "port": 3128
+          },
+          "tls_profile": "compat",
+          "upstream_sni_mode": "disabled",
+          "downstream_cert_profile": "compat",
           "ignore_hosts": ["example.internal"],
           "event_sink": {
             "kind": "grpc",
@@ -29,6 +37,20 @@ fn serde_round_trip_preserves_core_flags() {
         super::DownstreamTlsBackend::Openssl
     );
     assert!(parsed.http3_passthrough);
+    assert_eq!(parsed.route_mode, super::RouteMode::UpstreamHttp);
+    assert_eq!(
+        parsed.upstream_http_proxy,
+        Some(super::RouteEndpointConfig {
+            host: "127.0.0.1".to_string(),
+            port: 3128
+        })
+    );
+    assert_eq!(parsed.tls_profile, super::TlsProfile::Compat);
+    assert_eq!(parsed.upstream_sni_mode, super::UpstreamSniMode::Disabled);
+    assert_eq!(
+        parsed.downstream_cert_profile,
+        super::DownstreamCertProfile::Compat
+    );
     assert_eq!(parsed.ignore_hosts, vec!["example.internal".to_string()]);
     assert_eq!(parsed.event_sink.kind, super::EventSinkKind::Grpc);
     assert_eq!(
@@ -83,4 +105,78 @@ fn validation_rejects_invalid_event_sink_parameters() {
     };
     let err = config.validate().expect_err("grpc sink without endpoint must fail");
     assert_eq!(err, super::MitmConfigError::MissingEventSinkEndpoint);
+}
+
+#[test]
+fn strict_tls_profile_rejects_disabled_sni_mode() {
+    let config = super::MitmConfig {
+        tls_profile: super::TlsProfile::Strict,
+        upstream_sni_mode: super::UpstreamSniMode::Disabled,
+        ..super::MitmConfig::default()
+    };
+    let err = config
+        .validate()
+        .expect_err("strict profile with disabled sni must fail");
+    assert_eq!(err, super::MitmConfigError::StrictTlsProfileRequiresSni);
+}
+
+#[test]
+fn route_mode_requires_corresponding_endpoint() {
+    let config = super::MitmConfig {
+        route_mode: super::RouteMode::UpstreamSocks5,
+        ..super::MitmConfig::default()
+    };
+    let err = config
+        .validate()
+        .expect_err("upstream_socks5 mode requires upstream_socks5_proxy");
+    assert_eq!(
+        err,
+        super::MitmConfigError::MissingRouteEndpoint {
+            route_mode: "upstream_socks5",
+            field: "upstream_socks5_proxy",
+        }
+    );
+}
+
+#[test]
+fn route_mode_rejects_unexpected_endpoint() {
+    let config = super::MitmConfig {
+        route_mode: super::RouteMode::Direct,
+        upstream_http_proxy: Some(super::RouteEndpointConfig {
+            host: "127.0.0.1".to_string(),
+            port: 3128,
+        }),
+        ..super::MitmConfig::default()
+    };
+    let err = config
+        .validate()
+        .expect_err("direct mode should reject upstream_http_proxy");
+    assert_eq!(
+        err,
+        super::MitmConfigError::UnexpectedRouteEndpoint {
+            route_mode: "direct",
+            field: "upstream_http_proxy",
+        }
+    );
+}
+
+#[test]
+fn route_endpoint_rejects_empty_host() {
+    let config = super::MitmConfig {
+        route_mode: super::RouteMode::Reverse,
+        reverse_upstream: Some(super::RouteEndpointConfig {
+            host: " ".to_string(),
+            port: 9443,
+        }),
+        ..super::MitmConfig::default()
+    };
+    let err = config
+        .validate()
+        .expect_err("reverse_upstream host must not be empty");
+    assert_eq!(
+        err,
+        super::MitmConfigError::EmptyRouteEndpointHost {
+            field: "reverse_upstream",
+        }
+    );
 }

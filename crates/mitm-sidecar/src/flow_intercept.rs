@@ -6,6 +6,7 @@ async fn intercept_http_connection<P, S>(
     tls_diagnostics: Arc<TlsDiagnostics>,
     tls_learning: Arc<TlsLearningGuardrails>,
     tunnel_context: FlowContext,
+    route: RouteBinding,
     mut downstream: TcpStream,
     max_http_head_bytes: usize,
 ) -> io::Result<()>
@@ -13,15 +14,13 @@ where
     P: PolicyEngine + Send + Sync + 'static,
     S: EventConsumer + Send + Sync + 'static,
 {
-    let upstream_tcp = match TcpStream::connect((
-        &*tunnel_context.server_host,
-        tunnel_context.server_port,
-    ))
-    .await
-    {
+    let upstream_tcp = match connect_via_route(&route, RouteConnectIntent::TargetTunnel).await {
         Ok(stream) => stream,
         Err(error) => {
-            let detail = format!("upstream_connect_failed: {error}");
+            let detail = format!(
+                "upstream_connect_failed[{}]: {error}",
+                route.route_mode_label()
+            );
             write_proxy_response(&mut downstream, "502 Bad Gateway", &detail).await?;
             emit_stream_closed(
                 &engine,
@@ -35,9 +34,12 @@ where
         }
     };
 
-    downstream
-        .write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")
-        .await?;
+    write_all_with_idle_timeout(
+        &mut downstream,
+        b"HTTP/1.1 200 Connection Established\r\n\r\n",
+        "mitm_connect_established_write",
+    )
+    .await?;
 
     let handshake_context = FlowContext {
         protocol: ApplicationProtocol::Http1,
@@ -124,18 +126,59 @@ where
 
     let should_offer_http2_upstream =
         engine.config.http2_enabled && downstream_protocol == ApplicationProtocol::Http2;
-    let client_config = build_http_client_config(
+    let upstream_tls_profile = map_upstream_tls_profile(engine.config.tls_profile);
+    let upstream_sni_mode = map_upstream_sni_mode(engine.config.upstream_sni_mode);
+    let client_config = match build_http_client_config_with_policy(
         engine.config.upstream_tls_insecure_skip_verify,
         should_offer_http2_upstream,
-    );
-    let server_name = match ServerName::try_from(handshake_context.server_host.clone()) {
+        upstream_tls_profile,
+        upstream_sni_mode,
+        &handshake_context.server_host,
+    ) {
         Ok(value) => value,
-        Err(_) => {
+        Err(error) => {
+            let detail = format!("upstream TLS policy build failed: {error}");
+            emit_tls_event_with_detail(
+                &engine,
+                &tls_diagnostics,
+                &tls_learning,
+                EventType::TlsHandshakeFailed,
+                downstream_context.clone(),
+                "upstream",
+                detail.clone(),
+            );
             emit_stream_closed(
                 &engine,
                 tunnel_context,
-                CloseReasonCode::MitmHttpError,
-                Some("invalid server name for upstream TLS".to_string()),
+                CloseReasonCode::TlsHandshakeFailed,
+                Some(detail),
+                None,
+                None,
+            );
+            return Ok(());
+        }
+    };
+    let server_name = match resolve_upstream_server_name(
+        &handshake_context.server_host,
+        upstream_sni_mode,
+    ) {
+        Ok(value) => value,
+        Err(error) => {
+            let detail = format!("invalid server name for upstream TLS: {error}");
+            emit_tls_event_with_detail(
+                &engine,
+                &tls_diagnostics,
+                &tls_learning,
+                EventType::TlsHandshakeFailed,
+                downstream_context.clone(),
+                "upstream",
+                detail.clone(),
+            );
+            emit_stream_closed(
+                &engine,
+                tunnel_context,
+                CloseReasonCode::TlsHandshakeFailed,
+                Some(detail),
                 None,
                 None,
             );
@@ -224,6 +267,7 @@ where
         let max_header_list_size = engine.config.http2_max_header_list_size;
         return relay_http2_connection(
             engine,
+            Arc::clone(&runtime_governor),
             tunnel_context,
             downstream_tls,
             upstream_tls,
@@ -238,6 +282,7 @@ where
         engine,
         runtime_governor,
         tunnel_context,
+        UpstreamRequestTargetMode::OriginForm,
         downstream_conn,
         upstream_conn,
         max_http_head_bytes,

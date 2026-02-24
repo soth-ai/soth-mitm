@@ -1,40 +1,4 @@
-use http::Uri;
-
-struct ForwardHttpRoute {
-    server_host: String,
-    server_port: u16,
-    policy_path: String,
-}
-
-fn is_absolute_form_forward_http_request(input: &[u8]) -> bool {
-    let Some(header_end) = input
-        .windows(4)
-        .position(|window| window == b"\r\n\r\n")
-        .map(|index| index + 4)
-    else {
-        return false;
-    };
-    let Ok(head) = std::str::from_utf8(&input[..header_end]) else {
-        return false;
-    };
-    let Some(request_line) = head.split("\r\n").next() else {
-        return false;
-    };
-    let mut parts = request_line.split_whitespace();
-    let Some(method) = parts.next() else {
-        return false;
-    };
-    let Some(target) = parts.next() else {
-        return false;
-    };
-    if method.eq_ignore_ascii_case("CONNECT") {
-        return false;
-    }
-    if method.bytes().any(|byte| byte.is_ascii_lowercase()) {
-        return false;
-    }
-    target.starts_with("http://")
-}
+include!("flow_forward_proxy_http1_helpers.rs");
 
 #[allow(clippy::too_many_arguments)]
 async fn handle_forward_http1_proxy_request<P, S>(
@@ -77,7 +41,7 @@ where
         }
     };
 
-    let route = match resolve_forward_http_route(&request) {
+    let target = match resolve_forward_http_route(&request) {
         Ok(value) => value,
         Err(error) => {
             let flow_id = engine.allocate_flow_id();
@@ -105,17 +69,46 @@ where
         }
     };
 
+    let mut route_planner = FlowRoutePlanner::default();
+    let route = match route_planner.bind_once(&engine.config, target) {
+        Ok(value) => value,
+        Err(error) => {
+            let flow_id = engine.allocate_flow_id();
+            let context = FlowContext {
+                flow_id,
+                client_addr,
+                server_host: "<unknown>".to_string(),
+                server_port: 0,
+                protocol: ApplicationProtocol::Http1,
+            };
+            emit_stream_closed(
+                &engine,
+                context,
+                CloseReasonCode::RoutePlannerFailed,
+                Some(format!("forward-proxy route planner failed: {error}")),
+                None,
+                None,
+            );
+            return write_forward_proxy_error_response(
+                downstream,
+                "502 Bad Gateway",
+                "route planner failed for forward proxy request",
+            )
+            .await;
+        }
+    };
+
     let outcome = engine.decide_connect(
         client_addr.clone(),
-        route.server_host.clone(),
-        route.server_port,
-        Some(route.policy_path),
+        route.target_host.clone(),
+        route.target_port,
+        route.policy_path.clone(),
     );
     let context = FlowContext {
         flow_id: outcome.flow_id,
         client_addr,
-        server_host: route.server_host.clone(),
-        server_port: route.server_port,
+        server_host: route.target_host.clone(),
+        server_port: route.target_port,
         protocol: ApplicationProtocol::Http1,
     };
 
@@ -132,13 +125,17 @@ where
         return Ok(());
     }
 
-    let upstream_tcp = match TcpStream::connect((&*route.server_host, route.server_port)).await {
+    let upstream_tcp = match connect_via_route(&route, RouteConnectIntent::ForwardHttpRequest).await
+    {
         Ok(stream) => stream,
         Err(error) => {
             write_forward_proxy_error_response(
                 downstream,
                 "502 Bad Gateway",
-                &format!("upstream_connect_failed: {error}"),
+                &format!(
+                    "upstream_connect_failed[{}]: {error}",
+                    route.route_mode_label()
+                ),
             )
             .await?;
             emit_stream_closed(
@@ -171,93 +168,12 @@ where
         engine,
         runtime_governor,
         context,
+        route.request_target_mode,
         downstream_conn,
         upstream_conn,
         max_http_head_bytes,
     )
     .await
-}
-
-fn resolve_forward_http_route(request: &HttpRequestHead) -> io::Result<ForwardHttpRoute> {
-    let uri = request.target.parse::<Uri>().map_err(|_| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            "proxy request target was not a valid URI",
-        )
-    })?;
-    match uri.scheme_str() {
-        Some("http") => {}
-        Some("https") => {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "HTTPS absolute-form requires CONNECT",
-            ));
-        }
-        _ => {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "only http absolute-form is supported for cleartext proxying",
-            ));
-        }
-    }
-    let server_host = uri
-        .host()
-        .map(str::to_string)
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "absolute URI missing host"))?;
-    let server_port = uri.port_u16().unwrap_or(80);
-    let policy_path = uri
-        .path_and_query()
-        .map(|value| value.as_str().to_string())
-        .unwrap_or_else(|| "/".to_string());
-    Ok(ForwardHttpRoute {
-        server_host,
-        server_port,
-        policy_path,
-    })
-}
-
-fn build_upstream_http1_request_head(request: &HttpRequestHead) -> io::Result<Vec<u8>> {
-    let target = normalize_forward_proxy_target_for_upstream(&request.target)?;
-    let mut out = Vec::new();
-    out.extend_from_slice(request.method.as_bytes());
-    out.push(b' ');
-    out.extend_from_slice(target.as_bytes());
-    out.push(b' ');
-    out.extend_from_slice(request.version.as_str().as_bytes());
-    out.extend_from_slice(b"\r\n");
-    for header in &request.headers {
-        if header.name.eq_ignore_ascii_case("proxy-connection") {
-            continue;
-        }
-        out.extend_from_slice(header.name.as_bytes());
-        out.extend_from_slice(b": ");
-        out.extend_from_slice(header.value.as_bytes());
-        out.extend_from_slice(b"\r\n");
-    }
-    out.extend_from_slice(b"\r\n");
-    Ok(out)
-}
-
-fn normalize_forward_proxy_target_for_upstream(target: &str) -> io::Result<String> {
-    if target.starts_with('/') || target == "*" {
-        return Ok(target.to_string());
-    }
-    let uri = target.parse::<Uri>().map_err(|_| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            "proxy request target was not a valid URI",
-        )
-    })?;
-    if uri.scheme_str() != Some("http") {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "only http absolute-form can be rewritten for upstream",
-        ));
-    }
-    Ok(uri
-        .path_and_query()
-        .map(|value| value.as_str().to_string())
-        .unwrap_or_else(|| "/".to_string()))
 }
 
 async fn tunnel_http1_forward_stream<P, S>(
@@ -285,7 +201,13 @@ where
             return Ok(());
         }
     };
-    if let Err(error) = upstream.write_all(&first_request.raw).await {
+    if let Err(error) = write_all_with_idle_timeout(
+        &mut upstream,
+        &first_request.raw,
+        "forward_tunnel_initial_request_write",
+    )
+    .await
+    {
         emit_stream_closed(
             &engine,
             context,
@@ -297,7 +219,7 @@ where
         return Ok(());
     }
 
-    match tokio::io::copy_bidirectional(&mut downstream, &mut upstream).await {
+    match copy_bidirectional_with_idle_timeout(&mut downstream, &mut upstream).await {
         Ok((from_client, from_server)) => {
             let per_flow_budget = engine.config.max_flow_body_buffer_bytes as u64;
             let (reason, detail) = if from_client > per_flow_budget || from_server > per_flow_budget
@@ -322,10 +244,17 @@ where
             Ok(())
         }
         Err(error) => {
+            let reason = if is_idle_watchdog_timeout(&error) {
+                CloseReasonCode::IdleWatchdogTimeout
+            } else if is_stream_stage_timeout(&error) {
+                CloseReasonCode::StreamStageTimeout
+            } else {
+                CloseReasonCode::RelayError
+            };
             emit_stream_closed(
                 &engine,
                 context,
-                CloseReasonCode::RelayError,
+                reason,
                 Some(error.to_string()),
                 None,
                 None,
@@ -354,6 +283,11 @@ async fn write_forward_proxy_error_response(
         "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
         body.len()
     );
-    downstream.write_all(response.as_bytes()).await?;
-    downstream.shutdown().await
+    write_all_with_idle_timeout(
+        &mut downstream,
+        response.as_bytes(),
+        "forward_proxy_error_response_write",
+    )
+    .await?;
+    shutdown_with_idle_timeout(&mut downstream, "forward_proxy_error_response_shutdown").await
 }

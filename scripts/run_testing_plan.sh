@@ -34,11 +34,11 @@ usage() {
   cat <<'USAGE'
 Usage: ./scripts/run_testing_plan.sh [options]
 
-Config-driven runner for stress/parity/benchmark lanes.
+Config-driven runner for stress/parity/benchmark/soak lanes.
 
 Options:
   --config <path>           Config file (default: testing/test-plan.env)
-  --profile <name>          Profile to run (repeatable): stress|parity|benchmark
+  --profile <name>          Profile to run (repeatable): stress|parity|benchmark|soak
   --lane <lane_id>          Explicit lane selection (repeatable)
   --report-dir <path>       Output root directory
   --strict-tools            Enable strict tool checks where supported
@@ -54,6 +54,7 @@ Options:
 Examples:
   ./scripts/run_testing_plan.sh --profile stress
   ./scripts/run_testing_plan.sh --profile parity --profile benchmark --strict-tools
+  SOTH_MITM_SOAK_DURATION_SECONDS=300 ./scripts/run_testing_plan.sh --profile soak
   ./scripts/run_testing_plan.sh --lane phase4_differential_validation
   ./scripts/run_testing_plan.sh --config testing/test-plan.env
 USAGE
@@ -164,7 +165,7 @@ print_lanes() {
 }
 
 validate_selection() {
-  local valid_profiles=(stress parity benchmark)
+  local valid_profiles=(stress parity benchmark soak)
   local profile
   for profile in "${profiles[@]}"; do
     if ! contains_item "$profile" "${valid_profiles[@]}"; then

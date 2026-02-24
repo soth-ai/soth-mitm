@@ -60,7 +60,12 @@ impl MitmCertificateStore {
 
         self.cache_misses.fetch_add(1, Ordering::Relaxed);
         let (server_config, leaf_cert_der, leaf_identity) =
-            issue_leaf_server_config(&state.ca, &normalized_host, http2_enabled)?;
+            issue_leaf_server_config(
+                &state.ca,
+                &normalized_host,
+                http2_enabled,
+                self.config.downstream_cert_profile,
+            )?;
         self.leaves_issued.fetch_add(1, Ordering::Relaxed);
 
         if self.config.leaf_cert_cache_capacity > 0 {
@@ -248,6 +253,7 @@ fn issue_leaf_server_config(
     ca: &CaMaterial,
     host: &str,
     http2_enabled: bool,
+    downstream_cert_profile: DownstreamCertProfile,
 ) -> Result<
     (
         Arc<ServerConfig>,
@@ -257,7 +263,7 @@ fn issue_leaf_server_config(
     TlsConfigError,
 > {
     let leaf_params = build_leaf_params(host)?;
-    let leaf_key = KeyPair::generate()?;
+    let leaf_key = generate_leaf_key_pair(downstream_cert_profile)?;
     let leaf_key_der = PrivatePkcs8KeyDer::from(leaf_key.serialize_der());
     let leaf_cert = leaf_params.signed_by(&leaf_key, &ca.issuer)?;
     let leaf_cert_der = leaf_cert.der().clone();
@@ -325,6 +331,20 @@ fn build_leaf_params(host: &str) -> Result<CertificateParams, TlsConfigError> {
     Ok(params)
 }
 
+fn generate_leaf_key_pair(
+    downstream_cert_profile: DownstreamCertProfile,
+) -> Result<KeyPair, TlsConfigError> {
+    match downstream_cert_profile {
+        DownstreamCertProfile::Modern => KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256)
+            .or_else(|_| KeyPair::generate())
+            .map_err(Into::into),
+        DownstreamCertProfile::Compat => KeyPair::generate_for(&rcgen::PKCS_RSA_SHA256)
+            .or_else(|_| KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256))
+            .or_else(|_| KeyPair::generate())
+            .map_err(Into::into),
+    }
+}
+
 fn normalize_host(host: &str) -> String {
     match host.parse::<IpAddr>() {
         Ok(_) => host.to_string(),
@@ -342,51 +362,5 @@ fn touch_lru(lru: &mut VecDeque<String>, key: &str) {
 fn evict_lru_entry(state: &mut CertStoreState) {
     if let Some(oldest) = state.cache_lru.pop_front() {
         state.leaf_cache.remove(&oldest);
-    }
-}
-
-#[derive(Debug)]
-struct InsecureSkipVerifyServerCertVerifier;
-
-impl ServerCertVerifier for InsecureSkipVerifyServerCertVerifier {
-    fn verify_server_cert(
-        &self,
-        _end_entity: &CertificateDer<'_>,
-        _intermediates: &[CertificateDer<'_>],
-        _server_name: &ServerName<'_>,
-        _ocsp_response: &[u8],
-        _now: UnixTime,
-    ) -> Result<ServerCertVerified, rustls::Error> {
-        Ok(ServerCertVerified::assertion())
-    }
-
-    fn verify_tls12_signature(
-        &self,
-        _message: &[u8],
-        _cert: &CertificateDer<'_>,
-        _dss: &DigitallySignedStruct,
-    ) -> Result<HandshakeSignatureValid, rustls::Error> {
-        Ok(HandshakeSignatureValid::assertion())
-    }
-
-    fn verify_tls13_signature(
-        &self,
-        _message: &[u8],
-        _cert: &CertificateDer<'_>,
-        _dss: &DigitallySignedStruct,
-    ) -> Result<HandshakeSignatureValid, rustls::Error> {
-        Ok(HandshakeSignatureValid::assertion())
-    }
-
-    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
-        vec![
-            SignatureScheme::ECDSA_NISTP256_SHA256,
-            SignatureScheme::ECDSA_NISTP384_SHA384,
-            SignatureScheme::ED25519,
-            SignatureScheme::RSA_PSS_SHA256,
-            SignatureScheme::RSA_PSS_SHA384,
-            SignatureScheme::RSA_PKCS1_SHA256,
-            SignatureScheme::RSA_PKCS1_SHA384,
-        ]
     }
 }

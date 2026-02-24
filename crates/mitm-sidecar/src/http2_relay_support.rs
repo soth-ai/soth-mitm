@@ -43,6 +43,50 @@ fn is_h2_transport_close_error(error: &h2::Error) -> bool {
     }
 }
 
+fn is_h2_nonfatal_stream_error(error: &h2::Error) -> bool {
+    if is_h2_transport_close_error(error) {
+        return true;
+    }
+    if !error.is_remote() {
+        return false;
+    }
+    if error.is_go_away() {
+        return error.reason() == Some(h2::Reason::NO_ERROR);
+    }
+    if error.is_reset() {
+        return matches!(
+            error.reason(),
+            Some(h2::Reason::NO_ERROR)
+                | Some(h2::Reason::CANCEL)
+                | Some(h2::Reason::REFUSED_STREAM)
+                | Some(h2::Reason::STREAM_CLOSED)
+        );
+    }
+    false
+}
+
+fn h2_reason_for_downstream_reset(error: &h2::Error) -> h2::Reason {
+    error.reason().unwrap_or(h2::Reason::CANCEL)
+}
+
+fn is_benign_h2_stream_io_error(error: &io::Error) -> bool {
+    if matches!(
+        error.kind(),
+        io::ErrorKind::BrokenPipe
+            | io::ErrorKind::ConnectionReset
+            | io::ErrorKind::ConnectionAborted
+            | io::ErrorKind::UnexpectedEof
+    ) {
+        return true;
+    }
+    let text = error.to_string();
+    text.contains("stream error received: CANCEL")
+        || text.contains("stream error received: REFUSED_STREAM")
+        || text.contains("stream error received: STREAM_CLOSED")
+        || text.contains("stream error received: NO_ERROR")
+        || text.contains("connection error received: NO_ERROR")
+}
+
 fn h2_error_to_io(context: &str, error: h2::Error) -> io::Error {
     io::Error::other(format!("{context}: {error}"))
 }

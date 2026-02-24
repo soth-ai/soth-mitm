@@ -3,6 +3,7 @@ async fn relay_http1_mitm_loop<P, S, D, U>(
     engine: Arc<MitmEngine<P, S>>,
     runtime_governor: Arc<runtime_governor::RuntimeGovernor>,
     tunnel_context: FlowContext,
+    upstream_target_mode: UpstreamRequestTargetMode,
     mut downstream_conn: BufferedConn<D>,
     mut upstream_conn: BufferedConn<U>,
     max_http_head_bytes: usize,
@@ -57,7 +58,8 @@ where
                 return Ok(());
             }
         };
-        let upstream_request_head = match build_upstream_http1_request_head(&request) {
+        let upstream_request_head =
+            match build_upstream_http1_request_head(&request, upstream_target_mode) {
             Ok(value) => value,
             Err(error) => {
                 emit_stream_closed(
@@ -73,11 +75,18 @@ where
         };
 
         emit_request_headers_event(&engine, &http_context, &request);
-        if let Err(error) = upstream_conn.stream.write_all(&upstream_request_head).await {
+        if let Err(error) = write_all_with_idle_timeout(
+            &mut upstream_conn.stream,
+            &upstream_request_head,
+            "http1_request_head_write_upstream",
+        )
+        .await
+        {
             emit_http1_relay_error_close(
                 &engine,
                 &http_context,
-                format!("upstream write request failed: {error}"),
+                "upstream write request failed",
+                &error,
                 bytes_from_client,
                 bytes_from_server,
             );
@@ -103,7 +112,8 @@ where
                 emit_http1_relay_error_close(
                     &engine,
                     &http_context,
-                    format!("request body relay failed: {error}"),
+                    "request body relay failed",
+                    &error,
                     bytes_from_client,
                     bytes_from_server,
                 );
@@ -162,11 +172,18 @@ where
             is_websocket_upgrade_request(&request) && is_websocket_upgrade_response(&response);
 
         emit_response_headers_event(&engine, &http_context, &response);
-        if let Err(error) = downstream_conn.stream.write_all(&response.raw).await {
+        if let Err(error) = write_all_with_idle_timeout(
+            &mut downstream_conn.stream,
+            &response.raw,
+            "http1_response_head_write_downstream",
+        )
+        .await
+        {
             emit_http1_relay_error_close(
                 &engine,
                 &http_context,
-                format!("downstream write response failed: {error}"),
+                "downstream write response failed",
+                &error,
                 bytes_from_client,
                 bytes_from_server,
             );
@@ -176,6 +193,7 @@ where
         if websocket_upgrade {
             return finalize_websocket_upgrade(
                 Arc::clone(&engine),
+                Arc::clone(&runtime_governor),
                 &tunnel_context,
                 downstream_conn,
                 upstream_conn,
@@ -214,7 +232,8 @@ where
                     emit_http1_relay_error_close(
                         &engine,
                         &http_context,
-                        format!("response body relay failed: {error}"),
+                        "response body relay failed",
+                        &error,
                         bytes_from_client,
                         bytes_from_server,
                     );
@@ -242,7 +261,8 @@ where
                     emit_http1_relay_error_close(
                         &engine,
                         &http_context,
-                        format!("response body relay failed: {error}"),
+                        "response body relay failed",
+                        &error,
                         bytes_from_client,
                         bytes_from_server,
                     );
@@ -318,18 +338,26 @@ where
 fn emit_http1_relay_error_close<P, S>(
     engine: &Arc<MitmEngine<P, S>>,
     context: &FlowContext,
-    detail: String,
+    stage: &str,
+    error: &io::Error,
     bytes_from_client: u64,
     bytes_from_server: u64,
 ) where
     P: PolicyEngine + Send + Sync + 'static,
     S: EventConsumer + Send + Sync + 'static,
 {
+    let reason = if is_idle_watchdog_timeout(error) {
+        CloseReasonCode::IdleWatchdogTimeout
+    } else if is_stream_stage_timeout(error) {
+        CloseReasonCode::StreamStageTimeout
+    } else {
+        CloseReasonCode::MitmHttpError
+    };
     emit_stream_closed(
         engine,
         context.clone(),
-        CloseReasonCode::MitmHttpError,
-        Some(detail),
+        reason,
+        Some(format!("{stage}: {error}")),
         Some(bytes_from_client),
         Some(bytes_from_server),
     );

@@ -6,3 +6,10 @@ phase4_chaos_network_faults	stress	./scripts/p4_chaos_network_faults.sh	1	0	1	To
 phase4_differential_validation	parity	./scripts/p4_differential_validation.sh	0	0	0	Differential behavior parity checks versus mitmproxy fixtures.
 phase4_tool_lanes	benchmark	./scripts/p4_tool_lanes.sh	1	1	0	External benchmark/load/tooling lane matrix (wrk/hey/h2load/ghz/etc).
 phase4_tls_hardening	benchmark	./scripts/p4_tls_hardening.sh	1	1	0	TLS hardening benchmark/probe lane.
+phase5_reliability_contract	stress	./scripts/p5_reliability_contract.sh	0	0	0	Phase-5 reliability invariants: flow FSM validator, single-close guardrail, runtime budgets, idle watchdog, and H2 stage-timeout telemetry.
+phase5_http1_smuggling_guard	stress	./scripts/p5_http1_smuggling_guard.sh	0	0	0	HTTP/1 canonicalization and smuggling-guard fixture corpus plus deterministic runtime rejection checks.
+phase5_tls_profile_matrix	stress	./scripts/p5_tls_profile_matrix.sh	1	1	0	TLS strict|default|compat profile matrix, cert-profile fixture checks, and openssl/badssl probes.
+phase5_route_mode_matrix	stress	./scripts/p5_route_mode_matrix.sh	0	0	0	Route planner/config matrix for direct|reverse|upstream-http|upstream-socks5 plus chained host allow/ignore semantics.
+phase5_http2_resilience	stress	./scripts/p5_http2_resilience.sh	1	0	0	HTTP/2 stream lifecycle resilience (parallel stress, reset/GOAWAY tolerance, header limits) plus optional h2spec criteria command.
+phase5_event_log_contract	stress	./scripts/p5_event_log_contract.sh	0	0	0	Deterministic event log v2 contract (stable serialization, replay diff fixtures, and machine-readable sidecar exit status).
+phase5_runtime_soak	soak	./scripts/p5_runtime_soak.sh	0	0	0	Long-running mixed-traffic soak gate for runtime budget envelope.

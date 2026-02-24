@@ -8,9 +8,11 @@
     use x509_parser::parse_x509_certificate;
 
     use super::{
-        build_http1_client_config, build_http1_server_config_for_host, build_http_client_config,
-        build_http_server_config_for_host, classify_tls_error, CertStoreMetricsSnapshot,
-        CertificateAuthorityConfig, LeafCacheStatus, MitmCertificateStore, TlsFailureReason,
+        build_http1_client_config, build_http1_server_config_for_host,
+        build_http_client_config, build_http_client_config_with_policy, build_http_server_config_for_host,
+        classify_tls_error, resolve_upstream_server_name, CertStoreMetricsSnapshot,
+        CertificateAuthorityConfig, DownstreamCertProfile, LeafCacheStatus, MitmCertificateStore,
+        TlsFailureReason, UpstreamTlsProfile, UpstreamTlsSniMode,
     };
 
     #[test]
@@ -145,6 +147,73 @@
     }
 
     #[test]
+    fn strict_profile_builds_tls13_only_client_with_required_sni() {
+        let config = build_http_client_config_with_policy(
+            true,
+            true,
+            UpstreamTlsProfile::Strict,
+            UpstreamTlsSniMode::Required,
+            "example.com",
+        )
+        .expect("strict profile client config");
+        assert!(config.enable_sni);
+        assert_eq!(
+            config.alpn_protocols,
+            vec![b"h2".to_vec(), b"http/1.1".to_vec()]
+        );
+        assert_eq!(config.crypto_provider().cipher_suites.len(), 3);
+        assert!(config
+            .crypto_provider()
+            .cipher_suites
+            .iter()
+            .all(|suite| suite.version() == &rustls::version::TLS13));
+    }
+
+    #[test]
+    fn compat_profile_reorders_cipher_suites_for_tls12_first() {
+        let config = build_http_client_config_with_policy(
+            true,
+            false,
+            UpstreamTlsProfile::Compat,
+            UpstreamTlsSniMode::Auto,
+            "example.com",
+        )
+        .expect("compat profile client config");
+        let suites = &config.crypto_provider().cipher_suites;
+        assert!(!suites.is_empty(), "expected non-empty suite list");
+        assert_eq!(
+            suites.first().expect("first suite").version(),
+            &rustls::version::TLS12
+        );
+    }
+
+    #[test]
+    fn required_sni_mode_rejects_ip_targets() {
+        let error = build_http_client_config_with_policy(
+            true,
+            false,
+            UpstreamTlsProfile::Default,
+            UpstreamTlsSniMode::Required,
+            "127.0.0.1",
+        )
+        .expect_err("required sni should reject ip target");
+        assert!(
+            error
+                .to_string()
+                .contains("upstream_sni_mode=required does not allow IP targets"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn resolve_server_name_obeys_auto_sni_mode_for_ip_targets() {
+        let server_name = resolve_upstream_server_name("127.0.0.1", UpstreamTlsSniMode::Auto)
+            .expect("server name for ip");
+        let rendered = format!("{server_name:?}");
+        assert!(rendered.contains("IpAddress"), "unexpected server name: {rendered}");
+    }
+
+    #[test]
     fn cert_store_uses_distinct_cache_entries_for_http_alpn_modes() {
         let store =
             MitmCertificateStore::new(CertificateAuthorityConfig::default()).expect("cert store");
@@ -213,4 +282,26 @@
         assert_eq!(metrics.cache_hits, 0);
         assert_eq!(metrics.cache_misses, 2);
         assert_eq!(metrics.leaves_issued, 2);
+    }
+
+    #[test]
+    fn cert_store_compat_profile_issues_compatible_leaf_public_keys() {
+        let store = MitmCertificateStore::new(CertificateAuthorityConfig {
+            downstream_cert_profile: DownstreamCertProfile::Compat,
+            ..CertificateAuthorityConfig::default()
+        })
+        .expect("cert store");
+        let issued = store
+            .server_config_for_host("api.example.com")
+            .expect("issued leaf");
+        let (_, cert) = parse_x509_certificate(issued.leaf_cert_der.as_ref()).expect("parse x509");
+        let algorithm_oid = cert
+            .public_key()
+            .algorithm
+            .algorithm
+            .to_id_string();
+        assert!(
+            algorithm_oid == "1.2.840.113549.1.1.1" || algorithm_oid == "1.2.840.10045.2.1",
+            "unexpected leaf public key algorithm oid: {algorithm_oid}"
+        );
     }

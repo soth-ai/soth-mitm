@@ -31,6 +31,11 @@ sources=(
   artifacts/p4-chaos-network
   artifacts/p4-tool-lanes
   artifacts/p4-hardening
+  artifacts/p5-reliability-contract
+  artifacts/p5-route-mode-matrix
+  artifacts/p5-http2-resilience
+  artifacts/p5-event-log-contract
+  artifacts/p5-runtime-soak
   artifacts/fuzz-corpus
 )
 

@@ -190,20 +190,14 @@ pub fn build_http_client_config(
     insecure_skip_verify: bool,
     http2_enabled: bool,
 ) -> Arc<ClientConfig> {
-    let mut config = if insecure_skip_verify {
-        ClientConfig::builder()
-            .dangerous()
-            .with_custom_certificate_verifier(Arc::new(InsecureSkipVerifyServerCertVerifier))
-            .with_no_client_auth()
-    } else {
-        let root_store = RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-        ClientConfig::builder()
-            .with_root_certificates(root_store)
-            .with_no_client_auth()
-    };
-
-    config.alpn_protocols = configured_http_alpn_protocols(http2_enabled);
-    Arc::new(config)
+    build_http_client_config_with_policy(
+        insecure_skip_verify,
+        http2_enabled,
+        UpstreamTlsProfile::Default,
+        UpstreamTlsSniMode::Auto,
+        "localhost",
+    )
+    .expect("default TLS client profile must build")
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -214,6 +208,7 @@ pub struct CertificateAuthorityConfig {
     pub ca_organization: String,
     pub leaf_cert_cache_capacity: usize,
     pub ca_rotate_after_seconds: Option<u64>,
+    pub downstream_cert_profile: DownstreamCertProfile,
 }
 
 impl Default for CertificateAuthorityConfig {
@@ -225,6 +220,7 @@ impl Default for CertificateAuthorityConfig {
             ca_organization: "soth-mitm".to_string(),
             leaf_cert_cache_capacity: 1024,
             ca_rotate_after_seconds: None,
+            downstream_cert_profile: DownstreamCertProfile::Modern,
         }
     }
 }
@@ -334,6 +330,8 @@ struct CaMaterial {
 
 include!("certificate_store_impl.rs");
 include!("certificate_store_openssl.rs");
+include!("certificate_store_verifier.rs");
+include!("tls_profile_policy.rs");
 
 #[cfg(test)]
 mod tests {

@@ -1,5 +1,6 @@
 async fn finalize_websocket_upgrade<P, S, D, U>(
     engine: Arc<MitmEngine<P, S>>,
+    runtime_governor: Arc<runtime_governor::RuntimeGovernor>,
     tunnel_context: &FlowContext,
     downstream: BufferedConn<D>,
     upstream: BufferedConn<U>,
@@ -18,6 +19,7 @@ where
     };
     match relay_websocket_connection(
         Arc::clone(&engine),
+        runtime_governor,
         websocket_context.clone(),
         downstream,
         upstream,
@@ -37,10 +39,17 @@ where
             );
         }
         Err(error) => {
+            let reason = if is_idle_watchdog_timeout(&error) {
+                CloseReasonCode::IdleWatchdogTimeout
+            } else if is_stream_stage_timeout(&error) {
+                CloseReasonCode::StreamStageTimeout
+            } else {
+                CloseReasonCode::WebSocketError
+            };
             emit_stream_closed(
                 &engine,
                 websocket_context,
-                CloseReasonCode::WebSocketError,
+                reason,
                 Some(error.to_string()),
                 Some(bytes_from_client),
                 Some(bytes_from_server),

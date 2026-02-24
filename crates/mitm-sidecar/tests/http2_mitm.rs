@@ -37,6 +37,8 @@ async fn start_sidecar_with_sink(
         listen_port: 0,
         max_connect_head_bytes: 64 * 1024,
         max_http_head_bytes: 64 * 1024,
+        idle_watchdog_timeout: std::time::Duration::from_secs(30),
+        stream_stage_timeout: std::time::Duration::from_secs(5),
     };
     let engine = build_engine(config, sink.clone());
     let server = SidecarServer::new(sidecar_config, engine).expect("build sidecar");
@@ -588,5 +590,165 @@ async fn http2_parallel_stream_stress_keeps_completed_close_and_byte_accounting(
     assert!(
         bytes_from_server >= expected,
         "bytes_from_server {bytes_from_server} was less than expected {expected}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn http2_upstream_cancel_reset_on_single_stream_is_nonfatal_for_flow() {
+    let upstream_listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind upstream listener");
+    let upstream_addr = upstream_listener.local_addr().expect("upstream addr");
+    let upstream_task = tokio::spawn(async move {
+        let server_config =
+            build_http_server_config_for_host("127.0.0.1", true).expect("h2 server config");
+        let acceptor = TlsAcceptor::from(server_config);
+        let (tcp, _) = upstream_listener.accept().await.expect("accept upstream");
+        let tls = acceptor.accept(tcp).await.expect("TLS accept");
+        assert_eq!(tls.get_ref().1.alpn_protocol(), Some(b"h2".as_slice()));
+
+        let mut h2_conn = h2::server::handshake(tls).await.expect("h2 handshake");
+        let mut accepted_streams = 0_usize;
+        while accepted_streams < 2 {
+            let Some(stream_result) = h2_conn.accept().await else {
+                break;
+            };
+            let (request, mut respond) = stream_result.expect("accept h2 request");
+            accepted_streams += 1;
+            match request.uri().path() {
+                "/cancel" => {
+                    respond.send_reset(h2::Reason::CANCEL);
+                }
+                "/ok" => {
+                    let response = http::Response::builder()
+                        .status(200)
+                        .header("content-length", "2")
+                        .body(())
+                        .expect("response");
+                    let mut send = respond
+                        .send_response(response, false)
+                        .expect("send response headers");
+                    send.send_data(Bytes::from_static(b"ok"), true)
+                        .expect("send response data");
+                }
+                path => panic!("unexpected path: {path}"),
+            }
+        }
+        h2_conn.graceful_shutdown();
+        let _ = tokio::time::timeout(Duration::from_millis(300), async {
+            let _ = poll_fn(|cx| h2_conn.poll_closed(cx)).await;
+        })
+        .await;
+    });
+
+    let sink = VecEventConsumer::default();
+    let config = MitmConfig {
+        upstream_tls_insecure_skip_verify: true,
+        http2_enabled: true,
+        ..MitmConfig::default()
+    };
+    let (proxy_addr, proxy_task, sink) = start_sidecar_with_sink(sink, config).await;
+
+    let mut tcp = TcpStream::connect(proxy_addr)
+        .await
+        .expect("connect sidecar");
+    let connect = format!(
+        "CONNECT 127.0.0.1:{} HTTP/1.1\r\nHost: 127.0.0.1:{}\r\n\r\n",
+        upstream_addr.port(),
+        upstream_addr.port()
+    );
+    tcp.write_all(connect.as_bytes())
+        .await
+        .expect("write CONNECT");
+    let connect_response = read_response_head(&mut tcp).await;
+    assert!(
+        connect_response.starts_with("HTTP/1.1 200 Connection Established"),
+        "{connect_response}"
+    );
+
+    let connector = TlsConnector::from(build_http_client_config(true, true));
+    let server_name = ServerName::try_from("127.0.0.1".to_string()).expect("server name");
+    let tls = connector
+        .connect(server_name, tcp)
+        .await
+        .expect("TLS connect to sidecar");
+    assert_eq!(tls.get_ref().1.alpn_protocol(), Some(b"h2".as_slice()));
+
+    let (h2_client, h2_connection) = h2::client::handshake(tls)
+        .await
+        .expect("h2 client handshake");
+    let mut h2_connection_task = tokio::spawn(h2_connection);
+
+    let ok_request = http::Request::builder()
+        .method("GET")
+        .uri("https://127.0.0.1/ok")
+        .header("host", "127.0.0.1")
+        .body(())
+        .expect("ok request");
+    let cancel_request = http::Request::builder()
+        .method("GET")
+        .uri("https://127.0.0.1/cancel")
+        .header("host", "127.0.0.1")
+        .body(())
+        .expect("cancel request");
+
+    let (ok_response_future, _) = h2_client
+        .clone()
+        .ready()
+        .await
+        .expect("h2 client ready for ok")
+        .send_request(ok_request, true)
+        .expect("send ok request");
+    let (cancel_response_future, _) = h2_client
+        .clone()
+        .ready()
+        .await
+        .expect("h2 client ready for cancel")
+        .send_request(cancel_request, true)
+        .expect("send cancel request");
+
+    let ok_response = ok_response_future.await.expect("ok response");
+    assert_eq!(ok_response.status(), http::StatusCode::OK);
+    let mut ok_body = ok_response.into_body();
+    let mut payload = Vec::new();
+    while let Some(chunk) = ok_body.data().await {
+        payload.extend_from_slice(&chunk.expect("ok body chunk"));
+    }
+    assert_eq!(&payload, b"ok");
+
+    let cancel_result = cancel_response_future.await;
+    assert!(
+        cancel_result.is_err()
+            || cancel_result
+                .expect("cancel response")
+                .status()
+                .is_success(),
+        "cancel path should either reset or complete cleanly"
+    );
+
+    drop(h2_client);
+    if tokio::time::timeout(Duration::from_millis(500), &mut h2_connection_task)
+        .await
+        .is_err()
+    {
+        h2_connection_task.abort();
+    }
+    tokio::time::timeout(Duration::from_secs(1), upstream_task)
+        .await
+        .expect("upstream task timeout")
+        .expect("upstream task");
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    proxy_task.abort();
+
+    let events = sink.snapshot();
+    assert!(
+        stream_closed_for_protocol(&events, ApplicationProtocol::Http2, "mitm_http_completed")
+            .is_some(),
+        "expected HTTP/2 flow to close as completed"
+    );
+    assert!(
+        stream_closed_for_protocol(&events, ApplicationProtocol::Http2, "mitm_http_error")
+            .is_none(),
+        "HTTP/2 stream cancel should not escalate to mitm_http_error"
     );
 }

@@ -18,6 +18,7 @@ Phase-4 differential validation compares deterministic behavior across engines w
    - command: `./scripts/check_hudsucker_differential_scope.sh`
 5. `replay_drift_report`
    - compares normalized per-case event traces (`soth-mitm` vs mitmproxy) and emits drift diffs
+   - input precedence: `.events.v2.jsonl` first, then legacy `.events.tsv`
    - command: `./scripts/p4_differential_replay.sh --strict-input`
 
 ## Scope Rules

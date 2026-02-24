@@ -33,6 +33,8 @@ cargo test --workspace
 ./scripts/p4_tls_hardening.sh
 ./scripts/p4_tool_lanes.sh
 ./scripts/p4_hardening_plan.sh
+./scripts/p5_event_log_contract.sh
+./scripts/p5_runtime_soak.sh --duration-seconds 300
 ./scripts/collect_testing_artifacts.sh
 ```
 
@@ -56,11 +58,12 @@ Run strict external-tool validation inside Docker:
 ./scripts/docker_run_hardening.sh --strict-tools
 ```
 
-Run configurable stress/parity/benchmark plans inside Docker:
+Run configurable stress/parity/benchmark/soak plans inside Docker:
 
 ```bash
 ./scripts/docker_run_testing.sh --profile stress
 ./scripts/docker_run_testing.sh --profile parity --profile benchmark --strict-tools
+SOTH_MITM_SOAK_DURATION_SECONDS=300 ./scripts/docker_run_testing.sh --profile soak
 ./scripts/docker_run_testing.sh --lane phase4_differential_validation
 ./scripts/docker_run_testing.sh --config testing/test-plan.env
 ```
@@ -98,6 +101,7 @@ Open an interactive shell inside the tools container:
 - TLS taxonomy runbook: `docs/testing/tls-taxonomy.md`
 - Failure injection runbook: `docs/testing/failure-injection.md`
 - Performance baseline runbook: `docs/testing/perf-baselines.md`
+- Event log v2 + automation contract: `docs/testing/event-log-v2-contract.md`
 - Artifact triage runbook: `docs/testing/artifact-triage.md`
 - Consumer adapter contract: `docs/consumer/soth-proxy-adapter-contract.md`
 - Migration/cutover playbook: `docs/migration/soth-cutover.md`

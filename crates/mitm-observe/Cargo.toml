@@ -7,3 +7,5 @@ rust-version.workspace = true
 
 [dependencies]
 mitm-http = { path = "../mitm-http" }
+serde = { workspace = true }
+serde_json = { workspace = true }

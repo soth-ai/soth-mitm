@@ -4,13 +4,12 @@ async fn read_connect_head(
     runtime_governor: &Arc<runtime_governor::RuntimeGovernor>,
 ) -> io::Result<Vec<u8>> {
     let _in_flight_lease = runtime_governor
-        .try_reserve_in_flight(max_connect_head_bytes)
-        .ok_or_else(|| io::Error::new(io::ErrorKind::OutOfMemory, "global in-flight byte budget exceeded"))?;
+        .reserve_in_flight_or_error(max_connect_head_bytes, "connect_head_read")?;
     let mut data = Vec::with_capacity(1024);
     let mut byte = [0_u8; 1];
 
     while !data.windows(4).any(|window| window == b"\r\n\r\n") {
-        let read = stream.read(&mut byte).await?;
+        let read = read_with_idle_timeout(stream, &mut byte, "connect_head_read").await?;
         if read == 0 {
             return Err(io::Error::new(
                 io::ErrorKind::UnexpectedEof,
@@ -36,9 +35,8 @@ async fn read_until_pattern<S: AsyncRead + Unpin>(
     max_bytes: usize,
     runtime_governor: &Arc<runtime_governor::RuntimeGovernor>,
 ) -> io::Result<Option<Vec<u8>>> {
-    let _in_flight_lease = runtime_governor
-        .try_reserve_in_flight(max_bytes)
-        .ok_or_else(|| io::Error::new(io::ErrorKind::OutOfMemory, "global in-flight byte budget exceeded"))?;
+    let _in_flight_lease =
+        runtime_governor.reserve_in_flight_or_error(max_bytes, "http_head_read")?;
     loop {
         if let Some(start) = find_subsequence(&conn.read_buf, pattern) {
             let end = start + pattern.len();
@@ -54,7 +52,8 @@ async fn read_until_pattern<S: AsyncRead + Unpin>(
         }
 
         let mut chunk = [0_u8; IO_CHUNK_SIZE];
-        let read = conn.stream.read(&mut chunk).await?;
+        let read =
+            read_with_idle_timeout(&mut conn.stream, &mut chunk, "http_head_pattern_read").await?;
         if read == 0 {
             if conn.read_buf.is_empty() {
                 return Ok(None);
@@ -106,7 +105,7 @@ fn parse_http_request_head(raw: &[u8]) -> io::Result<HttpRequestHead> {
     }
     let version = parse_http_version(version_text)?;
 
-    let headers = parse_http_headers(lines)?;
+    let headers = canonicalize_http_headers(parse_http_headers(lines)?)?;
     let body_mode = parse_request_body_mode(&headers)?;
     let connection_close = is_connection_close(version, &headers);
 
@@ -148,7 +147,7 @@ fn parse_http_response_head(raw: &[u8], request_method: &str) -> io::Result<Http
         .parse::<u16>()
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid response status code"))?;
 
-    let headers = parse_http_headers(lines)?;
+    let headers = canonicalize_http_headers(parse_http_headers(lines)?)?;
     let mut connection_close = is_connection_close(version, &headers);
     let body_mode = parse_response_body_mode(&headers, request_method, status_code)?;
     if body_mode == HttpBodyMode::CloseDelimited {
@@ -183,11 +182,23 @@ fn parse_http_headers<'a>(lines: impl Iterator<Item = &'a str>) -> io::Result<Ve
         if line.is_empty() {
             break;
         }
+        if line.starts_with(' ') || line.starts_with('\t') {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "folded HTTP headers are not supported",
+            ));
+        }
         let (name, value) = line
             .split_once(':')
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "malformed header line"))?;
+        if name != name.trim() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "invalid HTTP header name",
+            ));
+        }
         headers.push(HttpHeader {
-            name: name.trim().to_string(),
+            name: name.to_string(),
             value: value.trim().to_string(),
         });
     }
@@ -195,10 +206,18 @@ fn parse_http_headers<'a>(lines: impl Iterator<Item = &'a str>) -> io::Result<Ve
 }
 
 fn parse_request_body_mode(headers: &[HttpHeader]) -> io::Result<HttpBodyMode> {
-    if has_header_token(headers, "transfer-encoding", "chunked") {
+    let transfer_encoding = parse_transfer_encoding(headers)?;
+    let content_length = parse_content_length(headers)?;
+    if transfer_encoding.chunked && content_length.is_some() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "conflicting Transfer-Encoding and Content-Length",
+        ));
+    }
+    if transfer_encoding.chunked {
         return Ok(HttpBodyMode::Chunked);
     }
-    if let Some(length) = parse_content_length(headers)? {
+    if let Some(length) = content_length {
         return Ok(if length == 0 {
             HttpBodyMode::None
         } else {
@@ -221,10 +240,18 @@ fn parse_response_body_mode(
         return Ok(HttpBodyMode::None);
     }
 
-    if has_header_token(headers, "transfer-encoding", "chunked") {
+    let transfer_encoding = parse_transfer_encoding(headers)?;
+    let content_length = parse_content_length(headers)?;
+    if transfer_encoding.chunked && content_length.is_some() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "conflicting Transfer-Encoding and Content-Length",
+        ));
+    }
+    if transfer_encoding.chunked {
         return Ok(HttpBodyMode::Chunked);
     }
-    if let Some(length) = parse_content_length(headers)? {
+    if let Some(length) = content_length {
         return Ok(if length == 0 {
             HttpBodyMode::None
         } else {
@@ -233,19 +260,6 @@ fn parse_response_body_mode(
     }
 
     Ok(HttpBodyMode::CloseDelimited)
-}
-
-fn parse_content_length(headers: &[HttpHeader]) -> io::Result<Option<u64>> {
-    let mut value = None;
-    for header in headers {
-        if header.name.eq_ignore_ascii_case("content-length") {
-            let parsed = header.value.parse::<u64>().map_err(|_| {
-                io::Error::new(io::ErrorKind::InvalidData, "invalid Content-Length value")
-            })?;
-            value = Some(parsed);
-        }
-    }
-    Ok(value)
 }
 
 fn has_header_token(headers: &[HttpHeader], name: &str, token: &str) -> bool {

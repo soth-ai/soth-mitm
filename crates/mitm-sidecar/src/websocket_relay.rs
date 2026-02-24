@@ -84,7 +84,12 @@ where
                 continue;
             }
 
-            let read = self.source.read(&mut out[written..]).await?;
+            let read = read_with_idle_timeout(
+                &mut self.source,
+                &mut out[written..],
+                "websocket_frame_read",
+            )
+            .await?;
             if read == 0 {
                 if written == 0 {
                     return Ok(false);
@@ -113,6 +118,7 @@ where
 
 async fn relay_websocket_connection<P, S, D, U>(
     engine: Arc<MitmEngine<P, S>>,
+    runtime_governor: Arc<runtime_governor::RuntimeGovernor>,
     websocket_context: FlowContext,
     downstream: BufferedConn<D>,
     upstream: BufferedConn<U>,
@@ -149,6 +155,7 @@ where
         mitm_http::WsDirection::ClientToServer,
         PrefixedReader::new(downstream_prefetch, downstream_read),
         upstream_write,
+        Arc::clone(&runtime_governor),
         Arc::clone(&frame_sequence),
         observer_tx.clone(),
     ));
@@ -156,6 +163,7 @@ where
         mitm_http::WsDirection::ServerToClient,
         PrefixedReader::new(upstream_prefetch, upstream_read),
         downstream_write,
+        runtime_governor,
         Arc::clone(&frame_sequence),
         observer_tx.clone(),
     ));
@@ -232,6 +240,7 @@ async fn relay_websocket_direction<R, W>(
     direction: mitm_http::WsDirection,
     mut source: PrefixedReader<R>,
     mut sink: W,
+    runtime_governor: Arc<runtime_governor::RuntimeGovernor>,
     frame_sequence: Arc<std::sync::atomic::AtomicU64>,
     observer_tx: tokio::sync::mpsc::Sender<WebSocketObserverMessage>,
 ) -> io::Result<WebSocketDirectionOutcome>
@@ -244,7 +253,7 @@ where
         let mut initial_header = [0_u8; 2];
         let has_frame = source.read_exact_or_eof(&mut initial_header).await?;
         if !has_frame {
-            sink.shutdown().await?;
+            shutdown_with_idle_timeout(&mut sink, "websocket_sink_shutdown").await?;
             return Ok(WebSocketDirectionOutcome {
                 bytes_forwarded,
                 close_frame_seen: false,
@@ -286,9 +295,18 @@ where
             frame_header.extend_from_slice(&masking_key);
         }
 
-        sink.write_all(&frame_header).await?;
+        let _in_flight_lease = runtime_governor
+            .reserve_in_flight_or_error(frame_header.len(), "websocket_frame_header_write")?;
+        write_all_with_idle_timeout(&mut sink, &frame_header, "websocket_frame_header_write")
+            .await?;
         bytes_forwarded += frame_header.len() as u64;
-        relay_websocket_payload(&mut source, &mut sink, payload_len).await?;
+        relay_websocket_payload(
+            &mut source,
+            &mut sink,
+            &runtime_governor,
+            payload_len,
+        )
+        .await?;
         bytes_forwarded += payload_len;
 
         let frame_kind = if (opcode & 0b1000) != 0 {
@@ -308,15 +326,24 @@ where
             frame_len: frame_header.len() as u64 + payload_len,
             observed_at_unix_ms: websocket_now_unix_ms(),
         };
-        observer_tx
-            .send(WebSocketObserverMessage::Frame(observation))
-            .await
-            .map_err(|_| {
-                io::Error::new(io::ErrorKind::BrokenPipe, "websocket observer channel closed")
-            })?;
+        match observer_tx.try_send(WebSocketObserverMessage::Frame(observation)) {
+            Ok(()) => {}
+            Err(tokio::sync::mpsc::error::TrySendError::Full(message)) => {
+                runtime_governor.mark_backpressure_activation();
+                observer_tx.send(message).await.map_err(|_| {
+                    io::Error::new(io::ErrorKind::BrokenPipe, "websocket observer channel closed")
+                })?;
+            }
+            Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    "websocket observer channel closed",
+                ));
+            }
+        }
 
         if opcode == WS_OPCODE_CLOSE {
-            sink.flush().await?;
+            flush_with_idle_timeout(&mut sink, "websocket_close_flush").await?;
             return Ok(WebSocketDirectionOutcome {
                 bytes_forwarded,
                 close_frame_seen: true,
@@ -328,6 +355,7 @@ where
 async fn relay_websocket_payload<R, W>(
     source: &mut PrefixedReader<R>,
     sink: &mut W,
+    runtime_governor: &Arc<runtime_governor::RuntimeGovernor>,
     mut payload_len: u64,
 ) -> io::Result<()>
 where
@@ -341,10 +369,13 @@ where
     let mut chunk = [0_u8; WS_FRAME_COPY_CHUNK_SIZE];
     while payload_len > 0 {
         let read_len = (chunk.len() as u64).min(payload_len) as usize;
+        let _in_flight_lease =
+            runtime_governor.reserve_in_flight_or_error(read_len, "websocket_payload_write")?;
         source
             .read_exact_required(&mut chunk[..read_len], "payload")
             .await?;
-        sink.write_all(&chunk[..read_len]).await?;
+        write_all_with_idle_timeout(&mut *sink, &chunk[..read_len], "websocket_payload_write")
+            .await?;
         payload_len -= read_len as u64;
     }
     Ok(())

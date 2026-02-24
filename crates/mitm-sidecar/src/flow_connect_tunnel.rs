@@ -107,18 +107,51 @@ where
         }
     };
 
+    let mut route_planner = FlowRoutePlanner::default();
+    let route = match route_planner.bind_once(
+        &engine.config,
+        RouteTarget::new(connect.server_host.clone(), connect.server_port, None),
+    ) {
+        Ok(binding) => binding,
+        Err(error) => {
+            let flow_id = engine.allocate_flow_id();
+            let context = FlowContext {
+                flow_id,
+                client_addr,
+                server_host: connect.server_host,
+                server_port: connect.server_port,
+                protocol: ApplicationProtocol::Tunnel,
+            };
+            write_proxy_response(
+                &mut downstream,
+                "502 Bad Gateway",
+                "route planner failed for CONNECT target",
+            )
+            .await?;
+            emit_stream_closed(
+                &engine,
+                context,
+                CloseReasonCode::RoutePlannerFailed,
+                Some(error.to_string()),
+                None,
+                None,
+            );
+            return Ok(());
+        }
+    };
+
     let outcome = engine.decide_connect(
         client_addr.clone(),
-        connect.server_host.clone(),
-        connect.server_port,
-        None,
+        route.target_host.clone(),
+        route.target_port,
+        route.policy_path.clone(),
     );
 
     let context = FlowContext {
         flow_id: outcome.flow_id,
         client_addr,
-        server_host: connect.server_host.clone(),
-        server_port: connect.server_port,
+        server_host: route.target_host.clone(),
+        server_port: route.target_port,
         protocol: ApplicationProtocol::Tunnel,
     };
 
@@ -157,7 +190,7 @@ where
             Ok(())
         }
         FlowAction::Tunnel => {
-            tunnel_connection(engine, context, &mut downstream, &mut input, header_len).await
+            tunnel_connection(engine, context, route, &mut downstream, &mut input, header_len).await
         }
         FlowAction::Intercept => {
             intercept_http_connection(
@@ -167,6 +200,7 @@ where
                 tls_diagnostics,
                 tls_learning,
                 context,
+                route,
                 downstream,
                 max_http_head_bytes,
             )
@@ -211,6 +245,7 @@ fn flow_action_label(action: FlowAction) -> &'static str {
 async fn tunnel_connection<P, S>(
     engine: Arc<MitmEngine<P, S>>,
     context: FlowContext,
+    route: RouteBinding,
     downstream: &mut TcpStream,
     input: &mut [u8],
     header_len: usize,
@@ -219,11 +254,13 @@ where
     P: PolicyEngine + Send + Sync + 'static,
     S: EventConsumer + Send + Sync + 'static,
 {
-    let mut upstream = match TcpStream::connect((&*context.server_host, context.server_port)).await
-    {
+    let mut upstream = match connect_via_route(&route, RouteConnectIntent::TargetTunnel).await {
         Ok(stream) => stream,
         Err(error) => {
-            let detail = format!("upstream_connect_failed: {error}");
+            let detail = format!(
+                "upstream_connect_failed[{}]: {error}",
+                route.route_mode_label()
+            );
             write_proxy_response(downstream, "502 Bad Gateway", &detail).await?;
             emit_stream_closed(
                 &engine,
@@ -237,16 +274,24 @@ where
         }
     };
 
-    downstream
-        .write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")
-        .await?;
+    write_all_with_idle_timeout(
+        downstream,
+        b"HTTP/1.1 200 Connection Established\r\n\r\n",
+        "connect_tunnel_established_write",
+    )
+    .await?;
 
     let buffered_client_data = &input[header_len..];
     if !buffered_client_data.is_empty() {
-        upstream.write_all(buffered_client_data).await?;
+        write_all_with_idle_timeout(
+            &mut upstream,
+            buffered_client_data,
+            "connect_tunnel_prefetch_write",
+        )
+        .await?;
     }
 
-    match tokio::io::copy_bidirectional(downstream, &mut upstream).await {
+    match copy_bidirectional_with_idle_timeout(downstream, &mut upstream).await {
         Ok((from_client, from_server)) => {
             let per_flow_budget = engine.config.max_flow_body_buffer_bytes as u64;
             let (reason, detail) = if from_client > per_flow_budget || from_server > per_flow_budget
@@ -271,10 +316,17 @@ where
             Ok(())
         }
         Err(error) => {
+            let reason = if is_idle_watchdog_timeout(&error) {
+                CloseReasonCode::IdleWatchdogTimeout
+            } else if is_stream_stage_timeout(&error) {
+                CloseReasonCode::StreamStageTimeout
+            } else {
+                CloseReasonCode::RelayError
+            };
             emit_stream_closed(
                 &engine,
                 context,
-                CloseReasonCode::RelayError,
+                reason,
                 Some(error.to_string()),
                 None,
                 None,

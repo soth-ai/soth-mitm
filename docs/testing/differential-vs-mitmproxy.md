@@ -7,7 +7,12 @@ This runbook defines replay-driven drift detection between `soth-mitm` and mitmp
 - Manifest: `testing/differential/corpus/manifest.tsv`
 - Sample normalized traces: `testing/differential/samples/`
 
-Each normalized event row is a tab-separated record:
+Replay input precedence per case:
+
+1. `<case>.events.v2.jsonl` (deterministic event log v2, preferred)
+2. `<case>.events.tsv` (legacy fallback)
+
+Legacy TSV rows use:
 
 ```text
 sequence_id\tevent_kind\tflow_id\tprotocol\treason_or_marker

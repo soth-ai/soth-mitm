@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use mitm_core::{MitmConfig, MitmEngine};
-use mitm_observe::VecEventConsumer;
+use mitm_observe::{EventType, VecEventConsumer};
 use mitm_policy::DefaultPolicyEngine;
 use mitm_sidecar::{SidecarConfig, SidecarServer};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -30,11 +30,31 @@ async fn read_response_head(stream: &mut TcpStream) -> String {
     String::from_utf8_lossy(&data).to_string()
 }
 
+fn should_retry_bind(error: &std::io::Error) -> bool {
+    matches!(
+        error.kind(),
+        std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::AddrInUse
+    )
+}
+
+async fn bind_loopback_listener_with_retry(label: &str) -> TcpListener {
+    let retries = 20_u32;
+    let retry_delay = Duration::from_millis(25);
+    for attempt in 0..=retries {
+        match TcpListener::bind("127.0.0.1:0").await {
+            Ok(listener) => return listener,
+            Err(error) if should_retry_bind(&error) && attempt < retries => {
+                sleep(retry_delay).await;
+            }
+            Err(error) => panic!("{label}: {error}"),
+        }
+    }
+    unreachable!("bind retries exhausted unexpectedly")
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn runtime_governor_enforces_concurrent_flow_limit_and_records_metrics() {
-    let upstream = TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("bind upstream");
+    let upstream = bind_loopback_listener_with_retry("bind upstream").await;
     let upstream_addr = upstream.local_addr().expect("upstream addr");
     let upstream_task = tokio::spawn(async move {
         let (mut stream, _) = upstream.accept().await.expect("accept upstream");
@@ -63,11 +83,13 @@ async fn runtime_governor_enforces_concurrent_flow_limit_and_records_metrics() {
         listen_port: 0,
         max_connect_head_bytes: 4 * 1024,
         max_http_head_bytes: 4 * 1024,
+        idle_watchdog_timeout: std::time::Duration::from_secs(30),
+        stream_stage_timeout: std::time::Duration::from_secs(5),
     };
     let engine = build_engine(config, sink);
     let server = SidecarServer::new(sidecar_config, engine).expect("build sidecar");
     let observability = server.runtime_observability_handle();
-    let listener = server.bind_listener().await.expect("bind sidecar");
+    let listener = bind_loopback_listener_with_retry("bind sidecar").await;
     let proxy_addr = listener.local_addr().expect("proxy addr");
     let proxy_task = tokio::spawn(server.run_with_listener(listener));
 
@@ -134,4 +156,116 @@ async fn runtime_governor_enforces_concurrent_flow_limit_and_records_metrics() {
     assert!(snapshot.flow_count >= 1);
     assert!(snapshot.flow_duration_max_ms > 0);
     assert!(snapshot.in_flight_bytes_watermark > 0);
+    assert!(
+        snapshot.budget_denial_count >= 1,
+        "expected at least one budget denial from flow-capacity saturation"
+    );
+    assert!(
+        snapshot.backpressure_activation_count >= 1,
+        "expected backpressure activation to track denied capacity"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn idle_watchdog_timeout_closes_stuck_tunnel_and_records_metrics() {
+    let upstream = bind_loopback_listener_with_retry("bind upstream").await;
+    let upstream_addr = upstream.local_addr().expect("upstream addr");
+    let upstream_task = tokio::spawn(async move {
+        let (_stream, _) = upstream.accept().await.expect("accept upstream");
+        sleep(Duration::from_secs(1)).await;
+    });
+
+    let sink = VecEventConsumer::default();
+    let sink_for_assertions = sink.clone();
+    let config = MitmConfig {
+        ignore_hosts: vec!["127.0.0.1".to_string()],
+        max_concurrent_flows: 8,
+        max_in_flight_bytes: 32 * 1024,
+        ..MitmConfig::default()
+    };
+    let sidecar_config = SidecarConfig {
+        listen_addr: "127.0.0.1".to_string(),
+        listen_port: 0,
+        max_connect_head_bytes: 4 * 1024,
+        max_http_head_bytes: 4 * 1024,
+        idle_watchdog_timeout: Duration::from_millis(120),
+        stream_stage_timeout: Duration::from_secs(1),
+    };
+    let engine = build_engine(config, sink);
+    let server = SidecarServer::new(sidecar_config, engine).expect("build sidecar");
+    let observability = server.runtime_observability_handle();
+    let listener = bind_loopback_listener_with_retry("bind sidecar").await;
+    let proxy_addr = listener.local_addr().expect("proxy addr");
+    let proxy_task = tokio::spawn(server.run_with_listener(listener));
+
+    let mut client = TcpStream::connect(proxy_addr)
+        .await
+        .expect("connect client");
+    let connect_request = format!(
+        "CONNECT 127.0.0.1:{} HTTP/1.1\r\nHost: 127.0.0.1:{}\r\n\r\n",
+        upstream_addr.port(),
+        upstream_addr.port()
+    );
+    client
+        .write_all(connect_request.as_bytes())
+        .await
+        .expect("write CONNECT");
+    let connect_head = read_response_head(&mut client).await;
+    assert!(connect_head.starts_with("HTTP/1.1 200"), "{connect_head}");
+
+    timeout(Duration::from_secs(2), async {
+        let mut probe = [0_u8; 1];
+        loop {
+            match client.read(&mut probe).await {
+                Ok(0) => break,
+                Ok(_) => continue,
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        std::io::ErrorKind::ConnectionAborted
+                            | std::io::ErrorKind::ConnectionReset
+                            | std::io::ErrorKind::BrokenPipe
+                    ) =>
+                {
+                    break;
+                }
+                Err(error) => panic!("unexpected read error: {error}"),
+            }
+        }
+    })
+    .await
+    .expect("idle watchdog should close stalled tunnel");
+
+    timeout(Duration::from_secs(2), async {
+        loop {
+            let snapshot = observability.snapshot();
+            if snapshot.idle_timeout_count >= 1 && snapshot.stuck_flow_count >= 1 {
+                break;
+            }
+            sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("timeout counters should be observed");
+
+    let snapshot = observability.snapshot();
+    assert!(
+        snapshot.idle_timeout_count >= 1,
+        "expected idle timeout counter increment"
+    );
+    assert!(
+        snapshot.stuck_flow_count >= 1,
+        "expected stuck flow counter increment"
+    );
+    assert!(
+        sink_for_assertions.snapshot().iter().any(|event| {
+            event.kind == EventType::StreamClosed
+                && event.attributes.get("reason_code").map(String::as_str)
+                    == Some("idle_watchdog_timeout")
+        }),
+        "expected stream_closed reason_code=idle_watchdog_timeout"
+    );
+
+    proxy_task.abort();
+    upstream_task.abort();
 }

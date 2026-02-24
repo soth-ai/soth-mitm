@@ -1,17 +1,23 @@
 use std::io;
 use std::sync::Arc;
+use std::time::Duration;
 
-use mitm_core::{parse_connect_request_head_with_mode, ConnectParseError, MitmEngine};
+use mitm_core::{
+    parse_connect_request_head_with_mode, ConnectParseError,
+    DownstreamCertProfile as CoreDownstreamCertProfile, MitmEngine, TlsProfile as CoreTlsProfile,
+    UpstreamSniMode as CoreUpstreamSniMode,
+};
 use mitm_http::{negotiated_alpn_label, protocol_from_negotiated_alpn, ApplicationProtocol};
 use mitm_observe::{Event, EventConsumer, EventType, FlowContext};
 use mitm_policy::{FlowAction, PolicyEngine};
 use mitm_tls::{
-    build_http_client_config, classify_tls_error, CertificateAuthorityConfig, MitmCertificateStore,
-    TlsConfigError,
+    build_http_client_config_with_policy, classify_tls_error, resolve_upstream_server_name,
+    CertificateAuthorityConfig, DownstreamCertProfile as TlsDownstreamCertProfile,
+    MitmCertificateStore, TlsConfigError, UpstreamTlsProfile as TlsUpstreamTlsProfile,
+    UpstreamTlsSniMode as TlsUpstreamTlsSniMode,
 };
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::{TcpListener, TcpStream};
-use tokio_rustls::rustls::pki_types::ServerName;
 use tokio_rustls::TlsConnector;
 
 mod mitmproxy_tls_ops;
@@ -42,6 +48,8 @@ pub struct SidecarConfig {
     pub listen_port: u16,
     pub max_connect_head_bytes: usize,
     pub max_http_head_bytes: usize,
+    pub idle_watchdog_timeout: Duration,
+    pub stream_stage_timeout: Duration,
 }
 
 impl Default for SidecarConfig {
@@ -51,6 +59,8 @@ impl Default for SidecarConfig {
             listen_port: 8080,
             max_connect_head_bytes: 64 * 1024,
             max_http_head_bytes: 64 * 1024,
+            idle_watchdog_timeout: Duration::from_secs(30),
+            stream_stage_timeout: Duration::from_secs(15),
         }
     }
 }
@@ -159,6 +169,9 @@ where
             ca_organization: engine.config.ca_organization.clone(),
             leaf_cert_cache_capacity: engine.config.leaf_cert_cache_capacity,
             ca_rotate_after_seconds: engine.config.ca_rotate_after_seconds,
+            downstream_cert_profile: map_downstream_cert_profile(
+                engine.config.downstream_cert_profile,
+            ),
         };
         let cert_store =
             MitmCertificateStore::new(ca_config).map_err(tls_error_to_io_invalid_input)?;
@@ -170,6 +183,7 @@ where
         ));
         runtime_governor::install_global_runtime_governor(Arc::clone(&runtime_governor));
         runtime_governor::set_event_queue_depth_global(0);
+        install_io_timeout_config(config.idle_watchdog_timeout, config.stream_stage_timeout);
         let tls_diagnostics = Arc::new(TlsDiagnostics::default());
         let tls_learning = Arc::new(TlsLearningGuardrails::new());
         Ok(Self {
@@ -309,12 +323,15 @@ where
         loop {
             let (mut stream, client_addr) = listener.accept().await?;
             let Some(flow_permit) = self.runtime_governor.try_acquire_flow_permit() else {
-                let _ = stream
-                    .write_all(
-                        b"HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\nContent-Length: 36\r\n\r\nproxy flow capacity exceeded; try later",
-                    )
-                    .await;
-                let _ = stream.shutdown().await;
+                self.runtime_governor.mark_budget_denial();
+                let _ = write_all_with_idle_timeout(
+                    &mut stream,
+                    b"HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\nContent-Length: 36\r\n\r\nproxy flow capacity exceeded; try later",
+                    "flow_capacity_denied_write",
+                )
+                .await;
+                let _ =
+                    shutdown_with_idle_timeout(&mut stream, "flow_capacity_denied_shutdown").await;
                 continue;
             };
             let runtime = RuntimeHandles {
@@ -347,6 +364,9 @@ where
 include!("flow_connect_tunnel.rs");
 include!("close_codes.rs");
 include!("downstream_tls.rs");
+include!("io_timeouts.rs");
+include!("tls_profile_mapping.rs");
+include!("route_planner.rs");
 include!("flow_intercept.rs");
 include!("flow_intercept_http1.rs");
 include!("http2_relay_support.rs");
@@ -356,6 +376,7 @@ include!("websocket_relay_support.rs");
 include!("websocket_turn_tracker.rs");
 include!("websocket_events.rs");
 include!("http_head_parser.rs");
+include!("http_head_parser_smuggling.rs");
 include!("http_head_parser_api.rs");
 include!("http_body_relay.rs");
 include!("event_emitters.rs");
