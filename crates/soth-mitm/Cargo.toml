@@ -1,0 +1,48 @@
+[package]
+name = "soth-mitm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[package.metadata.p6_27]
+forbidden_action_variants = ["Delay", "Hold"]
+forbidden_provider_terms = [
+  "openai",
+  "anthropic",
+  "claude",
+  "gpt",
+  "gemini",
+  "mistral",
+  "llama",
+  "bedrock",
+  "cohere",
+  "perplexity",
+]
+forbidden_telemetry_deps = [
+  "opentelemetry",
+  "opentelemetry_sdk",
+  "tracing-opentelemetry",
+  "sentry",
+  "sentry-core",
+  "sentry-tracing",
+  "prometheus",
+  "metrics-exporter-prometheus",
+  "datadog",
+]
+
+[dependencies]
+bytes = "1"
+http = "1"
+mitm-core = { path = "../mitm-core" }
+mitm-http = { path = "../mitm-http" }
+mitm-observe = { path = "../mitm-observe" }
+mitm-policy = { path = "../mitm-policy" }
+mitm-sidecar = { path = "../mitm-sidecar" }
+rcgen = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["process", "rt", "sync", "time"] }
+uuid = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

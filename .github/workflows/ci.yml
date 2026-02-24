@@ -51,6 +51,27 @@ jobs:
       - name: Lint
         run: cargo clippy --workspace --all-targets -- -D warnings
 
+  compliance:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@cargo-deny
+
+      - name: Enforce dependency policy
+        run: cargo deny check bans licenses sources
+
+      - name: Enforce prohibition policy
+        run: ./scripts/check_prohibitions.sh
+
   test:
     runs-on: ubuntu-latest
     steps:
