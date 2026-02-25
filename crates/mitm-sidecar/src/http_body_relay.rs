@@ -1,7 +1,12 @@
 trait HttpBodyObserver: Send {
-    fn on_chunk(&mut self, chunk: &[u8]) -> io::Result<()>;
-    fn on_complete(&mut self) -> io::Result<()> {
-        Ok(())
+    fn on_chunk<'a>(
+        &'a mut self,
+        chunk: &'a [u8],
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = io::Result<()>> + Send + 'a>>;
+    fn on_complete<'a>(
+        &'a mut self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = io::Result<()>> + Send + 'a>> {
+        Box::pin(async { Ok(()) })
     }
 }
 
@@ -60,7 +65,7 @@ where
         )
         .await,
     }?;
-    observer.on_complete()?;
+    observer.on_complete().await?;
     Ok(total)
 }
 
@@ -88,7 +93,7 @@ where
             .reserve_in_flight_or_error(take, "http1_body_prefetch_write")?;
         write_all_with_idle_timeout(sink, &source.read_buf[..take], "http1_body_prefetch_write")
             .await?;
-        observer.on_chunk(&source.read_buf[..take])?;
+        observer.on_chunk(&source.read_buf[..take]).await?;
         source.read_buf.drain(..take);
         length -= take as u64;
         total += take as u64;
@@ -112,7 +117,7 @@ where
         let _in_flight_lease = runtime_governor
             .reserve_in_flight_or_error(read, "http1_body_chunk_write")?;
         write_all_with_idle_timeout(sink, &chunk[..read], "http1_body_chunk_write").await?;
-        observer.on_chunk(&chunk[..read])?;
+        observer.on_chunk(&chunk[..read]).await?;
         length -= read as u64;
         total += read as u64;
         emit_body_chunk_event(engine, context.clone(), event_kind, read as u64);
@@ -222,7 +227,7 @@ where
             "http1_close_delimited_prefetch_write",
         )
         .await?;
-        observer.on_chunk(&source.read_buf)?;
+        observer.on_chunk(&source.read_buf).await?;
         total += source.read_buf.len() as u64;
         emit_body_chunk_event(
             engine,
@@ -244,7 +249,7 @@ where
         let _in_flight_lease = runtime_governor
             .reserve_in_flight_or_error(read, "http1_close_delimited_chunk_write")?;
         write_all_with_idle_timeout(sink, &chunk[..read], "http1_close_delimited_write").await?;
-        observer.on_chunk(&chunk[..read])?;
+        observer.on_chunk(&chunk[..read]).await?;
         total += read as u64;
         emit_body_chunk_event(engine, context.clone(), event_kind, read as u64);
     }

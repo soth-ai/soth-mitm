@@ -37,7 +37,7 @@ where
         }
     }
 
-    fn emit_parsed_event(&mut self, event: mitm_http::SseEvent) -> io::Result<()> {
+    async fn emit_parsed_event(&mut self, event: mitm_http::SseEvent) -> io::Result<()> {
         if event.data.len() > self.max_event_bytes {
             self.runtime_governor.mark_decoder_failure();
             return Err(io::Error::new(
@@ -53,22 +53,18 @@ where
         self.next_sequence_no += 1;
         emit_sse_event(&self.engine, self.context.clone(), sequence_no, &event);
         let is_done = event.data == "[DONE]";
-        let flow_hooks = Arc::clone(&self.flow_hooks);
-        let hook_context = self.context.clone();
-        let hook_chunk = StreamChunk {
-            payload: bytes::Bytes::from(event.data),
-            sequence: sequence_no,
-            frame_kind: StreamFrameKind::SseData,
-        };
-        tokio::spawn(async move {
-            flow_hooks.on_stream_chunk(hook_context, hook_chunk).await;
-        });
+        self.flow_hooks
+            .on_stream_chunk(
+                self.context.clone(),
+                StreamChunk {
+                    payload: bytes::Bytes::from(event.data),
+                    sequence: sequence_no,
+                    frame_kind: StreamFrameKind::SseData,
+                },
+            )
+            .await;
         if is_done && !self.stream_ended {
-            let flow_hooks = Arc::clone(&self.flow_hooks);
-            let hook_context = self.context.clone();
-            tokio::spawn(async move {
-                flow_hooks.on_stream_end(hook_context).await;
-            });
+            self.flow_hooks.on_stream_end(self.context.clone()).await;
             self.stream_ended = true;
         }
         Ok(())
@@ -80,36 +76,41 @@ where
     P: PolicyEngine + Send + Sync + 'static,
     S: EventConsumer + Send + Sync + 'static,
 {
-    fn on_chunk(&mut self, chunk: &[u8]) -> io::Result<()> {
-        if chunk.len() > self.max_event_bytes {
-            self.runtime_governor.mark_decoder_failure();
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!(
-                    "SSE chunk exceeded decoder budget (len={}, limit={})",
-                    chunk.len(),
-                    self.max_event_bytes
-                ),
-            ));
-        }
-        for event in self.parser.push_bytes(chunk) {
-            self.emit_parsed_event(event)?;
-        }
-        Ok(())
+    fn on_chunk<'a>(
+        &'a mut self,
+        chunk: &'a [u8],
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = io::Result<()>> + Send + 'a>> {
+        Box::pin(async move {
+            if chunk.len() > self.max_event_bytes {
+                self.runtime_governor.mark_decoder_failure();
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "SSE chunk exceeded decoder budget (len={}, limit={})",
+                        chunk.len(),
+                        self.max_event_bytes
+                    ),
+                ));
+            }
+            for event in self.parser.push_bytes(chunk) {
+                self.emit_parsed_event(event).await?;
+            }
+            Ok(())
+        })
     }
 
-    fn on_complete(&mut self) -> io::Result<()> {
-        if let Some(event) = self.parser.finish() {
-            self.emit_parsed_event(event)?;
-        }
-        if !self.stream_ended {
-            let flow_hooks = Arc::clone(&self.flow_hooks);
-            let hook_context = self.context.clone();
-            tokio::spawn(async move {
-                flow_hooks.on_stream_end(hook_context).await;
-            });
-            self.stream_ended = true;
-        }
-        Ok(())
+    fn on_complete<'a>(
+        &'a mut self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = io::Result<()>> + Send + 'a>> {
+        Box::pin(async move {
+            if let Some(event) = self.parser.finish() {
+                self.emit_parsed_event(event).await?;
+            }
+            if !self.stream_ended {
+                self.flow_hooks.on_stream_end(self.context.clone()).await;
+                self.stream_ended = true;
+            }
+            Ok(())
+        })
     }
 }

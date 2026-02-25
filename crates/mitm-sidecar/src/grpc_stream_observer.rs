@@ -36,7 +36,7 @@ where
         }
     }
 
-    fn emit_payload(&mut self, payload: Vec<u8>) -> io::Result<()> {
+    async fn emit_payload(&mut self, payload: Vec<u8>) -> io::Result<()> {
         if payload.len() > self.max_message_bytes {
             self.runtime_governor.mark_decoder_failure();
             return Err(io::Error::new(
@@ -50,24 +50,20 @@ where
         }
         let sequence = self.next_sequence_no;
         self.next_sequence_no += 1;
-        let flow_hooks = Arc::clone(&self.flow_hooks);
-        let hook_context = self.context.clone();
-        tokio::spawn(async move {
-            flow_hooks
-                .on_stream_chunk(
-                    hook_context,
-                    StreamChunk {
-                        payload: bytes::Bytes::from(payload),
-                        sequence,
-                        frame_kind: StreamFrameKind::GrpcMessage,
-                    },
-                )
-                .await;
-        });
+        self.flow_hooks
+            .on_stream_chunk(
+                self.context.clone(),
+                StreamChunk {
+                    payload: bytes::Bytes::from(payload),
+                    sequence,
+                    frame_kind: StreamFrameKind::GrpcMessage,
+                },
+            )
+            .await;
         Ok(())
     }
 
-    fn parse_available_frames(&mut self) -> io::Result<()> {
+    async fn parse_available_frames(&mut self) -> io::Result<()> {
         loop {
             if self.pending.len() < 5 {
                 return Ok(());
@@ -85,7 +81,7 @@ where
             let _compression_flag = self.pending[0];
             let payload = self.pending[5..5 + frame_len].to_vec();
             self.pending.drain(..5 + frame_len);
-            self.emit_payload(payload)?;
+            self.emit_payload(payload).await?;
         }
     }
 }
@@ -95,23 +91,28 @@ where
     P: PolicyEngine + Send + Sync + 'static,
     S: EventConsumer + Send + Sync + 'static,
 {
-    fn on_chunk(&mut self, chunk: &[u8]) -> io::Result<()> {
-        self.pending.extend_from_slice(chunk);
-        self.parse_available_frames()
+    fn on_chunk<'a>(
+        &'a mut self,
+        chunk: &'a [u8],
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = io::Result<()>> + Send + 'a>> {
+        Box::pin(async move {
+            self.pending.extend_from_slice(chunk);
+            self.parse_available_frames().await
+        })
     }
 
-    fn on_complete(&mut self) -> io::Result<()> {
-        if !self.pending.is_empty() {
-            self.pending.clear();
-        }
-        if !self.stream_ended {
-            let flow_hooks = Arc::clone(&self.flow_hooks);
-            let hook_context = self.context.clone();
-            tokio::spawn(async move {
-                flow_hooks.on_stream_end(hook_context).await;
-            });
-            self.stream_ended = true;
-        }
-        Ok(())
+    fn on_complete<'a>(
+        &'a mut self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = io::Result<()>> + Send + 'a>> {
+        Box::pin(async move {
+            if !self.pending.is_empty() {
+                self.pending.clear();
+            }
+            if !self.stream_ended {
+                self.flow_hooks.on_stream_end(self.context.clone()).await;
+                self.stream_ended = true;
+            }
+            Ok(())
+        })
     }
 }

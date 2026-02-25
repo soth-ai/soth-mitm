@@ -33,12 +33,17 @@ impl BodyCaptureObserver {
 }
 
 impl HttpBodyObserver for BodyCaptureObserver {
-    fn on_chunk(&mut self, chunk: &[u8]) -> io::Result<()> {
-        self.body.extend_from_slice(chunk);
-        if self.body.len() > self.max_handler_bytes {
-            self.truncated = true;
-        }
-        Ok(())
+    fn on_chunk<'a>(
+        &'a mut self,
+        chunk: &'a [u8],
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = io::Result<()>> + Send + 'a>> {
+        Box::pin(async move {
+            self.body.extend_from_slice(chunk);
+            if self.body.len() > self.max_handler_bytes {
+                self.truncated = true;
+            }
+            Ok(())
+        })
     }
 }
 

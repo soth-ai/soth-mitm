@@ -35,6 +35,7 @@ async fn relay_http2_connection<P, S, D, U>(
     runtime_governor: Arc<runtime_governor::RuntimeGovernor>,
     flow_hooks: Arc<dyn FlowHooks>,
     tunnel_context: FlowContext,
+    process_info: Option<mitm_policy::ProcessInfo>,
     downstream_tls: D,
     upstream_tls: U,
     max_header_list_size: u32,
@@ -102,10 +103,16 @@ where
             Ok((request, respond)) => {
                 let stream_engine = Arc::clone(&engine);
                 let stream_runtime_governor = Arc::clone(&runtime_governor);
-                let stream_context = http2_context.clone();
+                let stream_context = FlowContext {
+                    flow_id: stream_engine.allocate_flow_id(),
+                    ..http2_context.clone()
+                };
                 let stream_upstream_sender = upstream_sender.clone();
                 let stream_byte_counters = byte_counters.clone();
                 let stream_flow_hooks = Arc::clone(&flow_hooks);
+                stream_flow_hooks
+                    .on_connection_open(stream_context.clone(), process_info.clone())
+                    .await;
                 stream_tasks.spawn(async move {
                     relay_http2_stream(
                         stream_engine,

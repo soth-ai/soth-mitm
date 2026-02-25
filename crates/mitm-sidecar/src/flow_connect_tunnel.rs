@@ -251,6 +251,7 @@ where
                 tls_learning,
                 flow_hooks,
                 context,
+                process_info,
                 route,
                 policy_snapshot.override_state,
                 downstream,
