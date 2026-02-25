@@ -1,4 +1,5 @@
 include!("flow_connect_tunnel.rs");
+include!("flow_connect_tunnel_support.rs");
 include!("close_codes.rs");
 include!("downstream_tls.rs");
 include!("io_timeouts.rs");
@@ -28,3 +29,4 @@ include!("sse_stream_observer.rs");
 include!("ndjson_stream_observer.rs");
 include!("grpc_stream_observer.rs");
 include!("socket_hardening.rs");
+include!("shutdown_control.rs");

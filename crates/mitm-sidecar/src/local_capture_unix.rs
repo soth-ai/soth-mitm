@@ -186,6 +186,36 @@ fn build_unix_client_addr(
 #[cfg(unix)]
 async fn handle_local_unix_client<P, S>(
     runtime: RuntimeHandles<P, S>,
+    downstream: tokio::net::UnixStream,
+    client_addr: String,
+    flow_id: u64,
+    process_info: Option<mitm_policy::ProcessInfo>,
+    max_connect_head_bytes: usize,
+    max_http_head_bytes: usize,
+) -> io::Result<()>
+where
+    P: PolicyEngine + Send + Sync + 'static,
+    S: EventConsumer + Send + Sync + 'static,
+{
+    let close_context = unknown_context(flow_id, client_addr.clone());
+    let flow_hooks = Arc::clone(&runtime.flow_hooks);
+    let result = handle_local_unix_client_inner(
+        runtime,
+        downstream,
+        client_addr,
+        flow_id,
+        process_info,
+        max_connect_head_bytes,
+        max_http_head_bytes,
+    )
+    .await;
+    flow_hooks.on_stream_end(close_context).await;
+    result
+}
+
+#[cfg(unix)]
+async fn handle_local_unix_client_inner<P, S>(
+    runtime: RuntimeHandles<P, S>,
     mut downstream: tokio::net::UnixStream,
     client_addr: String,
     flow_id: u64,
