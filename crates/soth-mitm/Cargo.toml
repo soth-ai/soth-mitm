@@ -38,6 +38,7 @@ forbidden_telemetry_deps = [
 
 [dependencies]
 bytes = "1"
+dashmap = { workspace = true }
 futures = { workspace = true }
 http = "1"
 lru = "0.12"

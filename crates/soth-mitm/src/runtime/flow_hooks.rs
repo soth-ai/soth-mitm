@@ -13,13 +13,13 @@ use crate::runtime::handler_guard::HandlerCallbackGuard;
 use crate::types::{ConnectionMeta, FrameKind, RawRequest, RawResponse, StreamChunk};
 use crate::HandlerDecision;
 use bytes::Bytes;
+use dashmap::DashMap;
 use lru::LruCache;
 use mitm_observe::FlowContext;
 use mitm_sidecar::{
     FlowHooks, RawRequest as SidecarRawRequest, RawResponse as SidecarRawResponse, RequestDecision,
     StreamChunk as SidecarStreamChunk, StreamFrameKind,
 };
-use std::collections::HashMap;
 use std::future::Future;
 use std::num::NonZeroUsize;
 use std::pin::Pin;
@@ -33,8 +33,8 @@ struct HandlerFlowHooks<H: InterceptHandler> {
     callback_guard: Arc<HandlerCallbackGuard>,
     process_lookup: Option<Arc<ProcessLookupService<PlatformProcessAttributor>>>,
     flow_dispatchers: Arc<FlowDispatchers<H>>,
-    stream_sequences: Arc<Mutex<HashMap<u64, u64>>>,
-    connection_meta_by_flow: Arc<Mutex<HashMap<u64, ConnectionMeta>>>,
+    stream_sequences: Arc<DashMap<u64, u64>>,
+    connection_meta_by_flow: Arc<DashMap<u64, ConnectionMeta>>,
     closed_flow_ids: Arc<Mutex<LruCache<u64, ()>>>,
 }
 impl<H: InterceptHandler> HandlerFlowHooks<H> {
@@ -55,8 +55,8 @@ impl<H: InterceptHandler> HandlerFlowHooks<H> {
             callback_guard,
             process_lookup,
             flow_dispatchers,
-            stream_sequences: Arc::new(Mutex::new(HashMap::new())),
-            connection_meta_by_flow: Arc::new(Mutex::new(HashMap::new())),
+            stream_sequences: Arc::new(DashMap::new()),
+            connection_meta_by_flow: Arc::new(DashMap::new()),
             closed_flow_ids: Arc::new(Mutex::new(LruCache::new(
                 NonZeroUsize::new(16_384).expect("closed flow cache capacity must be non-zero"),
             ))),
@@ -110,9 +110,7 @@ impl<H: InterceptHandler> FlowHooks for HandlerFlowHooks<H> {
                 &context,
                 process_info.map(runtime_process_info_from_policy),
             );
-            let mut guard = connection_meta_by_flow.lock().await;
-            guard.insert(context.flow_id, connection_meta.clone());
-            drop(guard);
+            connection_meta_by_flow.insert(context.flow_id, connection_meta.clone());
             callback_guard.run_sync((), || handler.on_connection_open(&connection_meta));
         })
     }
@@ -213,8 +211,7 @@ impl<H: InterceptHandler> FlowHooks for HandlerFlowHooks<H> {
                 return;
             };
             let sequence = {
-                let mut guard = stream_sequences.lock().await;
-                let next = guard.entry(context.flow_id).or_insert(0);
+                let mut next = stream_sequences.entry(context.flow_id).or_insert(0);
                 let value = *next;
                 *next += 1;
                 value
@@ -254,12 +251,8 @@ impl<H: InterceptHandler> FlowHooks for HandlerFlowHooks<H> {
 
             flow_dispatchers.close_and_drain(context.flow_id).await;
 
-            let mut guard = stream_sequences.lock().await;
-            guard.remove(&context.flow_id);
-            drop(guard);
-            let mut connection_guard = connection_meta_by_flow.lock().await;
-            connection_guard.remove(&context.flow_id);
-            drop(connection_guard);
+            stream_sequences.remove(&context.flow_id);
+            connection_meta_by_flow.remove(&context.flow_id);
             if let Some(lookup) = process_lookup.as_ref() {
                 lookup
                     .remove_connection(connection_id_for_flow_id(context.flow_id))
@@ -316,10 +309,12 @@ fn map_stream_frame_kind(kind: StreamFrameKind) -> Option<FrameKind> {
 
 async fn connection_meta_for_context(
     context: &FlowContext,
-    connection_meta_by_flow: &Arc<Mutex<HashMap<u64, ConnectionMeta>>>,
+    connection_meta_by_flow: &Arc<DashMap<u64, ConnectionMeta>>,
 ) -> Option<ConnectionMeta> {
-    let guard = connection_meta_by_flow.lock().await;
-    let Some(connection_meta) = guard.get(&context.flow_id).cloned() else {
+    let Some(connection_meta) = connection_meta_by_flow
+        .get(&context.flow_id)
+        .map(|value| value.clone())
+    else {
         debug_assert!(
             false,
             "connection {} missing ConnectionMeta in flow map",
