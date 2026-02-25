@@ -1,7 +1,8 @@
-#![no_main]
+#![cfg_attr(not(target_env = "msvc"), no_main)]
 
 use std::collections::BTreeMap;
 
+#[cfg(not(target_env = "msvc"))]
 use libfuzzer_sys::fuzz_target;
 use mitm_http::{
     DecoderFailureCode, DecoderFrame, DecoderPipelineResult, DecoderStage, DecoderStageProcessor,
@@ -37,7 +38,7 @@ impl DecoderStageProcessor for FuzzStageProcessor {
     }
 }
 
-fuzz_target!(|data: &[u8]| {
+fn run_decoder_layering_case(data: &[u8]) {
     let stage_count = (data.first().copied().unwrap_or(0) as usize % 6).max(1);
     let mut stages = Vec::with_capacity(stage_count);
     for idx in 0..stage_count {
@@ -83,7 +84,41 @@ fuzz_target!(|data: &[u8]| {
 
     let result = pipeline.execute(frame);
     assert_decoder_pipeline_invariants(&stages, &result);
+}
+
+#[cfg(not(target_env = "msvc"))]
+fuzz_target!(|data: &[u8]| {
+    run_decoder_layering_case(data);
 });
+
+#[cfg(target_env = "msvc")]
+fn main() {
+    let mut saw_input = false;
+    for arg in std::env::args().skip(1) {
+        if arg.starts_with('-') {
+            continue;
+        }
+        let path = std::path::Path::new(&arg);
+        if !path.is_dir() {
+            continue;
+        }
+        if let Ok(entries) = std::fs::read_dir(path) {
+            for entry in entries.flatten() {
+                let input_path = entry.path();
+                if !input_path.is_file() {
+                    continue;
+                }
+                if let Ok(bytes) = std::fs::read(&input_path) {
+                    run_decoder_layering_case(&bytes);
+                    saw_input = true;
+                }
+            }
+        }
+    }
+    if !saw_input {
+        run_decoder_layering_case(br#"{"seed":"decoder-layering"}"#);
+    }
+}
 
 fn assert_decoder_pipeline_invariants(stages: &[DecoderStage], result: &DecoderPipelineResult) {
     assert_eq!(result.reports.len(), stages.len());
