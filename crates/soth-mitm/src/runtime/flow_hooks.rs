@@ -112,7 +112,9 @@ impl<H: InterceptHandler> FlowHooks for HandlerFlowHooks<H> {
             );
             let connection_meta = Arc::new(connection_meta);
             connection_meta_by_flow.insert(context.flow_id, Arc::clone(&connection_meta));
-            callback_guard.run_sync((), || handler.on_connection_open(&connection_meta));
+            callback_guard
+                .run_sync((), move || handler.on_connection_open(&connection_meta))
+                .await;
         })
     }
     fn should_intercept_tls(
@@ -124,9 +126,11 @@ impl<H: InterceptHandler> FlowHooks for HandlerFlowHooks<H> {
         let callback_guard = Arc::clone(&self.callback_guard);
         Box::pin(async move {
             let process_info = process_info.map(runtime_process_info_from_policy);
-            callback_guard.run_sync(false, || {
-                handler.should_intercept_tls(&context.server_host, process_info.as_ref())
-            })
+            callback_guard
+                .run_sync(false, move || {
+                    handler.should_intercept_tls(&context.server_host, process_info.as_ref())
+                })
+                .await
         })
     }
     fn on_tls_failure(
@@ -137,7 +141,11 @@ impl<H: InterceptHandler> FlowHooks for HandlerFlowHooks<H> {
         let handler = Arc::clone(&self.handler);
         let callback_guard = Arc::clone(&self.callback_guard);
         Box::pin(async move {
-            callback_guard.run_sync((), || handler.on_tls_failure(&context.server_host, &error))
+            callback_guard
+                .run_sync((), move || {
+                    handler.on_tls_failure(&context.server_host, &error)
+                })
+                .await
         })
     }
     fn on_request(
@@ -267,7 +275,11 @@ impl<H: InterceptHandler> FlowHooks for HandlerFlowHooks<H> {
                 })
                 .await;
             let handler_for_close = Arc::clone(&handler);
-            callback_guard.run_sync((), || handler_for_close.on_connection_close(connection_id));
+            callback_guard
+                .run_sync((), move || {
+                    handler_for_close.on_connection_close(connection_id)
+                })
+                .await;
         })
     }
 }
@@ -343,5 +355,4 @@ async fn connection_meta_for_context(
 }
 
 #[cfg(test)]
-#[path = "flow_hooks_tests.rs"]
 mod tests;

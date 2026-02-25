@@ -1,9 +1,10 @@
 use std::collections::VecDeque;
 use std::io;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, OnceLock, RwLock};
+use std::sync::{Arc, OnceLock};
 use std::time::Instant;
 
+use parking_lot::{Mutex, RwLock};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -181,10 +182,7 @@ impl RuntimeGovernor {
     }
 
     pub fn register_stream_closed(&self, flow_id: u64) -> bool {
-        let mut closed = self
-            .closed_flow_ids
-            .lock()
-            .expect("runtime governor closed-flow lock poisoned");
+        let mut closed = self.closed_flow_ids.lock();
         if closed.iter().any(|existing| *existing == flow_id) {
             return false;
         }
@@ -221,56 +219,42 @@ impl RuntimeGovernor {
 
 pub fn install_global_runtime_governor(governor: Arc<RuntimeGovernor>) {
     let slot = global_runtime_governor_slot();
-    if let Ok(mut guard) = slot.write() {
-        *guard = Some(governor);
-    }
+    *slot.write() = Some(governor);
 }
 
 pub fn mark_backpressure_activation_global() {
-    if let Ok(guard) = global_runtime_governor_slot().read() {
-        if let Some(governor) = guard.as_ref() {
-            governor.mark_backpressure_activation();
-        }
+    if let Some(governor) = global_runtime_governor_slot().read().as_ref() {
+        governor.mark_backpressure_activation();
     }
 }
 
 pub fn mark_decoder_failure_global() {
-    if let Ok(guard) = global_runtime_governor_slot().read() {
-        if let Some(governor) = guard.as_ref() {
-            governor.mark_decoder_failure();
-        }
+    if let Some(governor) = global_runtime_governor_slot().read().as_ref() {
+        governor.mark_decoder_failure();
     }
 }
 
 pub fn mark_idle_timeout_global() {
-    if let Ok(guard) = global_runtime_governor_slot().read() {
-        if let Some(governor) = guard.as_ref() {
-            governor.mark_idle_timeout();
-        }
+    if let Some(governor) = global_runtime_governor_slot().read().as_ref() {
+        governor.mark_idle_timeout();
     }
 }
 
 pub fn mark_stream_stage_timeout_global() {
-    if let Ok(guard) = global_runtime_governor_slot().read() {
-        if let Some(governor) = guard.as_ref() {
-            governor.mark_stream_stage_timeout();
-        }
+    if let Some(governor) = global_runtime_governor_slot().read().as_ref() {
+        governor.mark_stream_stage_timeout();
     }
 }
 
 pub fn mark_stuck_flow_global() {
-    if let Ok(guard) = global_runtime_governor_slot().read() {
-        if let Some(governor) = guard.as_ref() {
-            governor.mark_stuck_flow();
-        }
+    if let Some(governor) = global_runtime_governor_slot().read().as_ref() {
+        governor.mark_stuck_flow();
     }
 }
 
 pub fn set_event_queue_depth_global(depth: u64) {
-    if let Ok(guard) = global_runtime_governor_slot().read() {
-        if let Some(governor) = guard.as_ref() {
-            governor.set_event_queue_depth(depth);
-        }
+    if let Some(governor) = global_runtime_governor_slot().read().as_ref() {
+        governor.set_event_queue_depth(depth);
     }
 }
 

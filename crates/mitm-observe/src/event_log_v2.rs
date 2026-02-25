@@ -160,7 +160,7 @@ impl EventConsumer for EventLogV2Consumer {
         if let Err(error) = self.consume_envelope(&envelope) {
             self.write_error_count.fetch_add(1, Ordering::Relaxed);
             *self.last_error.lock().expect("lock poisoned") = Some(error.to_string());
-            eprintln!("event log v2 sink write failed: {error}");
+            tracing::warn!(error = %error, "event log v2 sink write failed");
         }
     }
 }

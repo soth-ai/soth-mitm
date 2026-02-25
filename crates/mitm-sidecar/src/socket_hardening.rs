@@ -43,6 +43,22 @@ async fn bind_listener_with_socket_hardening(config: &SidecarConfig) -> io::Resu
 }
 
 fn bind_single_listener_socket(listen_addr: std::net::SocketAddr) -> io::Result<TcpListener> {
+    if is_dual_stack_candidate(&listen_addr) {
+        match bind_dual_stack_listener_socket(listen_addr) {
+            Ok(listener) => return Ok(listener),
+            Err(error) => {
+                tracing::debug!(
+                    addr = %listen_addr,
+                    error = %error,
+                    "dual-stack bind path failed; falling back to default bind"
+                );
+            }
+        }
+    }
+    bind_listener_with_tokio_socket(listen_addr)
+}
+
+fn bind_listener_with_tokio_socket(listen_addr: std::net::SocketAddr) -> io::Result<TcpListener> {
     let socket = if listen_addr.is_ipv4() {
         tokio::net::TcpSocket::new_v4()?
     } else {
@@ -51,6 +67,25 @@ fn bind_single_listener_socket(listen_addr: std::net::SocketAddr) -> io::Result<
     let _ = socket.set_reuseaddr(true);
     socket.bind(listen_addr)?;
     socket.listen(1024)
+}
+
+fn bind_dual_stack_listener_socket(listen_addr: std::net::SocketAddr) -> io::Result<TcpListener> {
+    let socket = socket2::Socket::new(
+        socket2::Domain::IPV6,
+        socket2::Type::STREAM,
+        Some(socket2::Protocol::TCP),
+    )?;
+    socket.set_reuse_address(true)?;
+    let _ = socket.set_only_v6(false);
+    socket.bind(&socket2::SockAddr::from(listen_addr))?;
+    socket.listen(1024)?;
+    socket.set_nonblocking(true)?;
+    let std_listener: std::net::TcpListener = socket.into();
+    TcpListener::from_std(std_listener)
+}
+
+fn is_dual_stack_candidate(listen_addr: &std::net::SocketAddr) -> bool {
+    matches!(listen_addr, std::net::SocketAddr::V6(v6) if v6.ip().is_unspecified())
 }
 
 fn order_listen_addrs_for_dual_stack(listen_addrs: &mut [std::net::SocketAddr]) {
@@ -98,7 +133,7 @@ fn is_benign_socket_close_error(error: &io::Error) -> bool {
 
 #[cfg(test)]
 mod socket_hardening_tests {
-    use super::{is_benign_socket_close_error, order_listen_addrs_for_dual_stack};
+    use super::{is_benign_socket_close_error, is_dual_stack_candidate, order_listen_addrs_for_dual_stack};
     use std::io;
     use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 
@@ -128,5 +163,15 @@ mod socket_hardening_tests {
         order_listen_addrs_for_dual_stack(&mut addrs);
         assert!(matches!(addrs[0], SocketAddr::V6(v6) if v6.ip().is_unspecified()));
         assert!(matches!(addrs[1], SocketAddr::V4(v4) if v4.ip().is_unspecified()));
+    }
+
+    #[test]
+    fn dual_stack_candidate_only_matches_ipv6_unspecified() {
+        let ipv6_unspecified = SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, 8080, 0, 0));
+        let ipv6_loopback = SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::LOCALHOST, 8080, 0, 0));
+        let ipv4_unspecified = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 8080));
+        assert!(is_dual_stack_candidate(&ipv6_unspecified));
+        assert!(!is_dual_stack_candidate(&ipv6_loopback));
+        assert!(!is_dual_stack_candidate(&ipv4_unspecified));
     }
 }

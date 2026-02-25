@@ -1,5 +1,5 @@
 use std::future::Future;
-use std::panic::{catch_unwind, resume_unwind, AssertUnwindSafe};
+use std::panic::resume_unwind;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -28,22 +28,22 @@ impl HandlerCallbackGuard {
         }
     }
 
-    pub(crate) fn run_sync<R, F>(&self, default_value: R, callback: F) -> R
+    pub(crate) async fn run_sync<R, F>(&self, default_value: R, callback: F) -> R
     where
-        F: FnOnce() -> R,
+        R: Send + 'static,
+        F: FnOnce() -> R + Send + 'static,
     {
-        let callback_result = catch_unwind(AssertUnwindSafe(callback));
-
-        match callback_result {
+        match tokio::task::spawn_blocking(callback).await {
             Ok(value) => value,
-            Err(payload) => {
+            Err(join_error) if join_error.is_panic() => {
                 self.metrics_store.record_handler_panic();
                 if self.recover_from_panics {
                     default_value
                 } else {
-                    resume_unwind(payload);
+                    resume_unwind(join_error.into_panic());
                 }
             }
+            Err(_join_error) => default_value,
         }
     }
 

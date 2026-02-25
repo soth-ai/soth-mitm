@@ -138,7 +138,11 @@ impl StatusEmitter {
         let status_file = match open_status_file(&path) {
             Ok(file) => Some(Mutex::new(BufWriter::new(file))),
             Err(error) => {
-                eprintln!("failed to open status stream file {path}: {error}");
+                tracing::warn!(
+                    path = %path,
+                    error = %error,
+                    "failed to open status stream file"
+                );
                 None
             }
         };
@@ -149,7 +153,7 @@ impl StatusEmitter {
         let json = match serde_json::to_string(&record) {
             Ok(value) => value,
             Err(error) => {
-                eprintln!("failed to serialize status record: {error}");
+                tracing::warn!(error = %error, "failed to serialize status record");
                 return;
             }
         };

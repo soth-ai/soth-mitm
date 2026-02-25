@@ -18,9 +18,11 @@ mitm-observe = { path = "../mitm-observe", version = "0.1.0" }
 mitm-policy = { path = "../mitm-policy", version = "0.1.0" }
 mitm-tls = { path = "../mitm-tls", version = "0.1.0" }
 openssl = { version = "0.10", features = ["vendored"] }
+parking_lot = { workspace = true }
 pin-project-lite = "0.2"
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
+socket2 = "0.5"
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
 tokio-openssl = "0.6"
 tokio-rustls = { workspace = true }
