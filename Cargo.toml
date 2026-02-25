@@ -28,8 +28,8 @@ exclude = [
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.75"
-license = "MIT OR Apache-2.0"
-repository = "https://github.com/labterminal/soth"
+license = "MPL-2.0"
+repository = "https://github.com/soth-ai/soth-mitm"
 authors = ["Labterminal"]
 
 [workspace.dependencies]

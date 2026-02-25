@@ -6,7 +6,7 @@ license.workspace = true
 rust-version.workspace = true
 description = "Rust intercepting proxy crate with deterministic handler/event contracts for SOTH."
 readme = "README.md"
-repository = "https://github.com/soth/soth-mitm"
+repository = "https://github.com/soth-ai/soth-mitm"
 keywords = ["proxy", "mitm", "http", "tls"]
 categories = ["network-programming"]
 

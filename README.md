@@ -108,6 +108,21 @@ Open an interactive shell inside the tools container:
 - Consumer adapter contract: `docs/consumer/soth-proxy-adapter-contract.md`
 - Migration/cutover playbook: `docs/migration/soth-cutover.md`
 
+## Community
+
+- Contribution guide: `CONTRIBUTING.md`
+- Code of conduct: `CODE_OF_CONDUCT.md`
+- Security policy: `SECURITY.md`
+- Support guide: `SUPPORT.md`
+- Pull request template: `.github/pull_request_template.md`
+- Issue templates: `.github/ISSUE_TEMPLATE/`
+
+## License
+
+This repository is licensed under the Mozilla Public License 2.0:
+
+- MPL-2.0 (`LICENSE`)
+
 ## Repository Rules
 
 - Max file length is `400` lines for core Rust source files under `crates/*/src/**/*.rs`.

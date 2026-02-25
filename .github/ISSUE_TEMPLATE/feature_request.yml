@@ -1,0 +1,30 @@
+name: Feature Request
+description: Propose a new capability or enhancement
+title: "[feature] "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem Statement
+      description: What limitation are you hitting today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed Solution
+      description: What should be added/changed?
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope and Non-Goals
+      description: What is explicitly in scope and out of scope?
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance Criteria
+      description: How should this be tested and validated?
+
