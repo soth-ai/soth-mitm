@@ -63,10 +63,33 @@ check_h2spec_probe() {
 
 run_h2spec_blocking_criteria() {
   local lane="h2spec_blocking_criteria"
-  local command="${SOTH_MITM_H2SPEC_BLOCKING_COMMAND:-}"
+  local command="${SOTH_MITM_H2SPEC_BLOCKING_COMMAND:-./scripts/h2spec_blocking_smoke.sh}"
   if [[ -z "$command" ]]; then
-    record_status "$lane" "skip" "not_configured"
+    record_status "$lane" "fail" "not_configured"
+    return 1
+  fi
+
+  if ! command -v h2spec >/dev/null 2>&1; then
+    if [[ "$strict_tools" -eq 1 ]]; then
+      record_status "$lane" "fail" "missing_tool:h2spec"
+      return 1
+    fi
+    record_status "$lane" "skip" "missing_tool:h2spec"
     return 0
+  fi
+
+  if [[ "$command" == "./scripts/h2spec_blocking_smoke.sh" ]]; then
+    local missing=()
+    command -v nghttpd >/dev/null 2>&1 || missing+=("nghttpd")
+    command -v openssl >/dev/null 2>&1 || missing+=("openssl")
+    if [[ "${#missing[@]}" -gt 0 ]]; then
+      if [[ "$strict_tools" -eq 1 ]]; then
+        record_status "$lane" "fail" "missing_tools:${missing[*]}"
+        return 1
+      fi
+      record_status "$lane" "skip" "missing_tools:${missing[*]}"
+      return 0
+    fi
   fi
 
   if /bin/zsh -lc "$command" >"$report_dir/h2spec.blocking.log" 2>&1; then

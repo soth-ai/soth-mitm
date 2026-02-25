@@ -94,8 +94,9 @@ skip_or_fail_missing_tools() {
 
 lane_h2spec() {
   local lane="h2spec"
-  skip_or_fail_missing_tools "$lane" h2spec || return $?
-  h2spec --help >/dev/null 2>&1
+  skip_or_fail_missing_tools "$lane" h2spec nghttpd openssl || return $?
+  h2spec --help >"$report_dir/h2spec.help.txt" 2>&1
+  ./scripts/h2spec_blocking_smoke.sh >"$report_dir/h2spec.blocking.log" 2>&1
 }
 
 lane_h2load() {

@@ -56,4 +56,11 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "websocket_framing"
+path = "fuzz_targets/websocket_framing.rs"
+test = false
+doc = false
+bench = false
+
 [workspace]

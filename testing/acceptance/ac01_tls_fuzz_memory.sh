@@ -54,11 +54,15 @@ if command -v cargo-fuzz >/dev/null 2>&1; then
   if command -v rustup >/dev/null 2>&1 && rustup toolchain list | awk '{print $1}' | rg '^nightly' >/dev/null 2>&1; then
     ac_run_case "$status_tsv" tls_classification_fuzz_runs \
       cargo +nightly fuzz run tls_classification -- "-runs=${fuzz_runs}" || true
+    ac_run_case "$status_tsv" websocket_framing_fuzz_runs \
+      cargo +nightly fuzz run websocket_framing -- "-runs=${fuzz_runs}" || true
   else
     ac_record_status "$status_tsv" tls_classification_fuzz_runs fail missing_tools:nightly_toolchain
+    ac_record_status "$status_tsv" websocket_framing_fuzz_runs fail missing_tools:nightly_toolchain
   fi
 else
   ac_record_status "$status_tsv" tls_classification_fuzz_runs fail missing_tools:cargo-fuzz
+  ac_record_status "$status_tsv" websocket_framing_fuzz_runs fail missing_tools:cargo-fuzz
 fi
 
 effective_soak_seconds="$soak_seconds"

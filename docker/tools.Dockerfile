@@ -5,6 +5,7 @@ ARG GO_VERSION=1.24.0
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
+        apache2-utils \
         bsdextrautils \
         build-essential \
         ca-certificates \
@@ -27,7 +28,10 @@ RUN apt-get update \
         python3-pip \
         ripgrep \
         strace \
+        tcpdump \
+        tcpreplay \
         time \
+        tshark \
         valgrind \
         wrk \
     && rm -rf /var/lib/apt/lists/*
@@ -53,6 +57,11 @@ RUN go install github.com/summerwind/h2spec/cmd/h2spec@latest \
     && go install github.com/fullstorydev/grpcurl/cmd/grpcurl@latest \
     && go install github.com/bojand/ghz/cmd/ghz@latest \
     && go install github.com/rakyll/hey@latest \
+    && go install fortio.org/fortio@latest \
+    && go install go.k6.io/k6@latest \
+    && go install github.com/tsenart/vegeta/v12@latest \
+    && go install github.com/codesenberg/bombardier@latest \
+    && go install github.com/grpc-ecosystem/grpc-health-probe@latest \
     && go install github.com/Shopify/toxiproxy/v2/cmd/cli@latest \
     && go install github.com/Shopify/toxiproxy/v2/cmd/server@latest \
     && mv /usr/local/bin/cli /usr/local/bin/toxiproxy-cli \
@@ -60,13 +69,37 @@ RUN go install github.com/summerwind/h2spec/cmd/h2spec@latest \
 
 RUN cargo install cargo-fuzz --locked \
     && cargo install cargo-deny --locked \
-    && cargo install websocat --locked
+    && cargo install websocat --locked \
+    && cargo install oha --locked
+
+RUN git clone --depth 1 https://github.com/giltene/wrk2 /tmp/wrk2 \
+    && make -C /tmp/wrk2 \
+    && install -m 0755 /tmp/wrk2/wrk /usr/local/bin/wrk2 \
+    && rm -rf /tmp/wrk2
 
 RUN rustup toolchain install nightly --profile minimal
 
-RUN pip3 install --no-cache-dir --break-system-packages autobahntestsuite
-RUN pip3 install --no-cache-dir --break-system-packages websocket-client
-RUN pip3 install --no-cache-dir --break-system-packages mitmproxy
+RUN pip3 install --no-cache-dir --break-system-packages \
+        autobahntestsuite \
+        websocket-client \
+        mitmproxy \
+    && python3 - <<'PY'
+import importlib
+import pathlib
+import site
+
+for base in site.getsitepackages():
+    init_path = pathlib.Path(base) / "autobahntestsuite" / "__init__.py"
+    if not init_path.exists():
+        continue
+    text = init_path.read_text()
+    fixed = text.replace("from _version import __version__", "from ._version import __version__")
+    if fixed != text:
+        init_path.write_text(fixed)
+    break
+
+importlib.import_module("autobahntestsuite.wstest")
+PY
 
 RUN printf '%s\n' 'export PATH=/usr/local/go/bin:/usr/local/cargo/bin:${PATH}' >/etc/profile.d/soth-mitm-tools-path.sh
 
