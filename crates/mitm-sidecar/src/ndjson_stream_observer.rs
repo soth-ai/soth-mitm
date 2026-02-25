@@ -83,6 +83,17 @@ where
                 line.pop();
                 self.emit_line(line).await?;
             }
+            if self.pending.len() > self.max_line_bytes {
+                self.runtime_governor.mark_decoder_failure();
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "NDJSON pending buffer exceeded decoder budget without delimiter (len={}, limit={})",
+                        self.pending.len(),
+                        self.max_line_bytes
+                    ),
+                ));
+            }
             Ok(())
         })
     }

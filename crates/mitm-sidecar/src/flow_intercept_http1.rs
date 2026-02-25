@@ -146,6 +146,7 @@ where
             )
             .await;
         if let RequestDecision::Block { status, body } = request_decision {
+            let status = sanitize_block_status(status);
             let status_line = format!("{status} Blocked");
             let response_head = format!(
                 "HTTP/1.1 {status_line}\r\nConnection: close\r\nContent-Type: text/plain\r\nContent-Length: {}\r\n\r\n",

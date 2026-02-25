@@ -110,10 +110,11 @@ where
                 let stream_upstream_sender = upstream_sender.clone();
                 let stream_byte_counters = byte_counters.clone();
                 let stream_flow_hooks = Arc::clone(&flow_hooks);
-                stream_flow_hooks
-                    .on_connection_open(stream_context.clone(), process_info.clone())
-                    .await;
+                let stream_process_info = process_info.clone();
                 stream_tasks.spawn(async move {
+                    stream_flow_hooks
+                        .on_connection_open(stream_context.clone(), stream_process_info)
+                        .await;
                     relay_http2_stream(
                         stream_engine,
                         stream_runtime_governor,

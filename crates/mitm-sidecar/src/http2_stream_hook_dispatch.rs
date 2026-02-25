@@ -23,11 +23,18 @@ async fn capture_h2_body(
             }
             continue;
         }
-        body.extend_from_slice(data.as_ref());
-        total += frame_len as u64;
-        if body.len() > max_handler_body {
-            body_truncated = true;
+        if !body_truncated {
+            let remaining = max_handler_body.saturating_sub(body.len());
+            if remaining >= frame_len {
+                body.extend_from_slice(data.as_ref());
+            } else {
+                if remaining > 0 {
+                    body.extend_from_slice(&data.as_ref()[..remaining]);
+                }
+                body_truncated = true;
+            }
         }
+        total += frame_len as u64;
         source
             .flow_control()
             .release_capacity(frame_len)
@@ -104,7 +111,7 @@ async fn dispatch_h2_response_hooks(
     if headers.contains_key("x-soth-encoding-error") {
         flow_hooks
             .on_response(
-                stream_context,
+                stream_context.clone(),
                 RawResponse {
                     status: response_parts.status.as_u16(),
                     headers,
@@ -112,6 +119,7 @@ async fn dispatch_h2_response_hooks(
                 },
             )
             .await;
+        flow_hooks.on_stream_end(stream_context).await;
         return;
     }
 
@@ -130,7 +138,7 @@ async fn dispatch_h2_response_hooks(
 
     flow_hooks
         .on_response(
-            stream_context,
+            stream_context.clone(),
             RawResponse {
                 status: response_parts.status.as_u16(),
                 headers,
@@ -138,6 +146,7 @@ async fn dispatch_h2_response_hooks(
             },
         )
         .await;
+    flow_hooks.on_stream_end(stream_context).await;
 }
 
 async fn dispatch_sse_chunks_from_buffer(

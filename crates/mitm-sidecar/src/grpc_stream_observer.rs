@@ -97,7 +97,20 @@ where
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = io::Result<()>> + Send + 'a>> {
         Box::pin(async move {
             self.pending.extend_from_slice(chunk);
-            self.parse_available_frames().await
+            self.parse_available_frames().await?;
+            let max_pending_bytes = self.max_message_bytes.saturating_add(5);
+            if self.pending.len() > max_pending_bytes {
+                self.runtime_governor.mark_decoder_failure();
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "gRPC pending buffer exceeded decoder budget without complete frame (len={}, limit={})",
+                        self.pending.len(),
+                        max_pending_bytes
+                    ),
+                ));
+            }
+            Ok(())
         })
     }
 

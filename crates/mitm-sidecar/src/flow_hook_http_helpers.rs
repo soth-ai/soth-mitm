@@ -38,9 +38,16 @@ impl HttpBodyObserver for BodyCaptureObserver {
         chunk: &'a [u8],
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = io::Result<()>> + Send + 'a>> {
         Box::pin(async move {
-            self.body.extend_from_slice(chunk);
-            if self.body.len() > self.max_handler_bytes {
-                self.truncated = true;
+            if !self.truncated {
+                let remaining = self.max_handler_bytes.saturating_sub(self.body.len());
+                if remaining >= chunk.len() {
+                    self.body.extend_from_slice(chunk);
+                } else {
+                    if remaining > 0 {
+                        self.body.extend_from_slice(&chunk[..remaining]);
+                    }
+                    self.truncated = true;
+                }
             }
             Ok(())
         })
@@ -267,6 +274,18 @@ fn mark_body_truncated(headers: &mut HeaderMap) {
         HeaderName::from_static("x-soth-body-truncated"),
         http::HeaderValue::from_static("true"),
     );
+}
+
+fn sanitize_block_status(status: u16) -> u16 {
+    if (100..=599).contains(&status) {
+        status
+    } else {
+        tracing::warn!(
+            invalid_status = status,
+            "handler returned invalid block status; coercing to 403"
+        );
+        403
+    }
 }
 
 fn decompress_gzip(input: &[u8]) -> Result<Vec<u8>, String> {
