@@ -6,7 +6,7 @@ use crate::runtime::connection_id::connection_id_for_flow_id;
 use crate::runtime::connection_meta::{
     connection_meta_from_accept_context, lookup_connection_info_from_flow_context,
     policy_process_info_from_runtime, process_info_from_unix_client_addr,
-    runtime_process_info_from_policy,
+    runtime_process_info_from_policy, tls_info_from_flow_context,
 };
 use crate::runtime::flow_dispatch::FlowDispatchers;
 use crate::runtime::handler_guard::HandlerCallbackGuard;
@@ -331,7 +331,11 @@ async fn connection_meta_for_context(
         );
         return None;
     };
-    Some(connection_meta)
+    let mut enriched = connection_meta;
+    if enriched.tls_info.is_none() {
+        enriched.tls_info = tls_info_from_flow_context(context);
+    }
+    Some(enriched)
 }
 
 #[cfg(test)]

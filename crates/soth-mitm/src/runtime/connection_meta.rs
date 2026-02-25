@@ -1,10 +1,11 @@
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::path::PathBuf;
 
+use mitm_http::ApplicationProtocol;
 use mitm_observe::FlowContext;
 
 use crate::runtime::connection_id::connection_id_for_flow_id;
-use crate::types::{ConnectionInfo, ConnectionMeta, ProcessInfo, SocketFamily};
+use crate::types::{ConnectionInfo, ConnectionMeta, ProcessInfo, SocketFamily, TlsInfo};
 
 pub(crate) fn connection_meta_from_accept_context(
     context: &FlowContext,
@@ -14,7 +15,7 @@ pub(crate) fn connection_meta_from_accept_context(
         connection_id: connection_id_for_flow_id(context.flow_id),
         socket_family: socket_family_from_flow_context(context),
         process_info,
-        tls_info: None,
+        tls_info: tls_info_from_flow_context(context),
     }
 }
 
@@ -61,6 +62,7 @@ pub(crate) fn socket_family_from_flow_context(context: &FlowContext) -> SocketFa
 
 pub(crate) fn lookup_connection_info_from_flow_context(context: &FlowContext) -> ConnectionInfo {
     let socket_family = socket_family_from_flow_context(context);
+    let (alpn_protocol, is_http2) = protocol_hints_from_flow_context(context);
     let (source_ip, source_port) = match &socket_family {
         SocketFamily::TcpV4 { local, .. } => (IpAddr::V4(*local.ip()), local.port()),
         SocketFamily::TcpV6 { local, .. } => (IpAddr::V6(*local.ip()), local.port()),
@@ -74,11 +76,57 @@ pub(crate) fn lookup_connection_info_from_flow_context(context: &FlowContext) ->
         destination_port: context.server_port,
         socket_family,
         tls_fingerprint: None,
-        alpn_protocol: None,
-        is_http2: false,
+        alpn_protocol,
+        is_http2,
         process_info: None,
         connected_at: std::time::SystemTime::now(),
         request_count: 0,
+    }
+}
+
+pub(crate) fn tls_info_from_flow_context(context: &FlowContext) -> Option<TlsInfo> {
+    let likely_tls = context.server_port == 443 || context.protocol == ApplicationProtocol::Http2;
+    if !likely_tls {
+        return None;
+    }
+
+    let sni = normalize_sni(&context.server_host);
+    let negotiated_proto = match context.protocol {
+        ApplicationProtocol::Http2 => Some("h2".to_string()),
+        ApplicationProtocol::Http1
+        | ApplicationProtocol::WebSocket
+        | ApplicationProtocol::Sse
+        | ApplicationProtocol::StreamableHttp => Some("http/1.1".to_string()),
+        ApplicationProtocol::Tunnel => None,
+    };
+
+    if sni.is_none() && negotiated_proto.is_none() {
+        None
+    } else {
+        Some(TlsInfo {
+            sni,
+            negotiated_proto,
+        })
+    }
+}
+
+fn protocol_hints_from_flow_context(context: &FlowContext) -> (Option<String>, bool) {
+    match context.protocol {
+        ApplicationProtocol::Http2 => (Some("h2".to_string()), true),
+        ApplicationProtocol::Http1
+        | ApplicationProtocol::WebSocket
+        | ApplicationProtocol::Sse
+        | ApplicationProtocol::StreamableHttp => (Some("http/1.1".to_string()), false),
+        ApplicationProtocol::Tunnel => (None, false),
+    }
+}
+
+fn normalize_sni(server_host: &str) -> Option<String> {
+    let trimmed = server_host.trim();
+    if trimmed.is_empty() || trimmed == "<unknown>" {
+        None
+    } else {
+        Some(trimmed.to_string())
     }
 }
 
@@ -159,4 +207,39 @@ pub(crate) fn process_info_from_unix_client_addr(client_addr: &str) -> Option<Pr
         exe_path: None,
         parent_pid: None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{lookup_connection_info_from_flow_context, tls_info_from_flow_context};
+    use mitm_http::ApplicationProtocol;
+    use mitm_observe::FlowContext;
+
+    #[test]
+    fn tls_info_is_populated_for_http2_context() {
+        let context = FlowContext {
+            flow_id: 7,
+            client_addr: "127.0.0.1:5000".to_string(),
+            server_host: "api.example.com".to_string(),
+            server_port: 443,
+            protocol: ApplicationProtocol::Http2,
+        };
+        let tls_info = tls_info_from_flow_context(&context).expect("tls info");
+        assert_eq!(tls_info.sni.as_deref(), Some("api.example.com"));
+        assert_eq!(tls_info.negotiated_proto.as_deref(), Some("h2"));
+    }
+
+    #[test]
+    fn connection_info_protocol_hints_follow_flow_protocol() {
+        let context = FlowContext {
+            flow_id: 8,
+            client_addr: "127.0.0.1:5001".to_string(),
+            server_host: "api.example.com".to_string(),
+            server_port: 443,
+            protocol: ApplicationProtocol::Http2,
+        };
+        let info = lookup_connection_info_from_flow_context(&context);
+        assert!(info.is_http2);
+        assert_eq!(info.alpn_protocol.as_deref(), Some("h2"));
+    }
 }

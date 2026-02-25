@@ -299,6 +299,34 @@ async fn should_intercept_tls_receives_process_info_from_connect_path() {
     );
 }
 
+#[tokio::test]
+async fn request_connection_meta_includes_tls_info_for_http2_flow() {
+    let observed_tls_proto = Arc::new(std::sync::Mutex::new(None::<String>));
+    let observed_tls_sni = Arc::new(std::sync::Mutex::new(None::<String>));
+    let handler = Arc::new(TlsMetaCaptureHandler {
+        observed_tls_proto: Arc::clone(&observed_tls_proto),
+        observed_tls_sni: Arc::clone(&observed_tls_sni),
+    });
+    let metrics_store = Arc::new(ProxyMetricsStore::default());
+    let hooks = build_hooks(
+        handler,
+        metrics_store,
+        Duration::from_millis(100),
+        Duration::from_millis(100),
+        true,
+    );
+    let mut context = sample_context(108);
+    context.protocol = ApplicationProtocol::Http2;
+    register_connection(&hooks, context.clone()).await;
+
+    let _ = hooks.on_request(context, sample_sidecar_request()).await;
+
+    let negotiated = observed_tls_proto.lock().expect("tls proto lock").clone();
+    let sni = observed_tls_sni.lock().expect("tls sni lock").clone();
+    assert_eq!(negotiated.as_deref(), Some("h2"));
+    assert_eq!(sni.as_deref(), Some("api.example.com"));
+}
+
 fn build_hooks<H: InterceptHandler>(
     handler: Arc<H>,
     metrics_store: Arc<ProxyMetricsStore>,
@@ -438,6 +466,32 @@ impl InterceptHandler for ProcessAwareTlsHandler {
         let pid = process_info.map(|value| value.pid).unwrap_or(0);
         self.observed_pid.store(pid, Ordering::Relaxed);
         true
+    }
+}
+
+#[derive(Debug)]
+struct TlsMetaCaptureHandler {
+    observed_tls_proto: Arc<std::sync::Mutex<Option<String>>>,
+    observed_tls_sni: Arc<std::sync::Mutex<Option<String>>>,
+}
+
+impl InterceptHandler for TlsMetaCaptureHandler {
+    fn on_request(
+        &self,
+        request: &RawRequest,
+    ) -> impl std::future::Future<Output = HandlerDecision> + Send {
+        let observed_tls_proto = Arc::clone(&self.observed_tls_proto);
+        let observed_tls_sni = Arc::clone(&self.observed_tls_sni);
+        let tls_info = request.connection_meta.tls_info.clone();
+        async move {
+            let mut proto_guard = observed_tls_proto.lock().expect("proto lock");
+            let mut sni_guard = observed_tls_sni.lock().expect("sni lock");
+            *proto_guard = tls_info
+                .as_ref()
+                .and_then(|value| value.negotiated_proto.clone());
+            *sni_guard = tls_info.and_then(|value| value.sni);
+            HandlerDecision::Allow
+        }
     }
 }
 

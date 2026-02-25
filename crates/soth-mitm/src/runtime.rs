@@ -44,7 +44,7 @@ pub(crate) fn build_runtime_server<H: InterceptHandler>(
         listen_port: core_config.listen_port,
         max_connect_head_bytes: 64 * 1024,
         max_http_head_bytes: core_config.max_http_head_bytes,
-        idle_watchdog_timeout: Duration::from_millis(config.upstream.timeout_ms.max(1)),
+        idle_watchdog_timeout: Duration::from_millis(config.connection_pool.idle_timeout_ms.max(1)),
         stream_stage_timeout: Duration::from_millis(config.upstream.connect_timeout_ms.max(1)),
         unix_socket_path: config
             .unix_socket_path
