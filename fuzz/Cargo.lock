@@ -474,7 +474,6 @@ dependencies = [
  "mitm-http",
  "mitm-observe",
  "mitm-policy",
- "mitm-tls",
  "serde",
  "thiserror 1.0.69",
  "tokio",

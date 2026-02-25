@@ -42,6 +42,7 @@ pub use tls_learning::{
 const IO_CHUNK_SIZE: usize = 8 * 1024;
 const CHUNK_LINE_LIMIT: usize = 8 * 1024;
 const TLS_OPS_PROVIDER: &str = "rustls";
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SidecarConfig {
     pub listen_addr: String,
@@ -53,7 +54,6 @@ pub struct SidecarConfig {
     pub stream_stage_timeout: Duration,
     pub unix_socket_path: Option<String>,
 }
-
 impl Default for SidecarConfig {
     fn default() -> Self {
         Self {
@@ -68,7 +68,6 @@ impl Default for SidecarConfig {
         }
     }
 }
-
 pub struct SidecarServer<P, S>
 where
     P: PolicyEngine + Send + Sync + 'static,
@@ -82,7 +81,6 @@ where
     tls_learning: Arc<TlsLearningGuardrails>,
     flow_hooks: Arc<dyn FlowHooks>,
 }
-
 #[derive(Clone)]
 struct RuntimeHandles<P, S>
 where
@@ -96,7 +94,6 @@ where
     tls_learning: Arc<TlsLearningGuardrails>,
     flow_hooks: Arc<dyn FlowHooks>,
 }
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum HttpVersion {
     Http10,
@@ -111,7 +108,6 @@ impl HttpVersion {
         }
     }
 }
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum HttpBodyMode {
     None,
@@ -119,13 +115,11 @@ enum HttpBodyMode {
     Chunked,
     CloseDelimited,
 }
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct HttpHeader {
     name: String,
     value: String,
 }
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct HttpRequestHead {
     raw: Vec<u8>,
@@ -136,7 +130,6 @@ struct HttpRequestHead {
     body_mode: HttpBodyMode,
     connection_close: bool,
 }
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct HttpResponseHead {
     raw: Vec<u8>,
@@ -147,7 +140,6 @@ struct HttpResponseHead {
     body_mode: HttpBodyMode,
     connection_close: bool,
 }
-
 struct BufferedConn<S> {
     stream: S,
     read_buf: Vec<u8>,
