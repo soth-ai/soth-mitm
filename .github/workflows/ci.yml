@@ -182,7 +182,7 @@ jobs:
 
       - name: Upload TLS failure fixture artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: tls-failure-fixtures-${{ matrix.os }}
           path: artifacts/tls-failure-fixtures/${{ matrix.os }}
@@ -214,7 +214,7 @@ jobs:
 
       - name: Upload Phase 1 reliability report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: p1-reliability-${{ matrix.os }}
           path: artifacts/p1-reliability
@@ -257,7 +257,7 @@ jobs:
 
       - name: Upload Phase 2 lane artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: p2-protocol-${{ matrix.os }}-${{ matrix.lane }}
           path: artifacts/p2-protocol/${{ matrix.os }}/${{ matrix.lane }}
@@ -289,7 +289,7 @@ jobs:
 
       - name: Upload Phase 2 triage artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: p2-protocol-triage
           path: artifacts/p2-protocol/triage
@@ -326,7 +326,7 @@ jobs:
 
       - name: Upload differential validation artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: p4-differential-${{ matrix.os }}
           path: artifacts/p4-differential/${{ matrix.os }}
@@ -363,7 +363,7 @@ jobs:
 
       - name: Upload performance gate artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: p4-performance-${{ matrix.os }}
           path: artifacts/p4-performance/${{ matrix.os }}
@@ -400,7 +400,7 @@ jobs:
 
       - name: Upload failure injection artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: p4-failure-injection-${{ matrix.os }}
           path: artifacts/p4-failure-injection/${{ matrix.os }}
@@ -437,7 +437,7 @@ jobs:
 
       - name: Upload tool lane artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: p4-tool-lanes-${{ matrix.os }}
           path: artifacts/p4-tool-lanes/${{ matrix.os }}
@@ -474,7 +474,7 @@ jobs:
 
       - name: Upload chaos network fault artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: p4-chaos-network-${{ matrix.os }}
           path: artifacts/p4-chaos-network/${{ matrix.os }}
@@ -511,7 +511,7 @@ jobs:
 
       - name: Upload chaos and adversarial artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: p4-chaos-${{ matrix.os }}
           path: artifacts/p4-chaos/${{ matrix.os }}
@@ -548,7 +548,7 @@ jobs:
 
       - name: Upload phase 6 performance artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: p6-performance-${{ matrix.os }}
           path: artifacts/p6-performance/${{ matrix.os }}
@@ -589,7 +589,7 @@ jobs:
 
       - name: Upload phase 6 acceptance artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: p6-acceptance-${{ matrix.os }}
           path: artifacts/p6-acceptance/${{ matrix.os }}

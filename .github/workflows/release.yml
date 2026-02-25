@@ -38,7 +38,7 @@ jobs:
 
       - name: Upload release readiness artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: p6-release-readiness
           path: artifacts/p6-release-readiness
