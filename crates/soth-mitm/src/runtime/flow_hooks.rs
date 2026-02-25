@@ -1,7 +1,7 @@
 use crate::config::MitmConfig;
 use crate::handler::InterceptHandler;
 use crate::metrics::ProxyMetricsStore;
-use crate::process::{PlatformProcessAttributor, ProcessLookupService};
+use crate::process::{PlatformProcessAttributor, ProcessCachePath, ProcessLookupService};
 use crate::runtime::connection_id::connection_id_for_flow_id;
 use crate::runtime::connection_meta::{
     connection_meta_from_accept_context, lookup_connection_info_from_flow_context,
@@ -110,6 +110,19 @@ impl<H: InterceptHandler> FlowHooks for HandlerFlowHooks<H> {
             let result = lookup
                 .resolve_with_status(&lookup_connection_info_from_flow_context(&context))
                 .await;
+            match result.cache_path {
+                ProcessCachePath::ConnectionHit => {
+                    metrics_store.record_process_cache_connection_hit()
+                }
+                ProcessCachePath::IdentityHit => metrics_store.record_process_cache_identity_hit(),
+                ProcessCachePath::Miss => metrics_store.record_process_cache_miss(),
+            }
+            if result.pid_reuse_detected {
+                metrics_store.record_process_pid_reuse_detected();
+            }
+            for _ in 0..result.cache_evictions {
+                metrics_store.record_process_cache_eviction();
+            }
             if result.timed_out {
                 metrics_store.record_process_attribution_timeout();
                 return None;

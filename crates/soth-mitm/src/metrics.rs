@@ -12,6 +12,11 @@ pub struct ProxyMetrics {
     pub upstream_timeout_count: u64,
     pub process_attribution_failure_count: u64,
     pub process_attribution_timeout_count: u64,
+    pub process_cache_connection_hit_count: u64,
+    pub process_cache_identity_hit_count: u64,
+    pub process_cache_miss_count: u64,
+    pub process_cache_eviction_count: u64,
+    pub process_pid_reuse_detected_count: u64,
     pub dropped_dispatch_work_count: u64,
     pub stale_flow_reap_count: u64,
     pub closed_flow_id_eviction_count: u64,
@@ -27,6 +32,11 @@ pub(crate) struct ProxyMetricsStore {
     upstream_timeout_count: AtomicU64,
     process_attribution_failure_count: AtomicU64,
     process_attribution_timeout_count: AtomicU64,
+    process_cache_connection_hit_count: AtomicU64,
+    process_cache_identity_hit_count: AtomicU64,
+    process_cache_miss_count: AtomicU64,
+    process_cache_eviction_count: AtomicU64,
+    process_pid_reuse_detected_count: AtomicU64,
     dropped_dispatch_work_count: AtomicU64,
     stale_flow_reap_count: AtomicU64,
     closed_flow_id_eviction_count: AtomicU64,
@@ -46,6 +56,17 @@ impl ProxyMetricsStore {
                 .load(Ordering::Relaxed),
             process_attribution_timeout_count: self
                 .process_attribution_timeout_count
+                .load(Ordering::Relaxed),
+            process_cache_connection_hit_count: self
+                .process_cache_connection_hit_count
+                .load(Ordering::Relaxed),
+            process_cache_identity_hit_count: self
+                .process_cache_identity_hit_count
+                .load(Ordering::Relaxed),
+            process_cache_miss_count: self.process_cache_miss_count.load(Ordering::Relaxed),
+            process_cache_eviction_count: self.process_cache_eviction_count.load(Ordering::Relaxed),
+            process_pid_reuse_detected_count: self
+                .process_pid_reuse_detected_count
                 .load(Ordering::Relaxed),
             dropped_dispatch_work_count: self.dropped_dispatch_work_count.load(Ordering::Relaxed),
             stale_flow_reap_count: self.stale_flow_reap_count.load(Ordering::Relaxed),
@@ -92,6 +113,31 @@ impl ProxyMetricsStore {
 
     pub(crate) fn record_process_attribution_timeout(&self) {
         self.process_attribution_timeout_count
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub(crate) fn record_process_cache_connection_hit(&self) {
+        self.process_cache_connection_hit_count
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub(crate) fn record_process_cache_identity_hit(&self) {
+        self.process_cache_identity_hit_count
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub(crate) fn record_process_cache_miss(&self) {
+        self.process_cache_miss_count
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub(crate) fn record_process_cache_eviction(&self) {
+        self.process_cache_eviction_count
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub(crate) fn record_process_pid_reuse_detected(&self) {
+        self.process_pid_reuse_detected_count
             .fetch_add(1, Ordering::Relaxed);
     }
 
@@ -187,6 +233,11 @@ mod tests {
         assert_eq!(snapshot.upstream_timeout_count, 0);
         assert_eq!(snapshot.process_attribution_failure_count, 0);
         assert_eq!(snapshot.process_attribution_timeout_count, 0);
+        assert_eq!(snapshot.process_cache_connection_hit_count, 0);
+        assert_eq!(snapshot.process_cache_identity_hit_count, 0);
+        assert_eq!(snapshot.process_cache_miss_count, 0);
+        assert_eq!(snapshot.process_cache_eviction_count, 0);
+        assert_eq!(snapshot.process_pid_reuse_detected_count, 0);
         assert_eq!(snapshot.dropped_dispatch_work_count, 0);
         assert_eq!(snapshot.stale_flow_reap_count, 0);
         assert_eq!(snapshot.closed_flow_id_eviction_count, 0);

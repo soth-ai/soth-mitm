@@ -4,7 +4,7 @@ use std::pin::Pin;
 
 use tokio::process::Command;
 
-use super::{ConnectionInfo, ProcessAttributor, ProcessInfo};
+use super::{ConnectionInfo, ProcessAttributor, ProcessIdentity, ProcessInfo};
 use crate::types::SocketFamily;
 
 #[derive(Debug, Default)]
@@ -17,10 +17,34 @@ impl ProcessAttributor for PlatformProcessAttributor {
     ) -> Pin<Box<dyn Future<Output = Option<ProcessInfo>> + Send + 'a>> {
         Box::pin(async move { lookup_process(connection).await })
     }
+
+    fn lookup_identity<'a>(
+        &'a self,
+        connection: &'a ConnectionInfo,
+    ) -> Pin<Box<dyn Future<Output = Option<ProcessIdentity>> + Send + 'a>> {
+        Box::pin(async move { lookup_identity(connection).await })
+    }
+
+    fn lookup_by_identity<'a>(
+        &'a self,
+        identity: &'a ProcessIdentity,
+    ) -> Pin<Box<dyn Future<Output = Option<ProcessInfo>> + Send + 'a>> {
+        Box::pin(async move { lookup_process_by_pid(identity.pid).await })
+    }
 }
 
 async fn lookup_process(connection: &ConnectionInfo) -> Option<ProcessInfo> {
     let pid = lookup_pid(connection).await?;
+    lookup_process_by_pid(pid).await
+}
+
+async fn lookup_identity(connection: &ConnectionInfo) -> Option<ProcessIdentity> {
+    let pid = lookup_pid(connection).await?;
+    let start_token = process_creation_time(pid).await?;
+    Some(ProcessIdentity { pid, start_token })
+}
+
+async fn lookup_process_by_pid(pid: u32) -> Option<ProcessInfo> {
     let process_name = tasklist_name(pid).await;
     let process_path = process_path(pid).await.map(PathBuf::from);
 
@@ -83,6 +107,19 @@ async fn process_path(pid: u32) -> Option<String> {
     parse_wmic_executable_path(&output.stdout)
 }
 
+async fn process_creation_time(pid: u32) -> Option<String> {
+    let filter = format!("processid={pid}");
+    let output = Command::new("wmic")
+        .args(["process", "where", &filter, "get", "CreationDate", "/value"])
+        .output()
+        .await
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    parse_wmic_creation_date(&output.stdout)
+}
+
 fn parse_netstat_pid(raw: &[u8], source_port: u16) -> Option<u32> {
     let needle = format!(":{source_port}");
     let text = String::from_utf8_lossy(raw);
@@ -121,9 +158,25 @@ fn parse_wmic_executable_path(raw: &[u8]) -> Option<String> {
     None
 }
 
+fn parse_wmic_creation_date(raw: &[u8]) -> Option<String> {
+    let text = String::from_utf8_lossy(raw);
+    for line in text.lines() {
+        if let Some(value) = line.trim().strip_prefix("CreationDate=") {
+            let value = value.trim();
+            if !value.is_empty() {
+                return Some(value.to_string());
+            }
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{parse_netstat_pid, parse_tasklist_name, parse_wmic_executable_path};
+    use super::{
+        parse_netstat_pid, parse_tasklist_name, parse_wmic_creation_date,
+        parse_wmic_executable_path,
+    };
 
     #[test]
     fn parse_windows_pid_from_netstat() {
@@ -143,6 +196,15 @@ mod tests {
         assert_eq!(
             parse_wmic_executable_path(sample),
             Some("C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_windows_wmic_creation_date() {
+        let sample = b"\r\nCreationDate=20260225121530.123456+000\r\n\r\n";
+        assert_eq!(
+            parse_wmic_creation_date(sample),
+            Some("20260225121530.123456+000".to_string())
         );
     }
 }

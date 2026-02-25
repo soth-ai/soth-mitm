@@ -55,7 +55,10 @@ tracing = { workspace = true }
 uuid = { workspace = true }
 
 [dev-dependencies]
+hudsucker = { version = "0.24.0", default-features = false, features = ["rcgen-ca", "rustls-client"] }
+hyper-rustls = { version = "0.27.0", default-features = false, features = ["http1", "webpki-tokio"] }
 mitm-tls = { path = "../mitm-tls", version = "0.1.0" }
+rustls-pemfile = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
 tokio-rustls = { workspace = true }
 

@@ -12,9 +12,12 @@ tls_dir="${report_dir}/tls"
 mkdir -p "$raw_dir" "$tls_dir"
 
 bind_host="${BENCH_BIND_HOST:-127.0.0.1}"
+upstream_host="${BENCH_UPSTREAM_HOST:-localhost}"
 upstream_tls_port="${UPSTREAM_TLS_PORT:-29443}"
 soth_port="${SOTH_PROXY_PORT:-28480}"
 mitm_port="${MITMPROXY_PORT:-28481}"
+hudsucker_port="${HUDSUCKER_PROXY_PORT:-28482}"
+lean_port="${SOTH_LEAN_PROXY_PORT:-28483}"
 ab_timeout_seconds="${AB_TIMEOUT_SECONDS:-180}"
 mitm_ca_cert="${MITMPROXY_CA_CERT:-${HOME}/.mitmproxy/mitmproxy-ca-cert.pem}"
 
@@ -35,6 +38,14 @@ cleanup() {
   if [[ -n "${mitm_pid:-}" ]]; then
     kill "${mitm_pid}" 2>/dev/null || true
     wait "${mitm_pid}" 2>/dev/null || true
+  fi
+  if [[ -n "${hudsucker_pid:-}" ]]; then
+    kill "${hudsucker_pid}" 2>/dev/null || true
+    wait "${hudsucker_pid}" 2>/dev/null || true
+  fi
+  if [[ -n "${lean_pid:-}" ]]; then
+    kill "${lean_pid}" 2>/dev/null || true
+    wait "${lean_pid}" 2>/dev/null || true
   fi
   if [[ -n "${upstream_pid:-}" ]]; then
     kill "${upstream_pid}" 2>/dev/null || true
@@ -166,7 +177,7 @@ start_soth() {
   local destination=""
   case "$mode" in
     passthrough) destination="example.invalid:443" ;;
-    mitm) destination="${bind_host}:${upstream_tls_port}" ;;
+    mitm) destination="${upstream_host}:${upstream_tls_port}" ;;
     *)
       echo "unsupported soth mode: $mode" >&2
       exit 2
@@ -186,6 +197,18 @@ start_soth() {
   wait_for_port "$bind_host" "$soth_port" "soth-mitm ${mode} proxy"
 }
 
+start_soth_lean() {
+  local mode="$1"
+  SOTH_LEAN_BENCH_BIND="${bind_host}:${lean_port}" \
+  SOTH_LEAN_BENCH_MODE="$mode" \
+  SOTH_LEAN_BENCH_CA_CERT_PATH="${tls_dir}/upstream-ca.crt" \
+  SOTH_LEAN_BENCH_CA_KEY_PATH="${tls_dir}/upstream-ca.key" \
+  cargo run -p soth-mitm --example bench_sidecar_lean \
+    >"${report_dir}/soth-lean-${mode}.log" 2>&1 &
+  lean_pid=$!
+  wait_for_port "$bind_host" "$lean_port" "soth-lean ${mode} proxy"
+}
+
 start_mitm() {
   local mode="$1"
 
@@ -200,7 +223,7 @@ start_mitm() {
     --set ssl_insecure=true
   )
   if [[ "$mode" == "passthrough" ]]; then
-    args+=(--ignore-hosts "^${bind_host}:${upstream_tls_port}$")
+    args+=(--ignore-hosts "^(${bind_host}|${upstream_host}):${upstream_tls_port}$")
   fi
 
   mitmdump "${args[@]}" >"${report_dir}/mitmproxy-${mode}.log" 2>&1 &
@@ -212,13 +235,27 @@ start_mitm() {
   fi
 }
 
+start_hudsucker() {
+  local mode="$1"
+  HUDSUCKER_BENCH_BIND="${bind_host}:${hudsucker_port}" \
+  HUDSUCKER_BENCH_MODE="$mode" \
+  HUDSUCKER_BENCH_CA_CERT_PATH="${tls_dir}/upstream-ca.crt" \
+  HUDSUCKER_BENCH_CA_KEY_PATH="${tls_dir}/upstream-ca.key" \
+  HUDSUCKER_BENCH_UPSTREAM_CA_CERT_PATH="${tls_dir}/upstream-ca.crt" \
+  cargo run -p soth-mitm --example bench_hudsucker \
+    >"${report_dir}/hudsucker-${mode}.log" 2>&1 &
+  hudsucker_pid=$!
+  wait_for_port "$bind_host" "$hudsucker_port" "hudsucker ${mode}"
+}
+
 run_python_http_bench() {
   local proxy_port="$1"
-  local path="$2"
-  local verify_bundle="$3"
-  local requests="$4"
-  local concurrency="$5"
-  python3 - "$proxy_port" "$upstream_tls_port" "$path" "$verify_bundle" "$requests" "$concurrency" <<'PY'
+  local upstream_host="$2"
+  local path="$3"
+  local verify_bundle="$4"
+  local requests="$5"
+  local concurrency="$6"
+  python3 - "$proxy_port" "$upstream_host" "$upstream_tls_port" "$path" "$verify_bundle" "$requests" "$concurrency" <<'PY'
 import concurrent.futures
 import json
 import math
@@ -228,12 +265,13 @@ import requests
 import sys
 
 proxy_port = int(sys.argv[1])
-upstream_port = int(sys.argv[2])
-path = sys.argv[3]
-verify_bundle = sys.argv[4]
-total_requests = int(sys.argv[5])
-concurrency = int(sys.argv[6])
-url = f"https://127.0.0.1:{upstream_port}/{path}"
+upstream_host = sys.argv[2]
+upstream_port = int(sys.argv[3])
+path = sys.argv[4]
+verify_bundle = sys.argv[5]
+total_requests = int(sys.argv[6])
+concurrency = int(sys.argv[7])
+url = f"https://{upstream_host}:{upstream_port}/{path}"
 
 proxies = {
     "http": f"http://127.0.0.1:{proxy_port}",
@@ -293,10 +331,11 @@ PY
 
 run_python_sse_bench() {
   local proxy_port="$1"
-  local verify_bundle="$2"
-  local requests="$3"
-  local concurrency="$4"
-  python3 - "$proxy_port" "$upstream_tls_port" "$verify_bundle" "$requests" "$concurrency" <<'PY'
+  local upstream_host="$2"
+  local verify_bundle="$3"
+  local requests="$4"
+  local concurrency="$5"
+  python3 - "$proxy_port" "$upstream_host" "$upstream_tls_port" "$verify_bundle" "$requests" "$concurrency" <<'PY'
 import concurrent.futures
 import json
 import math
@@ -306,11 +345,12 @@ import requests
 import sys
 
 proxy_port = int(sys.argv[1])
-upstream_port = int(sys.argv[2])
-verify_bundle = sys.argv[3]
-total_requests = int(sys.argv[4])
-concurrency = int(sys.argv[5])
-url = f"https://127.0.0.1:{upstream_port}/sse"
+upstream_host = sys.argv[2]
+upstream_port = int(sys.argv[3])
+verify_bundle = sys.argv[4]
+total_requests = int(sys.argv[5])
+concurrency = int(sys.argv[6])
+url = f"https://{upstream_host}:{upstream_port}/sse"
 
 proxies = {
     "http": f"http://127.0.0.1:{proxy_port}",
@@ -384,9 +424,9 @@ append_runs() {
   for run in 1 2 3; do
     local result_json=""
     if [[ "$bench_kind" == "http" ]]; then
-      result_json="$(run_python_http_bench "$proxy_port" "$case_name" "$verify_bundle" "$requests" "$concurrency")"
+      result_json="$(run_python_http_bench "$proxy_port" "$upstream_host" "$case_name" "$verify_bundle" "$requests" "$concurrency")"
     else
-      result_json="$(run_python_sse_bench "$proxy_port" "$verify_bundle" "$requests" "$concurrency")"
+      result_json="$(run_python_sse_bench "$proxy_port" "$upstream_host" "$verify_bundle" "$requests" "$concurrency")"
     fi
     local out="${raw_dir}/${proxy}.${mode}.${case_name}.run${run}.json"
     printf '%s\n' "$result_json" >"$out"
@@ -409,10 +449,8 @@ PY
 build_summary() {
   python3 - "$run_tsv" "$summary_md" "$timestamp" "$report_dir" <<'PY'
 import csv
-import math
 import os
 import platform
-import statistics
 import sys
 from collections import defaultdict
 
@@ -440,30 +478,56 @@ def delta_pct(a, b):
 
 def table_for(mode, cases):
     lines = []
-    lines.append("| Case | soth-mitm RPS | mitmproxy RPS | Delta (soth vs mitm) | soth p95 (ms) | mitm p95 (ms) | soth avg failures | mitm avg failures |")
-    lines.append("| --- | ---:| ---:| ---:| ---:| ---:| ---:| ---:|")
+    lines.append("| Case | soth full RPS | soth lean RPS | hudsucker RPS | mitmproxy RPS | Full vs Lean | Full vs Mitm | Lean vs Mitm | full p95 (ms) | lean p95 (ms) | hud p95 (ms) | mitm p95 (ms) | full avg failures | lean avg failures |")
+    lines.append("| --- | ---:| ---:| ---:| ---:| ---:| ---:| ---:| ---:| ---:| ---:| ---:| ---:| ---:|")
     for case in cases:
         s_items = groups.get((mode, case, "soth-mitm"), [])
+        l_items = groups.get((mode, case, "soth-lean"), [])
+        h_items = groups.get((mode, case, "hudsucker"), [])
         m_items = groups.get((mode, case, "mitmproxy"), [])
         s_rps = avg("rps", s_items)
+        l_rps = avg("rps", l_items)
+        h_rps = avg("rps", h_items)
         m_rps = avg("rps", m_items)
         s_p95 = avg("p95_ms", s_items)
+        l_p95 = avg("p95_ms", l_items)
+        h_p95 = avg("p95_ms", h_items)
         m_p95 = avg("p95_ms", m_items)
         s_f = avg_fail(s_items)
-        m_f = avg_fail(m_items)
+        l_f = avg_fail(l_items)
         lines.append(
-            f"| {case} | {fmt(s_rps)} | {fmt(m_rps)} | {delta_pct(s_rps, m_rps)} | "
-            f"{fmt(s_p95)} | {fmt(m_p95)} | {fmt(s_f)} | {fmt(m_f)} |"
+            f"| {case} | {fmt(s_rps)} | {fmt(l_rps)} | {fmt(h_rps)} | {fmt(m_rps)} | "
+            f"{delta_pct(s_rps, l_rps)} | {delta_pct(s_rps, m_rps)} | {delta_pct(l_rps, m_rps)} | "
+            f"{fmt(s_p95)} | {fmt(l_p95)} | {fmt(h_p95)} | {fmt(m_p95)} | "
+            f"{fmt(s_f)} | {fmt(l_f)} |"
+        )
+    return "\n".join(lines)
+
+def layer_tax_table(mode, cases):
+    lines = []
+    lines.append("| Case | soth full RPS | soth lean RPS | Full vs Lean RPS | soth full p95 (ms) | soth lean p95 (ms) | Full vs Lean p95 |")
+    lines.append("| --- | ---:| ---:| ---:| ---:| ---:| ---:|")
+    for case in cases:
+        s_items = groups.get((mode, case, "soth-mitm"), [])
+        l_items = groups.get((mode, case, "soth-lean"), [])
+        s_rps = avg("rps", s_items)
+        l_rps = avg("rps", l_items)
+        s_p95 = avg("p95_ms", s_items)
+        l_p95 = avg("p95_ms", l_items)
+        p95_delta = "n/a" if l_p95 == 0 else f"{((s_p95 - l_p95) / l_p95) * 100.0:+.2f}%"
+        lines.append(
+            f"| {case} | {fmt(s_rps)} | {fmt(l_rps)} | {delta_pct(s_rps, l_rps)} | "
+            f"{fmt(s_p95)} | {fmt(l_p95)} | {p95_delta} |"
         )
     return "\n".join(lines)
 
 with open(summary_md, "w", encoding="utf-8") as out:
-    out.write("# TLS Benchmark Comparison: soth-mitm vs mitmproxy\n\n")
+    out.write("# TLS Benchmark Comparison: soth-mitm (full) vs soth-lean vs hudsucker vs mitmproxy\n\n")
     out.write(f"- Timestamp (UTC): {timestamp}\n")
     out.write(f"- Host: {platform.platform()}\n")
     out.write("- Client benchmark engine: Python `requests` + thread pool\n")
-    out.write("- Upstream: local HTTPS server with cert signed by local benchmark CA\n")
-    out.write("- Proxy ports: soth-mitm `28480`, mitmproxy `28481`\n")
+    out.write("- Upstream: local HTTPS server with cert signed by local benchmark CA (`localhost` authority)\n")
+    out.write("- Proxy ports: soth-mitm full `28480`, soth-lean `28483`, hudsucker `28482`, mitmproxy `28481`\n")
     out.write("- Runs: 3 runs per case\n\n")
 
     out.write("## CONNECT Passthrough (HTTPS tunnel)\n\n")
@@ -478,7 +542,16 @@ with open(summary_md, "w", encoding="utf-8") as out:
     out.write(table_for("mitm", ["sse_first_chunk"]))
     out.write("\n\n")
 
+    out.write("## Layer Cost (soth full vs soth lean)\n\n")
+    out.write("### CONNECT Passthrough\n\n")
+    out.write(layer_tax_table("passthrough", ["1k.txt", "64k.txt"]))
+    out.write("\n\n")
+    out.write("### MITM + SSE\n\n")
+    out.write(layer_tax_table("mitm", ["1k.txt", "64k.txt", "sse_first_chunk"]))
+    out.write("\n\n")
+
     out.write("## Notes\n\n")
+    out.write("- `soth-lean` uses `mitm-sidecar` with `NoopFlowHooks` + `NoopEventConsumer` to isolate dataplane baseline.\n")
     out.write("- This benchmark captures TLS-relevant paths: CONNECT tunnel, full MITM, and SSE over MITM.\n")
     out.write("- Results are environment-sensitive and should be re-run on target deployment hardware.\n")
     out.write(f"- Raw runs TSV: `{runs_tsv}`\n")
@@ -494,11 +567,27 @@ stop_soth() {
   fi
 }
 
+stop_soth_lean() {
+  if [[ -n "${lean_pid:-}" ]]; then
+    kill "${lean_pid}" 2>/dev/null || true
+    wait "${lean_pid}" 2>/dev/null || true
+    unset lean_pid
+  fi
+}
+
 stop_mitm() {
   if [[ -n "${mitm_pid:-}" ]]; then
     kill "${mitm_pid}" 2>/dev/null || true
     wait "${mitm_pid}" 2>/dev/null || true
     unset mitm_pid
+  fi
+}
+
+stop_hudsucker() {
+  if [[ -n "${hudsucker_pid:-}" ]]; then
+    kill "${hudsucker_pid}" 2>/dev/null || true
+    wait "${hudsucker_pid}" 2>/dev/null || true
+    unset hudsucker_pid
   fi
 }
 
@@ -520,10 +609,20 @@ append_runs "soth-mitm" "passthrough" "1k.txt" "$http_requests_1k" "$http_concur
 append_runs "soth-mitm" "passthrough" "64k.txt" "$http_requests_64k" "$http_concurrency" "${tls_dir}/upstream-ca.crt" "http" "$soth_port"
 stop_soth
 
+start_soth_lean passthrough
+append_runs "soth-lean" "passthrough" "1k.txt" "$http_requests_1k" "$http_concurrency" "${tls_dir}/upstream-ca.crt" "http" "$lean_port"
+append_runs "soth-lean" "passthrough" "64k.txt" "$http_requests_64k" "$http_concurrency" "${tls_dir}/upstream-ca.crt" "http" "$lean_port"
+stop_soth_lean
+
 start_mitm passthrough
 append_runs "mitmproxy" "passthrough" "1k.txt" "$http_requests_1k" "$http_concurrency" "${tls_dir}/upstream-ca.crt" "http" "$mitm_port"
 append_runs "mitmproxy" "passthrough" "64k.txt" "$http_requests_64k" "$http_concurrency" "${tls_dir}/upstream-ca.crt" "http" "$mitm_port"
 stop_mitm
+
+start_hudsucker passthrough
+append_runs "hudsucker" "passthrough" "1k.txt" "$http_requests_1k" "$http_concurrency" "${tls_dir}/upstream-ca.crt" "http" "$hudsucker_port"
+append_runs "hudsucker" "passthrough" "64k.txt" "$http_requests_64k" "$http_concurrency" "${tls_dir}/upstream-ca.crt" "http" "$hudsucker_port"
+stop_hudsucker
 
 # Full MITM mode
 start_soth mitm
@@ -532,6 +631,12 @@ append_runs "soth-mitm" "mitm" "64k.txt" "$http_requests_64k" "$http_concurrency
 append_runs "soth-mitm" "mitm" "sse_first_chunk" "$sse_requests" "$sse_concurrency" "${tls_dir}/upstream-ca.crt" "sse" "$soth_port"
 stop_soth
 
+start_soth_lean mitm
+append_runs "soth-lean" "mitm" "1k.txt" "$http_requests_1k" "$http_concurrency" "${tls_dir}/upstream-ca.crt" "http" "$lean_port"
+append_runs "soth-lean" "mitm" "64k.txt" "$http_requests_64k" "$http_concurrency" "${tls_dir}/upstream-ca.crt" "http" "$lean_port"
+append_runs "soth-lean" "mitm" "sse_first_chunk" "$sse_requests" "$sse_concurrency" "${tls_dir}/upstream-ca.crt" "sse" "$lean_port"
+stop_soth_lean
+
 start_mitm mitm
 mitm_bundle="${tls_dir}/mitmproxy-mitm-bundle.pem"
 prepare_mitm_bundle "mitm" "$mitm_bundle"
@@ -539,6 +644,12 @@ append_runs "mitmproxy" "mitm" "1k.txt" "$http_requests_1k" "$http_concurrency" 
 append_runs "mitmproxy" "mitm" "64k.txt" "$http_requests_64k" "$http_concurrency" "$mitm_bundle" "http" "$mitm_port"
 append_runs "mitmproxy" "mitm" "sse_first_chunk" "$sse_requests" "$sse_concurrency" "$mitm_bundle" "sse" "$mitm_port"
 stop_mitm
+
+start_hudsucker mitm
+append_runs "hudsucker" "mitm" "1k.txt" "$http_requests_1k" "$http_concurrency" "${tls_dir}/upstream-ca.crt" "http" "$hudsucker_port"
+append_runs "hudsucker" "mitm" "64k.txt" "$http_requests_64k" "$http_concurrency" "${tls_dir}/upstream-ca.crt" "http" "$hudsucker_port"
+append_runs "hudsucker" "mitm" "sse_first_chunk" "$sse_requests" "$sse_concurrency" "${tls_dir}/upstream-ca.crt" "sse" "$hudsucker_port"
+stop_hudsucker
 
 build_summary
 echo "tls benchmark report: ${summary_md}"

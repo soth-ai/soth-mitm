@@ -5,7 +5,7 @@ use std::pin::Pin;
 
 use tokio::process::Command;
 
-use super::{ConnectionInfo, ProcessAttributor, ProcessInfo};
+use super::{ConnectionInfo, ProcessAttributor, ProcessIdentity, ProcessInfo};
 use crate::types::SocketFamily;
 
 #[derive(Debug, Default)]
@@ -18,10 +18,34 @@ impl ProcessAttributor for PlatformProcessAttributor {
     ) -> Pin<Box<dyn Future<Output = Option<ProcessInfo>> + Send + 'a>> {
         Box::pin(async move { lookup_process(connection).await })
     }
+
+    fn lookup_identity<'a>(
+        &'a self,
+        connection: &'a ConnectionInfo,
+    ) -> Pin<Box<dyn Future<Output = Option<ProcessIdentity>> + Send + 'a>> {
+        Box::pin(async move { lookup_identity(connection).await })
+    }
+
+    fn lookup_by_identity<'a>(
+        &'a self,
+        identity: &'a ProcessIdentity,
+    ) -> Pin<Box<dyn Future<Output = Option<ProcessInfo>> + Send + 'a>> {
+        Box::pin(async move { lookup_process_by_pid(identity.pid).await })
+    }
 }
 
 async fn lookup_process(connection: &ConnectionInfo) -> Option<ProcessInfo> {
     let pid = lookup_pid(connection).await?;
+    lookup_process_by_pid(pid).await
+}
+
+async fn lookup_identity(connection: &ConnectionInfo) -> Option<ProcessIdentity> {
+    let pid = lookup_pid(connection).await?;
+    let start_token = process_start_token(pid).await?;
+    Some(ProcessIdentity { pid, start_token })
+}
+
+async fn lookup_process_by_pid(pid: u32) -> Option<ProcessInfo> {
     let process_command = ps_value(pid, "command").await;
     let process_name = ps_value(pid, "comm").await;
     let parent_pid = ps_value(pid, "ppid")
@@ -48,6 +72,10 @@ async fn lookup_process(connection: &ConnectionInfo) -> Option<ProcessInfo> {
         bundle_id,
         parent_pid,
     })
+}
+
+async fn process_start_token(pid: u32) -> Option<String> {
+    ps_value(pid, "lstart").await
 }
 
 async fn lookup_pid(connection: &ConnectionInfo) -> Option<u32> {
