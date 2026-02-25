@@ -1,10 +1,8 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use dashmap::{mapref::entry::Entry, DashMap};
-use lru::LruCache;
+use dashmap::{mapref::entry::Entry, DashMap, DashSet};
 use tokio::sync::mpsc;
-use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 
 use crate::handler::InterceptHandler;
@@ -29,7 +27,7 @@ pub(crate) struct FlowDispatchers<H: InterceptHandler> {
     handler: Arc<H>,
     callback_guard: Arc<HandlerCallbackGuard>,
     metrics_store: Arc<ProxyMetricsStore>,
-    closed_flow_ids: Arc<Mutex<LruCache<u64, ()>>>,
+    closed_flow_live: Arc<DashSet<u64>>,
     per_flow: DashMap<u64, FlowDispatcher>,
     queue_capacity: usize,
     queue_send_timeout: Duration,
@@ -41,7 +39,7 @@ impl<H: InterceptHandler> FlowDispatchers<H> {
         handler: Arc<H>,
         callback_guard: Arc<HandlerCallbackGuard>,
         metrics_store: Arc<ProxyMetricsStore>,
-        closed_flow_ids: Arc<Mutex<LruCache<u64, ()>>>,
+        closed_flow_live: Arc<DashSet<u64>>,
         queue_capacity: usize,
         queue_send_timeout: Duration,
         close_join_timeout: Duration,
@@ -50,7 +48,7 @@ impl<H: InterceptHandler> FlowDispatchers<H> {
             handler,
             callback_guard,
             metrics_store,
-            closed_flow_ids,
+            closed_flow_live,
             per_flow: DashMap::new(),
             queue_capacity: queue_capacity.max(1),
             queue_send_timeout: queue_send_timeout.max(Duration::from_millis(1)),
@@ -134,8 +132,7 @@ impl<H: InterceptHandler> FlowDispatchers<H> {
     }
 
     async fn sender_for_flow(&self, flow_id: u64) -> Option<mpsc::Sender<DispatchWork>> {
-        let mut closed = self.closed_flow_ids.lock().await;
-        if closed.get(&flow_id).is_some() {
+        if self.is_flow_closed(flow_id) {
             return None;
         }
 
@@ -149,19 +146,32 @@ impl<H: InterceptHandler> FlowDispatchers<H> {
             Arc::clone(&self.callback_guard),
             receiver,
         );
-        match self.per_flow.entry(flow_id) {
+        let selected_sender = match self.per_flow.entry(flow_id) {
             Entry::Occupied(existing) => {
                 worker.abort();
-                Some(existing.get().sender.clone())
+                existing.get().sender.clone()
             }
             Entry::Vacant(vacant) => {
                 vacant.insert(FlowDispatcher {
                     sender: sender.clone(),
                     worker,
                 });
-                Some(sender)
+                sender.clone()
             }
+        };
+
+        if !self.is_flow_closed(flow_id) {
+            return Some(selected_sender);
         }
+
+        if let Some((_, dispatcher)) = self.per_flow.remove(&flow_id) {
+            dispatcher.worker.abort();
+        }
+        None
+    }
+
+    fn is_flow_closed(&self, flow_id: u64) -> bool {
+        self.closed_flow_live.contains(&flow_id)
     }
 }
 

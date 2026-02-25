@@ -14,7 +14,7 @@ use crate::runtime::handler_guard::HandlerCallbackGuard;
 use crate::types::{RawRequest, RawResponse, StreamChunk};
 use crate::HandlerDecision;
 use bytes::Bytes;
-use dashmap::DashMap;
+use dashmap::{DashMap, DashSet};
 use lru::LruCache;
 use mitm_observe::FlowContext;
 use mitm_sidecar::{
@@ -58,11 +58,12 @@ impl<H: InterceptHandler> HandlerFlowHooks<H> {
             NonZeroUsize::new(closed_flow_lru_capacity.max(1))
                 .expect("closed flow cache capacity must be non-zero"),
         )));
+        let closed_flow_live = Arc::new(DashSet::new());
         let flow_dispatchers = Arc::new(FlowDispatchers::new(
             Arc::clone(&handler),
             Arc::clone(&callback_guard),
             Arc::clone(&metrics_store),
-            Arc::clone(&closed_flow_ids),
+            Arc::clone(&closed_flow_live),
             flow_dispatch_queue_capacity,
             dispatch_queue_send_timeout,
             dispatch_close_join_timeout,
@@ -70,6 +71,7 @@ impl<H: InterceptHandler> HandlerFlowHooks<H> {
         let flow_state = Arc::new(FlowStateContext {
             metrics_store,
             closed_flow_ids,
+            closed_flow_live,
             flow_dispatchers,
             stream_sequences: Arc::new(DashMap::new()),
             connection_meta_by_flow: Arc::new(DashMap::new()),
@@ -135,6 +137,7 @@ impl<H: InterceptHandler> FlowHooks for HandlerFlowHooks<H> {
                 let mut closed = flow_state.closed_flow_ids.lock().await;
                 let _ = closed.pop(&context.flow_id);
             }
+            flow_state.closed_flow_live.remove(&context.flow_id);
             flow_state.tls_intercepted_flow_ids.remove(&context.flow_id);
 
             let connection_meta = connection_meta_from_accept_context(
@@ -222,6 +225,7 @@ impl<H: InterceptHandler> FlowHooks for HandlerFlowHooks<H> {
             let Some(connection_meta) = connection_meta_for_context(
                 &context,
                 &flow_state.connection_meta_by_flow,
+                &flow_state.closed_flow_live,
                 &flow_state.tls_intercepted_flow_ids,
             )
             .await
@@ -265,6 +269,7 @@ impl<H: InterceptHandler> FlowHooks for HandlerFlowHooks<H> {
             let Some(connection_meta) = connection_meta_for_context(
                 &context,
                 &flow_state.connection_meta_by_flow,
+                &flow_state.closed_flow_live,
                 &flow_state.tls_intercepted_flow_ids,
             )
             .await

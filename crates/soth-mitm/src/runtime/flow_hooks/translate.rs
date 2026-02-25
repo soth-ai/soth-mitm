@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use dashmap::DashMap;
+use dashmap::{DashMap, DashSet};
 use mitm_observe::FlowContext;
 use mitm_sidecar::StreamFrameKind;
 
@@ -21,12 +21,16 @@ pub(super) fn map_stream_frame_kind(kind: StreamFrameKind) -> Option<FrameKind> 
 pub(super) async fn connection_meta_for_context(
     context: &FlowContext,
     connection_meta_by_flow: &Arc<DashMap<u64, Arc<ConnectionMeta>>>,
+    closed_flow_live: &Arc<DashSet<u64>>,
     tls_intercepted_flow_ids: &Arc<DashMap<u64, ()>>,
 ) -> Option<Arc<ConnectionMeta>> {
     let Some(connection_meta) = connection_meta_by_flow
         .get(&context.flow_id)
         .map(|value| Arc::clone(value.value()))
     else {
+        if closed_flow_live.contains(&context.flow_id) {
+            return None;
+        }
         debug_assert!(
             false,
             "connection {} missing ConnectionMeta in flow map",

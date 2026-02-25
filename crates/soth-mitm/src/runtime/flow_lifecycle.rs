@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use dashmap::DashMap;
+use dashmap::{DashMap, DashSet};
 use lru::LruCache;
 use tokio::sync::Mutex;
 
@@ -17,6 +17,7 @@ use crate::types::ConnectionMeta;
 pub(super) struct FlowStateContext<H: InterceptHandler> {
     pub(super) metrics_store: Arc<ProxyMetricsStore>,
     pub(super) closed_flow_ids: Arc<Mutex<LruCache<u64, ()>>>,
+    pub(super) closed_flow_live: Arc<DashSet<u64>>,
     pub(super) flow_dispatchers: Arc<FlowDispatchers<H>>,
     pub(super) stream_sequences: Arc<DashMap<u64, u64>>,
     pub(super) connection_meta_by_flow: Arc<DashMap<u64, Arc<ConnectionMeta>>>,
@@ -63,7 +64,7 @@ async fn reap_stale_flows<H: InterceptHandler>(
         .flow_last_touched
         .iter()
         .filter_map(|entry| {
-            if now.duration_since(*entry.value()) >= stale_flow_ttl {
+            if now.saturating_duration_since(*entry.value()) >= stale_flow_ttl {
                 Some(*entry.key())
             } else {
                 None
@@ -73,6 +74,11 @@ async fn reap_stale_flows<H: InterceptHandler>(
         .collect();
 
     for flow_id in stale_flow_ids {
+        if let Some(last_touched) = flow_state.flow_last_touched.get(&flow_id) {
+            if now.saturating_duration_since(*last_touched) < stale_flow_ttl {
+                continue;
+            }
+        }
         tracing::warn!(
             flow_id,
             "reaping stale flow state without explicit stream_end"
@@ -92,6 +98,7 @@ pub(super) async fn finalize_flow<H: InterceptHandler>(
             false
         } else {
             if let Some((evicted_flow_id, _)) = closed.push(flow_id, ()) {
+                flow_state.closed_flow_live.remove(&evicted_flow_id);
                 flow_state.metrics_store.record_closed_flow_id_eviction();
                 tracing::debug!(
                     flow_id,
@@ -99,6 +106,11 @@ pub(super) async fn finalize_flow<H: InterceptHandler>(
                     "closed-flow LRU evicted tombstone entry"
                 );
             }
+            flow_state.closed_flow_live.insert(flow_id);
+            flow_state.stream_sequences.remove(&flow_id);
+            flow_state.connection_meta_by_flow.remove(&flow_id);
+            flow_state.flow_last_touched.remove(&flow_id);
+            flow_state.tls_intercepted_flow_ids.remove(&flow_id);
             true
         }
     };
@@ -107,10 +119,6 @@ pub(super) async fn finalize_flow<H: InterceptHandler>(
     }
 
     flow_state.flow_dispatchers.close_and_drain(flow_id).await;
-    flow_state.stream_sequences.remove(&flow_id);
-    flow_state.connection_meta_by_flow.remove(&flow_id);
-    flow_state.flow_last_touched.remove(&flow_id);
-    flow_state.tls_intercepted_flow_ids.remove(&flow_id);
 
     let connection_id = connection_id_for_flow_id(flow_id);
     if let Some(lookup) = flow_state.process_lookup.as_ref() {
