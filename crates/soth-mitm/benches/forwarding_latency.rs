@@ -173,6 +173,7 @@ async fn start_proxy(
     config.interception.destinations = vec![format!("127.0.0.1:{}", upstream_addr.port())];
     config.interception.passthrough_unlisted = true;
     config.upstream.verify_upstream_tls = false;
+    config.process_attribution.enabled = false;
     config.tls.ca_cert_path = temp_dir.join("ca-cert.pem");
     config.tls.ca_key_path = temp_dir.join("ca-key.pem");
 
