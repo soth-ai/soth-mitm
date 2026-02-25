@@ -61,3 +61,43 @@ fn reject_zero_body_size_limit() {
         other => panic!("unexpected error: {other}"),
     }
 }
+
+#[test]
+fn reject_zero_connection_pool_idle_timeout() {
+    let mut config = MitmConfig::default();
+    config
+        .interception
+        .destinations
+        .push("api.example.com:443".to_string());
+    config.connection_pool.idle_timeout_ms = 0;
+
+    let error = config
+        .validate()
+        .expect_err("zero connection_pool.idle_timeout_ms must fail");
+    match error {
+        MitmError::InvalidConfig(detail) => {
+            assert!(detail.contains("connection_pool.idle_timeout_ms"));
+        }
+        other => panic!("unexpected error: {other}"),
+    }
+}
+
+#[test]
+fn reject_zero_connection_pool_max_idle_per_host() {
+    let mut config = MitmConfig::default();
+    config
+        .interception
+        .destinations
+        .push("api.example.com:443".to_string());
+    config.connection_pool.max_idle_per_host = 0;
+
+    let error = config
+        .validate()
+        .expect_err("zero connection_pool.max_idle_per_host must fail");
+    match error {
+        MitmError::InvalidConfig(detail) => {
+            assert!(detail.contains("connection_pool.max_idle_per_host"));
+        }
+        other => panic!("unexpected error: {other}"),
+    }
+}

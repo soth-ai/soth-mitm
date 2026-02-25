@@ -237,6 +237,34 @@ async fn stream_end_invokes_connection_close_once() {
 }
 
 #[tokio::test]
+async fn lifecycle_sync_callbacks_use_response_timeout_budget() {
+    let close_count = Arc::new(AtomicUsize::new(0));
+    let handler = Arc::new(SlowLifecycleCloseHandler {
+        close_delay: Duration::from_millis(80),
+        close_count: Arc::clone(&close_count),
+    });
+    let metrics_store = Arc::new(ProxyMetricsStore::default());
+    let hooks = build_hooks(
+        handler,
+        Arc::clone(&metrics_store),
+        Duration::from_millis(10),
+        Duration::from_millis(200),
+        true,
+    );
+    let context = sample_context(207);
+    register_connection(&hooks, context.clone()).await;
+
+    let started = Instant::now();
+    hooks.on_stream_end(context).await;
+    assert!(
+        started.elapsed() >= Duration::from_millis(70),
+        "lifecycle close callback should honor lifecycle timeout budget (response timeout), not request timeout"
+    );
+    assert_eq!(close_count.load(Ordering::Relaxed), 1);
+    assert_eq!(metrics_store.snapshot().handler_timeout_count, 0);
+}
+
+#[tokio::test]
 async fn duplicate_stream_end_callbacks_are_deduplicated() {
     let stream_end_count = Arc::new(AtomicUsize::new(0));
     let close_count = Arc::new(AtomicUsize::new(0));
@@ -267,6 +295,52 @@ async fn duplicate_stream_end_callbacks_are_deduplicated() {
         close_count.load(Ordering::Relaxed),
         1,
         "connection close callback must fire once per flow"
+    );
+}
+
+#[tokio::test]
+async fn late_response_after_stream_end_does_not_resurrect_dispatcher() {
+    let completed = Arc::new(AtomicUsize::new(0));
+    let handler = Arc::new(DelayedResponseHandler {
+        delay: Duration::from_millis(120),
+        completed: Arc::clone(&completed),
+    });
+    let metrics_store = Arc::new(ProxyMetricsStore::default());
+    let hooks = build_hooks(
+        handler,
+        Arc::clone(&metrics_store),
+        Duration::from_millis(200),
+        Duration::from_millis(400),
+        true,
+    );
+    let context = sample_context(208);
+    register_connection(&hooks, context.clone()).await;
+
+    hooks
+        .on_response(context.clone(), sample_sidecar_response())
+        .await;
+    let hooks_for_end = Arc::clone(&hooks);
+    let context_for_end = context.clone();
+    let finalize = tokio::spawn(async move {
+        hooks_for_end.on_stream_end(context_for_end).await;
+    });
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    hooks.on_response(context, sample_sidecar_response()).await;
+
+    tokio::time::timeout(Duration::from_secs(1), finalize)
+        .await
+        .expect("stream_end should complete")
+        .expect("stream_end task should not panic");
+    tokio::time::sleep(Duration::from_millis(160)).await;
+
+    assert_eq!(
+        completed.load(Ordering::Relaxed),
+        1,
+        "late response after stream_end should not create a new flow dispatcher"
+    );
+    assert!(
+        metrics_store.snapshot().dropped_dispatch_work_count >= 1,
+        "late response dispatch work should be dropped once flow is finalized"
     );
 }
 
@@ -452,6 +526,26 @@ impl InterceptHandler for StreamLifecycleHandler {
     }
 
     fn on_connection_close(&self, _connection_id: Uuid) {
+        self.close_count.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+#[derive(Debug)]
+struct SlowLifecycleCloseHandler {
+    close_delay: Duration,
+    close_count: Arc<AtomicUsize>,
+}
+
+impl InterceptHandler for SlowLifecycleCloseHandler {
+    fn on_request(
+        &self,
+        _request: &RawRequest,
+    ) -> impl std::future::Future<Output = HandlerDecision> + Send {
+        async { HandlerDecision::Allow }
+    }
+
+    fn on_connection_close(&self, _connection_id: Uuid) {
+        std::thread::sleep(self.close_delay);
         self.close_count.fetch_add(1, Ordering::Relaxed);
     }
 }
