@@ -1,6 +1,7 @@
 use std::net::IpAddr;
 use std::net::{SocketAddrV4, SocketAddrV6};
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::SystemTime;
 
 use bytes::Bytes;
@@ -19,7 +20,7 @@ pub struct RawRequest {
     pub path: String,
     pub headers: HeaderMap,
     pub body: Bytes,
-    pub connection_meta: ConnectionMeta,
+    pub connection_meta: Arc<ConnectionMeta>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -27,7 +28,7 @@ pub struct RawResponse {
     pub status: u16,
     pub headers: HeaderMap,
     pub body: Bytes,
-    pub connection_meta: ConnectionMeta,
+    pub connection_meta: Arc<ConnectionMeta>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

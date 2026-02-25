@@ -13,15 +13,10 @@ use crate::errors::MitmError;
 use crate::handler::InterceptHandler;
 use crate::metrics::{MetricsEventConsumer, ProxyMetricsStore};
 
-#[path = "runtime/connection_id.rs"]
 mod connection_id;
-#[path = "runtime/connection_meta.rs"]
 mod connection_meta;
-#[path = "runtime/flow_dispatch.rs"]
 mod flow_dispatch;
-#[path = "runtime/flow_hooks.rs"]
 mod flow_hooks;
-#[path = "runtime/handler_guard.rs"]
 mod handler_guard;
 
 pub(crate) type RuntimeServer = SidecarServer<DestinationPolicyEngine, MetricsEventConsumer>;

@@ -34,7 +34,7 @@ struct HandlerFlowHooks<H: InterceptHandler> {
     process_lookup: Option<Arc<ProcessLookupService<PlatformProcessAttributor>>>,
     flow_dispatchers: Arc<FlowDispatchers<H>>,
     stream_sequences: Arc<DashMap<u64, u64>>,
-    connection_meta_by_flow: Arc<DashMap<u64, ConnectionMeta>>,
+    connection_meta_by_flow: Arc<DashMap<u64, Arc<ConnectionMeta>>>,
     closed_flow_ids: Arc<Mutex<LruCache<u64, ()>>>,
 }
 impl<H: InterceptHandler> HandlerFlowHooks<H> {
@@ -110,7 +110,8 @@ impl<H: InterceptHandler> FlowHooks for HandlerFlowHooks<H> {
                 &context,
                 process_info.map(runtime_process_info_from_policy),
             );
-            connection_meta_by_flow.insert(context.flow_id, connection_meta.clone());
+            let connection_meta = Arc::new(connection_meta);
+            connection_meta_by_flow.insert(context.flow_id, Arc::clone(&connection_meta));
             callback_guard.run_sync((), || handler.on_connection_open(&connection_meta));
         })
     }
@@ -161,7 +162,7 @@ impl<H: InterceptHandler> FlowHooks for HandlerFlowHooks<H> {
                 path: request.path,
                 headers: request.headers,
                 body: request.body,
-                connection_meta,
+                connection_meta: Arc::clone(&connection_meta),
             };
             let handler = Arc::clone(&handler);
             let decision = callback_guard
@@ -309,11 +310,11 @@ fn map_stream_frame_kind(kind: StreamFrameKind) -> Option<FrameKind> {
 
 async fn connection_meta_for_context(
     context: &FlowContext,
-    connection_meta_by_flow: &Arc<DashMap<u64, ConnectionMeta>>,
-) -> Option<ConnectionMeta> {
+    connection_meta_by_flow: &Arc<DashMap<u64, Arc<ConnectionMeta>>>,
+) -> Option<Arc<ConnectionMeta>> {
     let Some(connection_meta) = connection_meta_by_flow
         .get(&context.flow_id)
-        .map(|value| value.clone())
+        .map(|value| Arc::clone(value.value()))
     else {
         debug_assert!(
             false,
@@ -328,10 +329,16 @@ async fn connection_meta_for_context(
         );
         return None;
     };
-    let mut enriched = connection_meta;
-    if enriched.tls_info.is_none() {
-        enriched.tls_info = tls_info_from_flow_context(context);
+    if connection_meta.tls_info.is_some() {
+        return Some(connection_meta);
     }
+    let Some(tls_info) = tls_info_from_flow_context(context) else {
+        return Some(connection_meta);
+    };
+    let mut enriched = (*connection_meta).clone();
+    enriched.tls_info = Some(tls_info);
+    let enriched = Arc::new(enriched);
+    connection_meta_by_flow.insert(context.flow_id, Arc::clone(&enriched));
     Some(enriched)
 }
 
