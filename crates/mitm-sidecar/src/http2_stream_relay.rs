@@ -6,7 +6,6 @@ const H2_INITIAL_WINDOW_SIZE: u32 = 65_535;
 const H2_INITIAL_CONNECTION_WINDOW_SIZE: u32 = 262_144;
 const H2_MAX_SEND_BUFFER_SIZE: usize = 128 * 1024;
 const H2_FORWARD_CHUNK_LIMIT: usize = 16 * 1024;
-const H2_TRAILERS_WAIT_TIMEOUT: Duration = Duration::from_secs(2);
 static H2_RELAY_DEBUG_ENABLED: OnceLock<bool> = OnceLock::new();
 
 fn h2_relay_debug_enabled() -> bool {

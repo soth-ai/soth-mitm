@@ -110,12 +110,31 @@ async fn run_with_timeout<F>(label: &str, future: F) -> io::Result<()>
 where
     F: Future<Output = io::Result<()>>,
 {
-    let exchange_timeout_seconds = env::var("SOTH_MITM_SOAK_EXCHANGE_TIMEOUT_SECONDS")
+    let configured_exchange_timeout_seconds = env::var("SOTH_MITM_SOAK_EXCHANGE_TIMEOUT_SECONDS")
         .ok()
         .and_then(|value| value.parse::<u64>().ok())
         .filter(|value| *value > 0)
         .unwrap_or(20);
-    timeout(Duration::from_secs(exchange_timeout_seconds), future)
+    let timeout_seconds = if label == "tls_h2_exchange"
+        && env::var("SOTH_MITM_SOAK_EXCHANGE_TIMEOUT_SECONDS").is_err()
+    {
+        let stage_timeout_seconds = env::var("SOTH_MITM_SOAK_STAGE_TIMEOUT_SECONDS")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .filter(|value| *value > 0)
+            .unwrap_or(10);
+        let retries = env::var("SOTH_MITM_SOAK_H2_RETRIES")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(2);
+        let retry_envelope = stage_timeout_seconds
+            .saturating_mul(retries.saturating_add(1))
+            .saturating_add(5);
+        configured_exchange_timeout_seconds.max(retry_envelope)
+    } else {
+        configured_exchange_timeout_seconds
+    };
+    timeout(Duration::from_secs(timeout_seconds), future)
         .await
         .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, format!("{label} timed out")))?
 }

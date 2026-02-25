@@ -44,17 +44,10 @@ async fn capture_h2_body(
         }
     }
 
-    let trailers = match tokio::time::timeout(H2_TRAILERS_WAIT_TIMEOUT, source.trailers()).await {
-        Ok(result) => {
-            result.map_err(|error| h2_error_to_io("reading HTTP/2 trailers failed", error))?
-        }
-        Err(_) => {
-            return Err(io::Error::new(
-                io::ErrorKind::TimedOut,
-                "timed out waiting for HTTP/2 trailers",
-            ));
-        }
-    };
+    let trailers = source
+        .trailers()
+        .await
+        .map_err(|error| h2_error_to_io("reading HTTP/2 trailers failed", error))?;
 
     Ok(H2CapturedBody {
         bytes: bytes::Bytes::from(body),
