@@ -51,7 +51,9 @@ fn reject_zero_body_size_limit() {
         .push("api.example.com:443".to_string());
     config.body.max_size_bytes = 0;
 
-    let error = config.validate().expect_err("zero body size limit must fail");
+    let error = config
+        .validate()
+        .expect_err("zero body size limit must fail");
     match error {
         MitmError::InvalidConfig(detail) => {
             assert!(detail.contains("body.max_size_bytes"));

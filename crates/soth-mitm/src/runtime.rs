@@ -1,10 +1,11 @@
 use std::collections::HashSet;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use std::time::Duration;
 
 use mitm_core::{MitmConfig as CoreMitmConfig, MitmEngine};
 use mitm_policy::{FlowAction, PolicyDecision, PolicyEngine, PolicyInput, PolicyOverrideState};
 use mitm_sidecar::{FlowHooks, SidecarConfig, SidecarServer};
+use parking_lot::RwLock;
 
 use crate::config::{InterceptionScope, MitmConfig};
 use crate::destination::{canonical_destination_key, normalize_destination_key};
@@ -12,14 +13,14 @@ use crate::errors::MitmError;
 use crate::handler::InterceptHandler;
 use crate::metrics::{MetricsEventConsumer, ProxyMetricsStore};
 
-#[path = "runtime/connection_meta.rs"]
-mod connection_meta;
 #[path = "runtime/connection_id.rs"]
 mod connection_id;
-#[path = "runtime/flow_hooks.rs"]
-mod flow_hooks;
+#[path = "runtime/connection_meta.rs"]
+mod connection_meta;
 #[path = "runtime/flow_dispatch.rs"]
 mod flow_dispatch;
+#[path = "runtime/flow_hooks.rs"]
+mod flow_hooks;
 #[path = "runtime/handler_guard.rs"]
 mod handler_guard;
 
@@ -81,6 +82,7 @@ fn map_core_config(config: &MitmConfig) -> CoreMitmConfig {
 #[derive(Debug, Clone)]
 pub(crate) struct RuntimeConfigHandle {
     policy_state: Arc<RwLock<DestinationPolicyState>>,
+    active_config: Arc<RwLock<MitmConfig>>,
 }
 
 impl RuntimeConfigHandle {
@@ -88,6 +90,7 @@ impl RuntimeConfigHandle {
         let policy_state = DestinationPolicyState::from_scope(&config.interception)?;
         Ok(Self {
             policy_state: Arc::new(RwLock::new(policy_state)),
+            active_config: Arc::new(RwLock::new(config.clone())),
         })
     }
 
@@ -99,12 +102,16 @@ impl RuntimeConfigHandle {
 
     pub(crate) fn apply_reload(&self, next_config: &MitmConfig) -> Result<(), MitmError> {
         next_config.validate()?;
+        let current = self.active_config.read().clone();
+        validate_reload_contract(&current, next_config)?;
         let next_policy_state = DestinationPolicyState::from_scope(&next_config.interception)?;
-        let mut guard = self.policy_state.write().map_err(|_| {
-            MitmError::InvalidConfig("runtime policy state lock poisoned".to_string())
-        })?;
-        *guard = next_policy_state;
+        *self.policy_state.write() = next_policy_state;
+        *self.active_config.write() = next_config.clone();
         Ok(())
+    }
+
+    pub(crate) fn current_config(&self) -> MitmConfig {
+        self.active_config.read().clone()
     }
 }
 
@@ -145,16 +152,7 @@ impl DestinationPolicyEngine {
 
 impl PolicyEngine for DestinationPolicyEngine {
     fn decide(&self, input: &PolicyInput) -> PolicyDecision {
-        let state = match self.policy_state.read() {
-            Ok(guard) => guard,
-            Err(_) => {
-                return PolicyDecision {
-                    action: FlowAction::Block,
-                    reason: "policy_state_poisoned".to_string(),
-                    override_state: PolicyOverrideState::default(),
-                };
-            }
-        };
+        let state = self.policy_state.read();
 
         let key = canonical_destination_key(&input.server_host, input.server_port);
         if state.destination_keys.contains(&key) {
@@ -181,11 +179,45 @@ impl PolicyEngine for DestinationPolicyEngine {
     }
 }
 
+fn validate_reload_contract(current: &MitmConfig, next: &MitmConfig) -> Result<(), MitmError> {
+    if current.bind != next.bind {
+        return Err(non_hot_reloadable_change("bind"));
+    }
+    if current.unix_socket_path != next.unix_socket_path {
+        return Err(non_hot_reloadable_change("unix_socket_path"));
+    }
+    if current.process_attribution != next.process_attribution {
+        return Err(non_hot_reloadable_change("process_attribution"));
+    }
+    if current.tls != next.tls {
+        return Err(non_hot_reloadable_change("tls"));
+    }
+    if current.upstream != next.upstream {
+        return Err(non_hot_reloadable_change("upstream"));
+    }
+    if current.connection_pool != next.connection_pool {
+        return Err(non_hot_reloadable_change("connection_pool"));
+    }
+    if current.body != next.body {
+        return Err(non_hot_reloadable_change("body"));
+    }
+    if current.handler != next.handler {
+        return Err(non_hot_reloadable_change("handler"));
+    }
+    Ok(())
+}
+
+fn non_hot_reloadable_change(field: &'static str) -> MitmError {
+    MitmError::InvalidConfig(format!(
+        "reload only supports interception scope updates; field changed: {field}"
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use mitm_policy::{FlowAction, PolicyEngine, PolicyInput};
 
-    use super::{DestinationPolicyEngine, RuntimeConfigHandle, map_core_config};
+    use super::{map_core_config, DestinationPolicyEngine, RuntimeConfigHandle};
     use crate::config::{InterceptionScope, MitmConfig};
 
     fn policy(scope: InterceptionScope) -> DestinationPolicyEngine {
@@ -259,6 +291,12 @@ mod tests {
             .apply_reload(&reloaded)
             .expect("reload should apply");
 
+        let applied_config = runtime_config.current_config();
+        assert_eq!(
+            applied_config.interception.destinations,
+            vec!["other.example.com:443".to_string()]
+        );
+
         assert_eq!(
             in_flight.action,
             FlowAction::Intercept,
@@ -300,5 +338,28 @@ mod tests {
             core.max_flow_decoder_buffer_bytes <= 256,
             "decoder budget must be bounded by body size limit"
         );
+    }
+
+    #[test]
+    fn reload_rejects_non_hot_reloadable_field_changes() {
+        let mut config = MitmConfig::default();
+        config
+            .interception
+            .destinations
+            .push("api.example.com:443".to_string());
+        let runtime_config =
+            RuntimeConfigHandle::from_config(&config).expect("initial config must be valid");
+
+        let mut next = config.clone();
+        next.upstream.timeout_ms += 1;
+        let error = runtime_config
+            .apply_reload(&next)
+            .expect_err("non hot-reloadable field changes must fail reload");
+        match error {
+            crate::MitmError::InvalidConfig(message) => {
+                assert!(message.contains("field changed: upstream"));
+            }
+            other => panic!("expected invalid config error, got {other}"),
+        }
     }
 }

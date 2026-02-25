@@ -54,7 +54,6 @@ impl<H: InterceptHandler> MitmProxy<H> {
             Arc::clone(&self.handler),
             Arc::clone(&self.metrics_store),
         )?;
-        let active_config = Arc::new(tokio::sync::RwLock::new(self.config.clone()));
         let runtime_config = runtime_bundle.config_handle.clone();
         let runtime_governor = runtime_bundle.server.runtime_observability_handle();
         let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
@@ -70,7 +69,6 @@ impl<H: InterceptHandler> MitmProxy<H> {
             join_handle: Arc::new(Mutex::new(Some(join_handle))),
             metrics_store: Arc::clone(&self.metrics_store),
             runtime_config,
-            active_config,
             runtime_governor,
             shutdown_tx,
         })
@@ -102,22 +100,18 @@ pub struct MitmProxyHandle {
     join_handle: Arc<Mutex<Option<JoinHandle<Result<(), MitmError>>>>>,
     metrics_store: Arc<ProxyMetricsStore>,
     runtime_config: RuntimeConfigHandle,
-    active_config: Arc<tokio::sync::RwLock<MitmConfig>>,
     runtime_governor: Arc<RuntimeGovernor>,
     shutdown_tx: tokio::sync::watch::Sender<bool>,
 }
 
 impl MitmProxyHandle {
     pub async fn reload(&self, next_config: MitmConfig) -> Result<(), MitmError> {
-        next_config.validate()?;
         self.runtime_config.apply_reload(&next_config)?;
-        let mut guard = self.active_config.write().await;
-        *guard = next_config;
         Ok(())
     }
 
     pub async fn current_config(&self) -> MitmConfig {
-        self.active_config.read().await.clone()
+        self.runtime_config.current_config()
     }
 
     pub async fn shutdown(self, timeout: Duration) -> Result<(), MitmError> {
@@ -130,7 +124,8 @@ impl MitmProxyHandle {
 
         let _ = self.shutdown_tx.send(true);
         let deadline = tokio::time::Instant::now() + timeout;
-        let drained = wait_for_active_flows_to_drain(Arc::clone(&self.runtime_governor), deadline).await;
+        let drained =
+            wait_for_active_flows_to_drain(Arc::clone(&self.runtime_governor), deadline).await;
         if !drained {
             handle.abort();
             let _ = tokio::time::timeout(Duration::from_millis(100), &mut handle).await;
@@ -218,7 +213,7 @@ mod tests {
     use mitm_sidecar::{RuntimeBudgetConfig, RuntimeGovernor};
     use tokio::sync::Mutex;
 
-    use super::{MitmProxyHandle, write_private_key_file};
+    use super::{write_private_key_file, MitmProxyHandle};
     use crate::config::MitmConfig;
     use crate::errors::MitmError;
     use crate::metrics::ProxyMetricsStore;
@@ -235,7 +230,6 @@ mod tests {
             metrics_store: Arc::new(ProxyMetricsStore::default()),
             runtime_config: RuntimeConfigHandle::from_config(&config)
                 .expect("runtime config handle must build"),
-            active_config: Arc::new(tokio::sync::RwLock::new(config)),
             runtime_governor,
             shutdown_tx,
         }
@@ -270,7 +264,11 @@ mod tests {
             drop(flow_guard);
         });
 
-        let handle = build_handle(Arc::clone(&runtime_governor), shutdown_tx, Some(join_handle));
+        let handle = build_handle(
+            Arc::clone(&runtime_governor),
+            shutdown_tx,
+            Some(join_handle),
+        );
         let started = std::time::Instant::now();
         handle
             .shutdown(Duration::from_millis(250))
@@ -304,11 +302,9 @@ mod tests {
         match error {
             MitmError::Io(io_error) => {
                 assert_eq!(io_error.kind(), std::io::ErrorKind::TimedOut);
-                assert!(
-                    io_error
-                        .to_string()
-                        .contains("timed out waiting for proxy shutdown")
-                );
+                assert!(io_error
+                    .to_string()
+                    .contains("timed out waiting for proxy shutdown"));
             }
             other => panic!("expected timeout IO error, got {other}"),
         }
@@ -317,7 +313,8 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn private_key_permissions_are_owner_only_on_unix() {
-        let temp_dir = std::env::temp_dir().join(format!("soth-mitm-key-perm-{}", uuid::Uuid::new_v4()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("soth-mitm-key-perm-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&temp_dir).expect("temp dir");
         let key_path = temp_dir.join("ca-key.pem");
 

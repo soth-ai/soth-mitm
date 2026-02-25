@@ -46,6 +46,7 @@ mitm-http = { path = "../mitm-http", version = "0.1.0" }
 mitm-observe = { path = "../mitm-observe", version = "0.1.0" }
 mitm-policy = { path = "../mitm-policy", version = "0.1.0" }
 mitm-sidecar = { path = "../mitm-sidecar", version = "0.1.0" }
+parking_lot = { workspace = true }
 rcgen = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["process", "rt", "sync", "time"] }

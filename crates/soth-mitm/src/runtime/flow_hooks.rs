@@ -2,12 +2,12 @@ use crate::config::MitmConfig;
 use crate::handler::InterceptHandler;
 use crate::metrics::ProxyMetricsStore;
 use crate::process::{PlatformProcessAttributor, ProcessLookupService};
+use crate::runtime::connection_id::connection_id_for_flow_id;
 use crate::runtime::connection_meta::{
     connection_meta_from_accept_context, lookup_connection_info_from_flow_context,
     policy_process_info_from_runtime, process_info_from_unix_client_addr,
     runtime_process_info_from_policy,
 };
-use crate::runtime::connection_id::connection_id_for_flow_id;
 use crate::runtime::flow_dispatch::FlowDispatchers;
 use crate::runtime::handler_guard::HandlerCallbackGuard;
 use crate::types::{ConnectionMeta, FrameKind, RawRequest, RawResponse, StreamChunk};
@@ -113,9 +113,7 @@ impl<H: InterceptHandler> FlowHooks for HandlerFlowHooks<H> {
             let mut guard = connection_meta_by_flow.lock().await;
             guard.insert(context.flow_id, connection_meta.clone());
             drop(guard);
-            callback_guard.run_sync(Duration::ZERO, (), || {
-                handler.on_connection_open(&connection_meta)
-            });
+            callback_guard.run_sync((), || handler.on_connection_open(&connection_meta));
         })
     }
     fn should_intercept_tls(
@@ -127,7 +125,7 @@ impl<H: InterceptHandler> FlowHooks for HandlerFlowHooks<H> {
         let callback_guard = Arc::clone(&self.callback_guard);
         Box::pin(async move {
             let process_info = process_info.map(runtime_process_info_from_policy);
-            callback_guard.run_sync(Duration::ZERO, false, || {
+            callback_guard.run_sync(false, || {
                 handler.should_intercept_tls(&context.server_host, process_info.as_ref())
             })
         })
@@ -140,9 +138,7 @@ impl<H: InterceptHandler> FlowHooks for HandlerFlowHooks<H> {
         let handler = Arc::clone(&self.handler);
         let callback_guard = Arc::clone(&self.callback_guard);
         Box::pin(async move {
-            callback_guard.run_sync(Duration::ZERO, (), || {
-                handler.on_tls_failure(&context.server_host, &error)
-            })
+            callback_guard.run_sync((), || handler.on_tls_failure(&context.server_host, &error))
         })
     }
     fn on_request(
@@ -277,9 +273,7 @@ impl<H: InterceptHandler> FlowHooks for HandlerFlowHooks<H> {
                 })
                 .await;
             let handler_for_close = Arc::clone(&handler);
-            callback_guard.run_sync(Duration::ZERO, (), || {
-                handler_for_close.on_connection_close(connection_id)
-            });
+            callback_guard.run_sync((), || handler_for_close.on_connection_close(connection_id));
         })
     }
 }

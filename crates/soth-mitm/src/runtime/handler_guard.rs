@@ -1,7 +1,7 @@
 use std::future::Future;
 use std::panic::{catch_unwind, resume_unwind, AssertUnwindSafe};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use crate::metrics::ProxyMetricsStore;
 
@@ -28,16 +28,11 @@ impl HandlerCallbackGuard {
         }
     }
 
-    pub(crate) fn run_sync<R, F>(&self, timeout: Duration, default_value: R, callback: F) -> R
+    pub(crate) fn run_sync<R, F>(&self, default_value: R, callback: F) -> R
     where
         F: FnOnce() -> R,
     {
-        let started = Instant::now();
         let callback_result = catch_unwind(AssertUnwindSafe(callback));
-
-        if timeout != Duration::ZERO && started.elapsed() > timeout {
-            self.metrics_store.record_handler_timeout();
-        }
 
         match callback_result {
             Ok(value) => value,

@@ -15,11 +15,11 @@ use mitm_http::ApplicationProtocol;
 use mitm_observe::FlowContext;
 use mitm_policy::ProcessInfo as PolicyProcessInfo;
 use mitm_sidecar::{FlowHooks, RawRequest as SidecarRawRequest, RawResponse as SidecarRawResponse};
-use std::path::PathBuf;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
-use std::time::{Duration, Instant};
 use std::panic::AssertUnwindSafe;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 use uuid::Uuid;
 
 #[test]
@@ -74,10 +74,9 @@ async fn request_timeout_cancels_future_and_records_metric() {
         "timed-out request handler should default to Allow"
     );
 
-    wait_for(
-        Duration::from_millis(200),
-        || drop_seen.load(Ordering::Relaxed),
-    )
+    wait_for(Duration::from_millis(200), || {
+        drop_seen.load(Ordering::Relaxed)
+    })
     .await;
     assert!(
         drop_seen.load(Ordering::Relaxed),
@@ -168,10 +167,9 @@ async fn response_fire_and_forget_does_not_block_forward_path() {
         "on_response should return quickly and run handler asynchronously"
     );
 
-    wait_for(
-        Duration::from_millis(500),
-        || completed.load(Ordering::Relaxed) == 1,
-    )
+    wait_for(Duration::from_millis(500), || {
+        completed.load(Ordering::Relaxed) == 1
+    })
     .await;
     assert_eq!(
         completed.load(Ordering::Relaxed),
@@ -199,10 +197,9 @@ async fn response_timeout_records_metric_without_blocking() {
     register_connection(&hooks, context.clone()).await;
 
     hooks.on_response(context, sample_sidecar_response()).await;
-    wait_for(
-        Duration::from_millis(400),
-        || metrics_store.snapshot().handler_timeout_count >= 1,
-    )
+    wait_for(Duration::from_millis(400), || {
+        metrics_store.snapshot().handler_timeout_count >= 1
+    })
     .await;
     assert!(
         metrics_store.snapshot().handler_timeout_count >= 1,
@@ -395,10 +392,7 @@ impl InterceptHandler for DelayedResponseHandler {
         async { HandlerDecision::Allow }
     }
 
-    fn on_response(
-        &self,
-        _response: &RawResponse,
-    ) -> impl std::future::Future<Output = ()> + Send {
+    fn on_response(&self, _response: &RawResponse) -> impl std::future::Future<Output = ()> + Send {
         let delay = self.delay;
         let completed = Arc::clone(&self.completed);
         async move {
@@ -422,10 +416,7 @@ impl InterceptHandler for StreamLifecycleHandler {
         async { HandlerDecision::Allow }
     }
 
-    fn on_stream_end(
-        &self,
-        _connection_id: Uuid,
-    ) -> impl std::future::Future<Output = ()> + Send {
+    fn on_stream_end(&self, _connection_id: Uuid) -> impl std::future::Future<Output = ()> + Send {
         let stream_end_count = Arc::clone(&self.stream_end_count);
         async move {
             stream_end_count.fetch_add(1, Ordering::Relaxed);
