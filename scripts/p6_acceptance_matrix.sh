@@ -56,6 +56,10 @@ lanes=(
   $'AC-11\tac11_syscall_boundary_audit\ttesting/acceptance/ac11_syscall_boundary_audit.sh'
   $'AC-12\tac12_dependency_policy\ttesting/acceptance/ac12_dependency_policy.sh'
   $'AC-13\tac13_async_handler_runtime_safety\ttesting/acceptance/ac13_async_handler_runtime_safety.sh'
+  $'AC-14\tac14_graceful_shutdown_semantics\ttesting/acceptance/ac14_graceful_shutdown_semantics.sh'
+  $'AC-15\tac15_metrics_accuracy_contract\ttesting/acceptance/ac15_metrics_accuracy_contract.sh'
+  $'AC-16\tac16_body_size_limit_enforcement\ttesting/acceptance/ac16_body_size_limit_enforcement.sh'
+  $'AC-17\tac17_transport_normalization_invariants\ttesting/acceptance/ac17_transport_normalization_invariants.sh'
 )
 
 failed_acs=()
@@ -144,7 +148,7 @@ elif [[ "$skipped_count" -gt 0 ]]; then
 fi
 
 {
-  echo "# P6 Acceptance Matrix (AC-01 .. AC-13)"
+  echo "# P6 Acceptance Matrix (AC-01 .. AC-17)"
   echo
   echo "Generated: $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
   echo

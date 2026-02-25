@@ -10,7 +10,7 @@ phase5_reliability_contract	stress	./scripts/p5_reliability_contract.sh	0	0	0	Ph
 phase5_http1_smuggling_guard	stress	./scripts/p5_http1_smuggling_guard.sh	0	0	0	HTTP/1 canonicalization and smuggling-guard fixture corpus plus deterministic runtime rejection checks.
 phase5_tls_profile_matrix	stress	./scripts/p5_tls_profile_matrix.sh	1	1	0	TLS strict|default|compat profile matrix, cert-profile fixture checks, and openssl/badssl probes.
 phase5_route_mode_matrix	stress	./scripts/p5_route_mode_matrix.sh	0	0	0	Route planner/config matrix for direct|reverse|upstream-http|upstream-socks5 plus chained host allow/ignore semantics.
-phase5_http2_resilience	stress	./scripts/p5_http2_resilience.sh	1	0	0	HTTP/2 stream lifecycle resilience (parallel stress, reset/GOAWAY tolerance, header limits) plus optional h2spec criteria command.
+phase5_http2_resilience	stress	./scripts/p5_http2_resilience.sh	1	0	0	HTTP/2 stream lifecycle resilience (parallel stress, reset/GOAWAY tolerance, header limits) plus mandatory h2spec blocking criteria command.
 phase5_event_log_contract	stress	./scripts/p5_event_log_contract.sh	0	0	0	Deterministic event log v2 contract (stable serialization, replay diff fixtures, and machine-readable sidecar exit status).
 phase5_compat_override_layer	stress	./scripts/p5_compat_override_layer.sh	0	0	0	Per-host compatibility overrides (`force_tunnel`, `disable_h2`, strict-header intent, `skip_upstream_verify`) with decision provenance checks.
 phase5_socket_net_hardening	stress	./scripts/p5_socket_net_hardening.sh	0	0	0	IPv6/dual-stack listener and socket lifecycle guards with runtime pressure instrumentation checks.
@@ -18,5 +18,5 @@ phase5_control_plane_boundary	stress	./scripts/p5_control_plane_boundary.sh	0	1	
 phase5_runtime_soak	soak	./scripts/p5_runtime_soak.sh	0	0	0	Long-running mixed-traffic soak gate for runtime budget envelope.
 phase6_reliability_integration	stress	./scripts/p6_reliability_integration.sh	1	0	0	Integrated reliability gate carrying forward Phase-5 contract, HTTP/2 resilience, runtime soak, and deterministic mixed-traffic close semantics.
 phase6_performance_gates	benchmark	./scripts/p6_perf_gate.sh	0	0	0	Phase-6 perf harness for forwarding latency, TLS handshake overhead, SSE first-chunk delta, and 1k connection-scale baseline.
-phase6_acceptance_matrix	stress	./scripts/p6_acceptance_matrix.sh	1	0	0	Phase-6 acceptance criteria matrix (AC-01..AC-12) with per-AC artifacts and strict-mode gating.
+phase6_acceptance_matrix	stress	./scripts/p6_acceptance_matrix.sh	1	0	0	Phase-6 acceptance criteria matrix (AC-01..AC-17) with per-AC artifacts and strict-mode gating.
 phase6_release_readiness	stress	./scripts/p6_release_readiness.sh	1	0	0	Phase-6 publish and cutover readiness checks: publish dry-run, integration compile smoke, and cutover checklist status.
