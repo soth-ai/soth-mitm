@@ -92,7 +92,7 @@ run_h2spec_blocking_criteria() {
     fi
   fi
 
-  if /bin/zsh -lc "$command" >"$report_dir/h2spec.blocking.log" 2>&1; then
+  if bash -lc "$command" >"$report_dir/h2spec.blocking.log" 2>&1; then
     record_status "$lane" "pass" "ok"
     return 0
   fi

@@ -75,6 +75,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Install cargo-deny
+        if: runner.os != 'Windows'
         uses: taiki-e/install-action@cargo-deny
 
       - name: Enforce dependency policy
@@ -107,7 +108,15 @@ jobs:
         run: cargo test --workspace
 
   phase_a_smoke:
-    runs-on: ubuntu-latest
+    name: phase_a_smoke (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -119,11 +128,19 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Run Phase A smoke harness
+        shell: bash
         run: ./scripts/phase_a_smoke.sh
 
   tls_failure_fixtures:
-    name: tls_failure_fixtures
-    runs-on: ubuntu-latest
+    name: tls_failure_fixtures (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -135,14 +152,15 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Run TLS failure fixture harness
-        run: ./scripts/tls_failure_fixtures.sh --report-dir artifacts/tls-failure-fixtures
+        shell: bash
+        run: ./scripts/tls_failure_fixtures.sh --report-dir artifacts/tls-failure-fixtures/${{ matrix.os }}
 
       - name: Upload TLS failure fixture artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: tls-failure-fixtures
-          path: artifacts/tls-failure-fixtures
+          name: tls-failure-fixtures-${{ matrix.os }}
+          path: artifacts/tls-failure-fixtures/${{ matrix.os }}
           if-no-files-found: error
 
   p1_reliability:
@@ -178,11 +196,15 @@ jobs:
           if-no-files-found: error
 
   phase2_protocol_matrix:
-    name: phase2_protocol_matrix (${{ matrix.lane }})
-    runs-on: ubuntu-latest
+    name: phase2_protocol_matrix (${{ matrix.os }} / ${{ matrix.lane }})
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
         lane:
           - http2
           - websocket
@@ -200,14 +222,15 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Run Phase 2 protocol lane
-        run: ./scripts/p2_protocol_gate.sh --lane ${{ matrix.lane }} --report-dir artifacts/p2-protocol/${{ matrix.lane }}
+        shell: bash
+        run: ./scripts/p2_protocol_gate.sh --lane ${{ matrix.lane }} --report-dir artifacts/p2-protocol/${{ matrix.os }}/${{ matrix.lane }}
 
       - name: Upload Phase 2 lane artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: p2-protocol-${{ matrix.lane }}
-          path: artifacts/p2-protocol/${{ matrix.lane }}
+          name: p2-protocol-${{ matrix.os }}-${{ matrix.lane }}
+          path: artifacts/p2-protocol/${{ matrix.os }}/${{ matrix.lane }}
           if-no-files-found: error
 
   phase2_protocol_triage:
@@ -238,8 +261,15 @@ jobs:
           if-no-files-found: error
 
   phase4_differential_validation:
-    name: phase4_differential_validation
-    runs-on: ubuntu-latest
+    name: phase4_differential_validation (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -251,19 +281,27 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Run differential validation suite
-        run: ./scripts/p4_differential_validation.sh --report-dir artifacts/p4-differential
+        shell: bash
+        run: ./scripts/p4_differential_validation.sh --report-dir artifacts/p4-differential/${{ matrix.os }}
 
       - name: Upload differential validation artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: p4-differential
-          path: artifacts/p4-differential
+          name: p4-differential-${{ matrix.os }}
+          path: artifacts/p4-differential/${{ matrix.os }}
           if-no-files-found: error
 
   phase4_performance_gates:
-    name: phase4_performance_gates
-    runs-on: ubuntu-latest
+    name: phase4_performance_gates (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -275,19 +313,27 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Run performance gates
-        run: ./scripts/p4_performance_gates.sh --report-dir artifacts/p4-performance
+        shell: bash
+        run: ./scripts/p4_performance_gates.sh --report-dir artifacts/p4-performance/${{ matrix.os }}
 
       - name: Upload performance gate artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: p4-performance
-          path: artifacts/p4-performance
+          name: p4-performance-${{ matrix.os }}
+          path: artifacts/p4-performance/${{ matrix.os }}
           if-no-files-found: error
 
   phase4_failure_injection:
-    name: phase4_failure_injection
-    runs-on: ubuntu-latest
+    name: phase4_failure_injection (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -299,19 +345,27 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Run failure injection suite
-        run: ./scripts/p4_failure_injection.sh --report-dir artifacts/p4-failure-injection
+        shell: bash
+        run: ./scripts/p4_failure_injection.sh --report-dir artifacts/p4-failure-injection/${{ matrix.os }}
 
       - name: Upload failure injection artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: p4-failure-injection
-          path: artifacts/p4-failure-injection
+          name: p4-failure-injection-${{ matrix.os }}
+          path: artifacts/p4-failure-injection/${{ matrix.os }}
           if-no-files-found: error
 
   phase4_tool_lanes:
-    name: phase4_tool_lanes
-    runs-on: ubuntu-latest
+    name: phase4_tool_lanes (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -323,19 +377,27 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Run tool lanes (non-strict)
-        run: ./scripts/p4_tool_lanes.sh --skip-network --report-dir artifacts/p4-tool-lanes
+        shell: bash
+        run: ./scripts/p4_tool_lanes.sh --skip-network --report-dir artifacts/p4-tool-lanes/${{ matrix.os }}
 
       - name: Upload tool lane artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: p4-tool-lanes
-          path: artifacts/p4-tool-lanes
+          name: p4-tool-lanes-${{ matrix.os }}
+          path: artifacts/p4-tool-lanes/${{ matrix.os }}
           if-no-files-found: error
 
   phase4_chaos_network_faults:
-    name: phase4_chaos_network_faults
-    runs-on: ubuntu-latest
+    name: phase4_chaos_network_faults (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -347,19 +409,27 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Run chaos network fault lane
-        run: ./scripts/p4_chaos_network_faults.sh --report-dir artifacts/p4-chaos-network
+        shell: bash
+        run: ./scripts/p4_chaos_network_faults.sh --report-dir artifacts/p4-chaos-network/${{ matrix.os }}
 
       - name: Upload chaos network fault artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: p4-chaos-network
-          path: artifacts/p4-chaos-network
+          name: p4-chaos-network-${{ matrix.os }}
+          path: artifacts/p4-chaos-network/${{ matrix.os }}
           if-no-files-found: error
 
   phase4_chaos_adversarial:
-    name: phase4_chaos_adversarial
-    runs-on: ubuntu-latest
+    name: phase4_chaos_adversarial (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -371,19 +441,27 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Run chaos and adversarial suite
-        run: ./scripts/p4_chaos_adversarial.sh --report-dir artifacts/p4-chaos
+        shell: bash
+        run: ./scripts/p4_chaos_adversarial.sh --report-dir artifacts/p4-chaos/${{ matrix.os }}
 
       - name: Upload chaos and adversarial artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: p4-chaos
-          path: artifacts/p4-chaos
+          name: p4-chaos-${{ matrix.os }}
+          path: artifacts/p4-chaos/${{ matrix.os }}
           if-no-files-found: error
 
   phase6_performance_gates:
-    name: phase6_performance_gates
-    runs-on: ubuntu-latest
+    name: phase6_performance_gates (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -395,19 +473,27 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Run phase 6 performance gates
-        run: ./scripts/p6_perf_gate.sh --report-dir artifacts/p6-performance
+        shell: bash
+        run: ./scripts/p6_perf_gate.sh --report-dir artifacts/p6-performance/${{ matrix.os }}
 
       - name: Upload phase 6 performance artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: p6-performance
-          path: artifacts/p6-performance
+          name: p6-performance-${{ matrix.os }}
+          path: artifacts/p6-performance/${{ matrix.os }}
           if-no-files-found: error
 
   phase6_acceptance_matrix:
-    name: phase6_acceptance_matrix
-    runs-on: ubuntu-latest
+    name: phase6_acceptance_matrix (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -422,12 +508,13 @@ jobs:
         uses: taiki-e/install-action@cargo-deny
 
       - name: Run phase 6 acceptance matrix
-        run: ./scripts/p6_acceptance_matrix.sh --report-dir artifacts/p6-acceptance
+        shell: bash
+        run: ./scripts/p6_acceptance_matrix.sh --report-dir artifacts/p6-acceptance/${{ matrix.os }}
 
       - name: Upload phase 6 acceptance artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: p6-acceptance
-          path: artifacts/p6-acceptance
+          name: p6-acceptance-${{ matrix.os }}
+          path: artifacts/p6-acceptance/${{ matrix.os }}
           if-no-files-found: error

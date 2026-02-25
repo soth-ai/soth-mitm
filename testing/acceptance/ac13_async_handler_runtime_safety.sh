@@ -90,11 +90,11 @@ ac_run_case "$status_tsv" tls_process_info_plumb_gate \
 
 if [[ "$long_run" -eq 1 ]]; then
   ac_run_case_with_socket_permission_fallback "$status_tsv" runtime_soak_deadlock_guard "$strict_tools" \
-    /bin/zsh -lc "scripts/p5_runtime_soak.sh --report-dir $(printf '%q' "$report_dir/runtime_soak") --duration-seconds $(printf '%q' "$long_soak_seconds") --min-iterations $(printf '%q' "$long_soak_min_iterations") || { cat $(printf '%q' "$report_dir/runtime_soak/run.log"); exit 1; }" \
+    bash -lc "scripts/p5_runtime_soak.sh --report-dir $(printf '%q' "$report_dir/runtime_soak") --duration-seconds $(printf '%q' "$long_soak_seconds") --min-iterations $(printf '%q' "$long_soak_min_iterations") || { cat $(printf '%q' "$report_dir/runtime_soak/run.log"); exit 1; }" \
     || true
 else
   ac_run_case_with_socket_permission_fallback "$status_tsv" runtime_soak_deadlock_guard "$strict_tools" \
-    /bin/zsh -lc "scripts/p5_runtime_soak.sh --report-dir $(printf '%q' "$report_dir/runtime_soak") --duration-seconds $(printf '%q' "$smoke_soak_seconds") --min-iterations 1 || { cat $(printf '%q' "$report_dir/runtime_soak/run.log"); exit 1; }" \
+    bash -lc "scripts/p5_runtime_soak.sh --report-dir $(printf '%q' "$report_dir/runtime_soak") --duration-seconds $(printf '%q' "$smoke_soak_seconds") --min-iterations 1 || { cat $(printf '%q' "$report_dir/runtime_soak/run.log"); exit 1; }" \
     || true
 fi
 
