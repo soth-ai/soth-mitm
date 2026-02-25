@@ -7,7 +7,7 @@ rust-version.workspace = true
 
 [dependencies]
 bytes = "1"
-brotli = "6"
+brotli = "8"
 dashmap = { workspace = true }
 flate2 = "1"
 h2 = { workspace = true }
