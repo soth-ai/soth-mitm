@@ -20,7 +20,7 @@ fn h2_relay_debug_enabled() -> bool {
 
 fn h2_relay_debug(message: impl AsRef<str>) {
     if h2_relay_debug_enabled() {
-        eprintln!("{}", message.as_ref());
+        tracing::debug!("{}", message.as_ref());
     }
 }
 

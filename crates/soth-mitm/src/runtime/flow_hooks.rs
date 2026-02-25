@@ -325,9 +325,11 @@ async fn connection_meta_for_context(
             "connection {} missing ConnectionMeta in flow map",
             context.flow_id
         );
-        eprintln!(
-            "missing ConnectionMeta for flow_id={} host={} port={}",
-            context.flow_id, context.server_host, context.server_port
+        tracing::error!(
+            flow_id = context.flow_id,
+            host = %context.server_host,
+            port = context.server_port,
+            "missing ConnectionMeta in flow map"
         );
         return None;
     };

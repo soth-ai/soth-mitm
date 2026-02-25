@@ -83,7 +83,7 @@ where
                         .await
                         {
                             if !is_benign_socket_close_error(&error) {
-                                eprintln!("connection handling failed: {error}");
+                                tracing::warn!(error = %error, "connection handling failed");
                             }
                         }
                     });
@@ -140,7 +140,7 @@ where
                         .await
                         {
                             if !is_benign_socket_close_error(&error) {
-                                eprintln!("unix local-capture handling failed: {error}");
+                                tracing::warn!(error = %error, "unix local-capture handling failed");
                             }
                         }
                     });
