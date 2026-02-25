@@ -224,7 +224,11 @@ mod tests {
         shutdown_tx: tokio::sync::watch::Sender<bool>,
         join_handle: Option<tokio::task::JoinHandle<Result<(), MitmError>>>,
     ) -> MitmProxyHandle {
-        let config = MitmConfig::default();
+        let mut config = MitmConfig::default();
+        config
+            .interception
+            .destinations
+            .push("api.example.com:443".to_string());
         MitmProxyHandle {
             join_handle: Arc::new(Mutex::new(join_handle)),
             metrics_store: Arc::new(ProxyMetricsStore::default()),

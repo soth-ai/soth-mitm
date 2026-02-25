@@ -200,6 +200,16 @@ impl MitmConfig {
                 "connection_pool.max_connections_per_host must be greater than zero".to_string(),
             ));
         }
+        if self.connection_pool.idle_timeout_ms == 0 {
+            return Err(MitmError::InvalidConfig(
+                "connection_pool.idle_timeout_ms must be greater than zero".to_string(),
+            ));
+        }
+        if self.connection_pool.max_idle_per_host == 0 {
+            return Err(MitmError::InvalidConfig(
+                "connection_pool.max_idle_per_host must be greater than zero".to_string(),
+            ));
+        }
         Ok(())
     }
 }

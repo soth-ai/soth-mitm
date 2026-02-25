@@ -31,6 +31,7 @@ pub(crate) fn build_runtime_server<H: InterceptHandler>(
     handler: Arc<H>,
     metrics_store: Arc<ProxyMetricsStore>,
 ) -> Result<RuntimeServerBundle, MitmError> {
+    config.validate()?;
     let config_handle = RuntimeConfigHandle::from_config(config)?;
     let policy = config_handle.policy_engine();
     let sink = MetricsEventConsumer::new(Arc::clone(&metrics_store));
@@ -83,6 +84,7 @@ pub(crate) struct RuntimeConfigHandle {
 
 impl RuntimeConfigHandle {
     pub(crate) fn from_config(config: &MitmConfig) -> Result<Self, MitmError> {
+        config.validate()?;
         let policy_state = DestinationPolicyState::from_scope(&config.interception)?;
         Ok(Self {
             snapshot: Arc::new(RwLock::new(RuntimeConfigSnapshot {
@@ -191,13 +193,43 @@ fn validate_reload_contract(current: &MitmConfig, next: &MitmConfig) -> Result<(
     let mut allowed = current.clone();
     allowed.interception = next.interception.clone();
     if allowed == *next {
-        Ok(())
-    } else {
-        Err(MitmError::InvalidConfig(
-            "reload only supports interception scope updates; non-interception fields changed"
-                .to_string(),
-        ))
+        return Ok(());
     }
+
+    let mut changed_fields = Vec::new();
+    if current.bind != next.bind {
+        changed_fields.push("bind");
+    }
+    if current.unix_socket_path != next.unix_socket_path {
+        changed_fields.push("unix_socket_path");
+    }
+    if current.process_attribution != next.process_attribution {
+        changed_fields.push("process_attribution");
+    }
+    if current.tls != next.tls {
+        changed_fields.push("tls");
+    }
+    if current.upstream != next.upstream {
+        changed_fields.push("upstream");
+    }
+    if current.connection_pool != next.connection_pool {
+        changed_fields.push("connection_pool");
+    }
+    if current.body != next.body {
+        changed_fields.push("body");
+    }
+    if current.handler != next.handler {
+        changed_fields.push("handler");
+    }
+
+    let detail = if changed_fields.is_empty() {
+        "unknown non-interception delta".to_string()
+    } else {
+        changed_fields.join(", ")
+    };
+    Err(MitmError::InvalidConfig(format!(
+        "reload only supports interception scope updates; changed fields: {detail}"
+    )))
 }
 
 #[cfg(test)]
@@ -344,7 +376,20 @@ mod tests {
             .expect_err("non hot-reloadable field changes must fail reload");
         match error {
             crate::MitmError::InvalidConfig(message) => {
-                assert!(message.contains("non-interception fields changed"));
+                assert!(message.contains("changed fields: upstream"));
+            }
+            other => panic!("expected invalid config error, got {other}"),
+        }
+    }
+
+    #[test]
+    fn runtime_config_handle_rejects_invalid_initial_config() {
+        let config = MitmConfig::default();
+        let error = RuntimeConfigHandle::from_config(&config)
+            .expect_err("invalid config should be rejected at runtime handle creation");
+        match error {
+            crate::MitmError::InvalidConfig(message) => {
+                assert!(message.contains("interception.destinations"));
             }
             other => panic!("expected invalid config error, got {other}"),
         }
