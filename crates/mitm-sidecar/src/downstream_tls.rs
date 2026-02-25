@@ -11,6 +11,8 @@ use openssl::ssl::{AlpnError, Ssl, SslAcceptor, SslMethod, SslVerifyMode};
 use openssl::x509::X509;
 #[cfg(not(target_os = "windows"))]
 use tokio_openssl::SslStream as TokioOpenSslStream;
+#[cfg(target_os = "windows")]
+type TokioOpenSslStream<T> = T;
 use tokio_rustls::server::TlsStream as RustlsTlsStream;
 use tokio_rustls::TlsAcceptor;
 
@@ -21,7 +23,6 @@ pin_project_lite::pin_project! {
             #[pin]
             stream: RustlsTlsStream<TcpStream>,
         },
-        #[cfg(not(target_os = "windows"))]
         OpenSsl {
             #[pin]
             stream: TokioOpenSslStream<TcpStream>,
@@ -33,8 +34,17 @@ impl DownstreamTlsStream {
     pub(crate) fn negotiated_alpn(&self) -> Option<Vec<u8>> {
         match self {
             Self::Rustls { stream } => stream.get_ref().1.alpn_protocol().map(ToOwned::to_owned),
-            #[cfg(not(target_os = "windows"))]
-            Self::OpenSsl { stream } => stream.ssl().selected_alpn_protocol().map(ToOwned::to_owned),
+            Self::OpenSsl { stream } => {
+                #[cfg(not(target_os = "windows"))]
+                {
+                    stream.ssl().selected_alpn_protocol().map(ToOwned::to_owned)
+                }
+                #[cfg(target_os = "windows")]
+                {
+                    let _ = stream;
+                    None
+                }
+            }
         }
     }
 }
@@ -47,7 +57,6 @@ impl AsyncRead for DownstreamTlsStream {
     ) -> Poll<Result<(), io::Error>> {
         match self.project() {
             DownstreamTlsStreamProj::Rustls { stream } => stream.poll_read(cx, buf),
-            #[cfg(not(target_os = "windows"))]
             DownstreamTlsStreamProj::OpenSsl { stream } => stream.poll_read(cx, buf),
         }
     }
@@ -61,7 +70,6 @@ impl AsyncWrite for DownstreamTlsStream {
     ) -> Poll<Result<usize, io::Error>> {
         match self.project() {
             DownstreamTlsStreamProj::Rustls { stream } => stream.poll_write(cx, buf),
-            #[cfg(not(target_os = "windows"))]
             DownstreamTlsStreamProj::OpenSsl { stream } => stream.poll_write(cx, buf),
         }
     }
@@ -69,7 +77,6 @@ impl AsyncWrite for DownstreamTlsStream {
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), io::Error>> {
         match self.project() {
             DownstreamTlsStreamProj::Rustls { stream } => stream.poll_flush(cx),
-            #[cfg(not(target_os = "windows"))]
             DownstreamTlsStreamProj::OpenSsl { stream } => stream.poll_flush(cx),
         }
     }
@@ -77,7 +84,6 @@ impl AsyncWrite for DownstreamTlsStream {
     fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), io::Error>> {
         match self.project() {
             DownstreamTlsStreamProj::Rustls { stream } => stream.poll_shutdown(cx),
-            #[cfg(not(target_os = "windows"))]
             DownstreamTlsStreamProj::OpenSsl { stream } => stream.poll_shutdown(cx),
         }
     }
