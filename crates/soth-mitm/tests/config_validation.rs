@@ -41,3 +41,21 @@ fn accept_minimal_valid_configuration() {
 
     config.validate().expect("minimal config should validate");
 }
+
+#[test]
+fn reject_zero_body_size_limit() {
+    let mut config = MitmConfig::default();
+    config
+        .interception
+        .destinations
+        .push("api.example.com:443".to_string());
+    config.body.max_size_bytes = 0;
+
+    let error = config.validate().expect_err("zero body size limit must fail");
+    match error {
+        MitmError::InvalidConfig(detail) => {
+            assert!(detail.contains("body.max_size_bytes"));
+        }
+        other => panic!("unexpected error: {other}"),
+    }
+}

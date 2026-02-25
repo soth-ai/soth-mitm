@@ -181,7 +181,7 @@ impl PolicyEngine for DestinationPolicyEngine {
 mod tests {
     use mitm_policy::{FlowAction, PolicyEngine, PolicyInput};
 
-    use super::{DestinationPolicyEngine, RuntimeConfigHandle};
+    use super::{DestinationPolicyEngine, RuntimeConfigHandle, map_core_config};
     use crate::config::{InterceptionScope, MitmConfig};
 
     fn policy(scope: InterceptionScope) -> DestinationPolicyEngine {
@@ -276,5 +276,25 @@ mod tests {
             process_info: None,
         });
         assert_eq!(new_destination_after_reload.action, FlowAction::Intercept);
+    }
+
+    #[test]
+    fn body_size_limit_maps_to_core_runtime_budget() {
+        let mut config = MitmConfig::default();
+        config.body.max_size_bytes = 32 * 1024;
+        let core = map_core_config(&config);
+        assert_eq!(core.max_flow_body_buffer_bytes, 32 * 1024);
+    }
+
+    #[test]
+    fn decoder_budget_is_clamped_by_body_size_limit() {
+        let mut config = MitmConfig::default();
+        config.body.max_size_bytes = 256;
+        let core = map_core_config(&config);
+        assert_eq!(core.max_flow_body_buffer_bytes, 256);
+        assert!(
+            core.max_flow_decoder_buffer_bytes <= 256,
+            "decoder budget must be bounded by body size limit"
+        );
     }
 }

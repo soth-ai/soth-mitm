@@ -131,3 +131,83 @@ impl MitmProxyHandle {
         self.metrics_store.snapshot()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    use tokio::sync::Mutex;
+
+    use super::MitmProxyHandle;
+    use crate::config::MitmConfig;
+    use crate::errors::MitmError;
+    use crate::metrics::ProxyMetricsStore;
+    use crate::runtime::RuntimeConfigHandle;
+
+    fn build_handle(
+        join_handle: Option<tokio::task::JoinHandle<Result<(), MitmError>>>,
+    ) -> MitmProxyHandle {
+        let config = MitmConfig::default();
+        MitmProxyHandle {
+            join_handle: Arc::new(Mutex::new(join_handle)),
+            metrics_store: Arc::new(ProxyMetricsStore::default()),
+            runtime_config: RuntimeConfigHandle::from_config(&config)
+                .expect("runtime config handle must build"),
+            active_config: Arc::new(tokio::sync::RwLock::new(config)),
+        }
+    }
+
+    #[tokio::test]
+    async fn shutdown_noop_when_handle_already_consumed() {
+        let handle = build_handle(None);
+        handle
+            .shutdown(Duration::from_millis(10))
+            .await
+            .expect("shutdown should be a no-op when handle is empty");
+    }
+
+    #[tokio::test]
+    async fn shutdown_aborts_active_run_handle_within_timeout() {
+        let join_handle = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_secs(60)).await;
+            Ok(())
+        });
+        let handle = build_handle(Some(join_handle));
+        handle
+            .shutdown(Duration::from_millis(100))
+            .await
+            .expect("abort should cancel async run handle within timeout");
+    }
+
+    #[tokio::test]
+    async fn shutdown_returns_timeout_when_abort_cannot_preempt_blocking_task() {
+        let (started_tx, started_rx) = mpsc::channel();
+        let join_handle = tokio::task::spawn_blocking(move || {
+            let _ = started_tx.send(());
+            std::thread::sleep(Duration::from_millis(250));
+            Ok(())
+        });
+        started_rx
+            .recv_timeout(Duration::from_millis(100))
+            .expect("blocking task should start before shutdown");
+
+        let handle = build_handle(Some(join_handle));
+        let error = handle
+            .shutdown(Duration::from_millis(5))
+            .await
+            .expect_err("blocking task should force timeout path");
+        match error {
+            MitmError::Io(io_error) => {
+                assert_eq!(io_error.kind(), std::io::ErrorKind::TimedOut);
+                assert!(
+                    io_error
+                        .to_string()
+                        .contains("timed out waiting for proxy shutdown")
+                );
+            }
+            other => panic!("expected timeout IO error, got {other}"),
+        }
+    }
+}
