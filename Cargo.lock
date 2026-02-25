@@ -1192,7 +1192,7 @@ dependencies = [
  "proptest",
  "serde",
  "serde_json",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "tokio",
 ]
 
@@ -1982,7 +1982,7 @@ dependencies = [
  "parking_lot",
  "rcgen",
  "rustls-pemfile",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "tokio",
  "tokio-rustls",
  "tracing",
