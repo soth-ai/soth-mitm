@@ -232,6 +232,7 @@ where
     next_sequence_id: AtomicU64,
     flow_state_tracker: FlowStateTracker,
     process_started_at: Instant,
+    instance_id: u64,
     last_monotonic_ns: AtomicU64,
     recently_closed_flows: Mutex<VecDeque<u64>>,
 }
@@ -254,6 +255,7 @@ where
     }
 
     fn new_unchecked(config: MitmConfig, policy: P, sink: S) -> Self {
+        static NEXT_ENGINE_INSTANCE_ID: AtomicU64 = AtomicU64::new(1);
         Self {
             config,
             policy,
@@ -262,9 +264,14 @@ where
             next_sequence_id: AtomicU64::new(1),
             flow_state_tracker: FlowStateTracker::default(),
             process_started_at: Instant::now(),
+            instance_id: NEXT_ENGINE_INSTANCE_ID.fetch_add(1, Ordering::Relaxed),
             last_monotonic_ns: AtomicU64::new(0),
             recently_closed_flows: Mutex::new(VecDeque::new()),
         }
+    }
+
+    pub fn instance_id(&self) -> u64 {
+        self.instance_id
     }
 
     pub fn decide_connect(

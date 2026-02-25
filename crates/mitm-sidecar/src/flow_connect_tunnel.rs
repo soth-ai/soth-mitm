@@ -14,6 +14,7 @@ where
     S: EventConsumer + Send + Sync + 'static,
 {
     let close_context = unknown_context(flow_id, client_addr.clone());
+    let engine_instance_id = runtime.engine.instance_id();
     let flow_hooks = Arc::clone(&runtime.flow_hooks);
     let result = handle_client_inner(
         runtime,
@@ -25,7 +26,7 @@ where
         max_http_head_bytes,
     )
     .await;
-    clear_flow_policy_snapshot(flow_id);
+    clear_flow_policy_snapshot(engine_instance_id, flow_id);
     flow_hooks.on_stream_end(close_context).await;
     result
 }

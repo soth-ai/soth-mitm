@@ -8,10 +8,16 @@ struct FlowPolicySnapshot {
     override_state: mitm_policy::PolicyOverrideState,
 }
 
-static FLOW_POLICY_SNAPSHOTS: std::sync::OnceLock<DashMap<u64, FlowPolicySnapshot>> =
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct FlowPolicySnapshotKey {
+    engine_instance_id: u64,
+    flow_id: u64,
+}
+
+static FLOW_POLICY_SNAPSHOTS: std::sync::OnceLock<DashMap<FlowPolicySnapshotKey, FlowPolicySnapshot>> =
     std::sync::OnceLock::new();
 
-fn flow_policy_snapshots() -> &'static DashMap<u64, FlowPolicySnapshot> {
+fn flow_policy_snapshots() -> &'static DashMap<FlowPolicySnapshotKey, FlowPolicySnapshot> {
     FLOW_POLICY_SNAPSHOTS.get_or_init(DashMap::new)
 }
 
@@ -28,7 +34,11 @@ where
     P: PolicyEngine + Send + Sync + 'static,
     S: EventConsumer + Send + Sync + 'static,
 {
-    if let Some(snapshot) = flow_policy_snapshots().get(&flow_id) {
+    let snapshot_key = FlowPolicySnapshotKey {
+        engine_instance_id: engine.instance_id(),
+        flow_id,
+    };
+    if let Some(snapshot) = flow_policy_snapshots().get(&snapshot_key) {
         return snapshot.clone();
     }
     let outcome = engine.decide_connect(
@@ -45,10 +55,14 @@ where
         reason: outcome.reason,
         override_state: outcome.override_state,
     };
-    flow_policy_snapshots().insert(flow_id, snapshot.clone());
+    flow_policy_snapshots().insert(snapshot_key, snapshot.clone());
     snapshot
 }
 
-fn clear_flow_policy_snapshot(flow_id: u64) {
-    let _ = flow_policy_snapshots().remove(&flow_id);
+fn clear_flow_policy_snapshot(engine_instance_id: u64, flow_id: u64) {
+    let snapshot_key = FlowPolicySnapshotKey {
+        engine_instance_id,
+        flow_id,
+    };
+    let _ = flow_policy_snapshots().remove(&snapshot_key);
 }
