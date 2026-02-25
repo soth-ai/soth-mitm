@@ -59,7 +59,12 @@ fi
 
 for status_file in "${status_files[@]}"; do
   tail -n +2 "$status_file" | while IFS=$'\t' read -r lane protocol status log_path; do
+    lane="${lane%$'\r'}"
+    protocol="${protocol%$'\r'}"
+    status="${status%$'\r'}"
+    log_path="${log_path%$'\r'}"
     [[ -z "${lane:-}" ]] && continue
+    [[ -z "${protocol:-}" ]] && continue
     echo -e "${lane}\t${protocol}\t${status}\t${log_path}\t${status_file}" >>"$aggregate_file"
   done
 done

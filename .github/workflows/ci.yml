@@ -288,7 +288,9 @@ jobs:
         with:
           pattern: p2-protocol-*
           path: artifacts/p2-protocol
-          merge-multiple: true
+          # Keep each uploaded artifact in its own directory so status.tsv files
+          # do not overwrite each other during download.
+          merge-multiple: false
 
       - name: Build triage summary
         run: ./scripts/p2_protocol_triage.sh --input-root artifacts/p2-protocol --output-dir artifacts/p2-protocol/triage
