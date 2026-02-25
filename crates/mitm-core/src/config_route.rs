@@ -24,20 +24,11 @@ impl Default for RouteMode {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(default, deny_unknown_fields)]
 pub struct RouteEndpointConfig {
     pub host: String,
     pub port: u16,
-}
-
-impl Default for RouteEndpointConfig {
-    fn default() -> Self {
-        Self {
-            host: String::new(),
-            port: 0,
-        }
-    }
 }
 
 fn validate_route_endpoint(

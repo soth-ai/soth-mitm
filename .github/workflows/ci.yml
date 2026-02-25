@@ -69,8 +69,11 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all --check
 
-      - name: Lint
-        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Lint (default features smell scan)
+        run: cargo clippy --workspace --all-targets -- -W clippy::all
+
+      - name: Lint (all features smell scan)
+        run: cargo clippy --workspace --all-targets --all-features -- -W clippy::all
 
   compliance:
     runs-on: ubuntu-latest
@@ -88,8 +91,20 @@ jobs:
         if: runner.os != 'Windows'
         uses: taiki-e/install-action@cargo-deny
 
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@cargo-audit
+
+      - name: Install cargo-machete
+        uses: taiki-e/install-action@cargo-machete
+
       - name: Enforce dependency policy
         run: cargo deny check bans licenses sources
+
+      - name: Audit dependencies
+        run: cargo audit
+
+      - name: Check for unused dependencies
+        run: cargo machete
 
       - name: Enforce prohibition policy
         run: ./scripts/check_prohibitions.sh

@@ -1,4 +1,4 @@
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(default, deny_unknown_fields)]
 pub struct CompatibilityOverrideConfig {
     pub rule_id: String,
@@ -7,19 +7,6 @@ pub struct CompatibilityOverrideConfig {
     pub disable_h2: bool,
     pub strict_header_mode: bool,
     pub skip_upstream_verify: bool,
-}
-
-impl Default for CompatibilityOverrideConfig {
-    fn default() -> Self {
-        Self {
-            rule_id: String::new(),
-            host_pattern: String::new(),
-            force_tunnel: false,
-            disable_h2: false,
-            strict_header_mode: false,
-            skip_upstream_verify: false,
-        }
-    }
 }
 
 impl CompatibilityOverrideConfig {
