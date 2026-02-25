@@ -169,8 +169,11 @@ impl<H: InterceptHandler> FlowHooks for HandlerFlowHooks<H> {
                 body: request.body,
                 connection_meta,
             };
+            let handler = Arc::clone(&handler);
             let decision = callback_guard
-                .run_request(HandlerDecision::Allow, handler.on_request(&raw_request))
+                .run_request(HandlerDecision::Allow, async move {
+                    handler.on_request(&raw_request).await
+                })
                 .await;
             match decision {
                 HandlerDecision::Allow => RequestDecision::Allow,
@@ -267,11 +270,15 @@ impl<H: InterceptHandler> FlowHooks for HandlerFlowHooks<H> {
                     .await;
             }
             let connection_id = connection_id_for_flow_id(context.flow_id);
+            let handler_for_end = Arc::clone(&handler);
             callback_guard
-                .run_response((), handler.on_stream_end(connection_id))
+                .run_response((), async move {
+                    handler_for_end.on_stream_end(connection_id).await
+                })
                 .await;
+            let handler_for_close = Arc::clone(&handler);
             callback_guard.run_sync(Duration::ZERO, (), || {
-                handler.on_connection_close(connection_id)
+                handler_for_close.on_connection_close(connection_id)
             });
         })
     }

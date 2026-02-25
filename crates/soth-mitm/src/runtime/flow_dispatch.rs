@@ -96,13 +96,15 @@ fn spawn_flow_dispatch_worker<H: InterceptHandler>(
         while let Some(work) = receiver.recv().await {
             match work {
                 DispatchWork::Response(response) => {
+                    let handler = Arc::clone(&handler);
                     callback_guard
-                        .run_response((), handler.on_response(&response))
+                        .run_response((), async move { handler.on_response(&response).await })
                         .await;
                 }
                 DispatchWork::StreamChunk(chunk) => {
+                    let handler = Arc::clone(&handler);
                     callback_guard
-                        .run_response((), handler.on_stream_chunk(&chunk))
+                        .run_response((), async move { handler.on_stream_chunk(&chunk).await })
                         .await;
                 }
             }

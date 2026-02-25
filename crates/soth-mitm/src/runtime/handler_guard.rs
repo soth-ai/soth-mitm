@@ -3,8 +3,6 @@ use std::panic::{catch_unwind, resume_unwind, AssertUnwindSafe};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use futures::FutureExt;
-
 use crate::metrics::ProxyMetricsStore;
 
 #[derive(Debug)]
@@ -56,7 +54,8 @@ impl HandlerCallbackGuard {
 
     pub(crate) async fn run_request<R, Fut>(&self, default_value: R, future: Fut) -> R
     where
-        Fut: Future<Output = R> + Send,
+        R: Send + 'static,
+        Fut: Future<Output = R> + Send + 'static,
     {
         self.run_async_with_timeout(self.request_timeout, default_value, future)
             .await
@@ -64,7 +63,8 @@ impl HandlerCallbackGuard {
 
     pub(crate) async fn run_response<R, Fut>(&self, default_value: R, future: Fut) -> R
     where
-        Fut: Future<Output = R> + Send,
+        R: Send + 'static,
+        Fut: Future<Output = R> + Send + 'static,
     {
         self.run_async_with_timeout(self.response_timeout, default_value, future)
             .await
@@ -77,20 +77,24 @@ impl HandlerCallbackGuard {
         future: Fut,
     ) -> R
     where
-        Fut: Future<Output = R> + Send,
+        R: Send + 'static,
+        Fut: Future<Output = R> + Send + 'static,
     {
-        let guarded = AssertUnwindSafe(future).catch_unwind();
-        match tokio::time::timeout(timeout, guarded).await {
+        let mut task = tokio::spawn(future);
+        match tokio::time::timeout(timeout, &mut task).await {
             Ok(Ok(value)) => value,
-            Ok(Err(payload)) => {
+            Ok(Err(join_error)) if join_error.is_panic() => {
                 self.metrics_store.record_handler_panic();
                 if self.recover_from_panics {
                     default_value
                 } else {
-                    resume_unwind(payload);
+                    resume_unwind(join_error.into_panic());
                 }
             }
+            Ok(Err(_join_error)) => default_value,
             Err(_) => {
+                task.abort();
+                let _ = task.await;
                 self.metrics_store.record_handler_timeout();
                 default_value
             }
