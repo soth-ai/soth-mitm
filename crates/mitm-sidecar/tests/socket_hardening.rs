@@ -23,6 +23,7 @@ fn sidecar_config_for_addr(listen_addr: &str) -> SidecarConfig {
         max_http_head_bytes: 64 * 1024,
         idle_watchdog_timeout: Duration::from_secs(5),
         stream_stage_timeout: Duration::from_secs(5),
+        unix_socket_path: None,
     }
 }
 

@@ -205,6 +205,7 @@ async fn run_sidecar(status_emitter: &StatusEmitter) -> RunOutcome {
         max_http_head_bytes: mitm_config.max_http_head_bytes,
         idle_watchdog_timeout: std::time::Duration::from_secs(30),
         stream_stage_timeout: std::time::Duration::from_secs(15),
+        unix_socket_path: None,
     };
 
     status_emitter.emit(StatusRecord::new(

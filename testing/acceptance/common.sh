@@ -21,6 +21,55 @@ ac_run_case() {
   fi
 }
 
+ac_run_with_preferred_bench_linker() {
+  local mode="${MITM_BENCH_LINKER_MODE:-auto}"
+  if [[ "$mode" == "off" ]]; then
+    "$@"
+    return 0
+  fi
+
+  local rust_lld=""
+  if command -v rustc >/dev/null 2>&1; then
+    local rustc_sysroot
+    local rustc_host
+    rustc_sysroot="$(rustc --print sysroot 2>/dev/null || true)"
+    rustc_host="$(rustc -vV 2>/dev/null | awk '/^host:/ {print $2}')"
+    if [[ -n "$rustc_sysroot" && -n "$rustc_host" ]]; then
+      rust_lld="${rustc_sysroot}/lib/rustlib/${rustc_host}/bin/gcc-ld/ld.lld"
+    fi
+  fi
+
+  local use_lld=0
+  if [[ "$mode" == "lld" ]]; then
+    use_lld=1
+  elif [[ "$mode" == "auto" && "$(uname -s)" == "Linux" ]]; then
+    if [[ -x "$rust_lld" ]] || command -v ld.lld >/dev/null 2>&1; then
+      use_lld=1
+    fi
+  fi
+
+  if [[ "$use_lld" -eq 1 ]] && command -v clang >/dev/null 2>&1; then
+    local linker_arg="-fuse-ld=lld"
+    if [[ -x "$rust_lld" ]]; then
+      linker_arg="-fuse-ld=${rust_lld}"
+    elif ! command -v ld.lld >/dev/null 2>&1; then
+      "$@"
+      return $?
+    fi
+
+    local rustflags="${RUSTFLAGS:-}"
+    if [[ "$rustflags" != *"${linker_arg}"* ]]; then
+      if [[ -n "$rustflags" ]]; then
+        rustflags="${rustflags} "
+      fi
+      rustflags="${rustflags}-C linker=clang -C link-arg=${linker_arg}"
+    fi
+    env RUSTFLAGS="$rustflags" "$@"
+  else
+    "$@"
+  fi
+}
+
 ac_require_tools() {
   local status_tsv="$1"
   local check="$2"

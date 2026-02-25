@@ -1,7 +1,3 @@
-use std::io;
-use std::sync::Arc;
-use std::time::Duration;
-
 use mitm_core::{
     parse_connect_request_head_with_mode, ConnectParseError,
     DownstreamCertProfile as CoreDownstreamCertProfile, MitmEngine, TlsProfile as CoreTlsProfile,
@@ -16,15 +12,21 @@ use mitm_tls::{
     MitmCertificateStore, TlsConfigError, UpstreamTlsProfile as TlsUpstreamTlsProfile,
     UpstreamTlsSniMode as TlsUpstreamTlsSniMode,
 };
+use std::io;
+use std::sync::Arc;
+use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_rustls::TlsConnector;
-
+mod flow_hooks;
 mod mitmproxy_tls_ops;
 mod runtime_governor;
 mod tls_diagnostics;
 mod tls_learning;
-
+pub use flow_hooks::{
+    FlowHooks, NoopFlowHooks, RawRequest, RawResponse, RequestDecision, StreamChunk,
+    StreamFrameKind,
+};
 pub use mitmproxy_tls_ops::{
     adapt_mitmproxy_tls_callback, MitmproxyTlsAdapterEvent, MitmproxyTlsCallback,
     MitmproxyTlsFailure, MitmproxyTlsHook,
@@ -37,11 +39,9 @@ pub use tls_learning::{
     TlsLearningDecision, TlsLearningGuardrails, TlsLearningHostSnapshot, TlsLearningOutcome,
     TlsLearningSignal, TlsLearningSnapshot,
 };
-
 const IO_CHUNK_SIZE: usize = 8 * 1024;
 const CHUNK_LINE_LIMIT: usize = 8 * 1024;
 const TLS_OPS_PROVIDER: &str = "rustls";
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SidecarConfig {
     pub listen_addr: String,
@@ -50,6 +50,7 @@ pub struct SidecarConfig {
     pub max_http_head_bytes: usize,
     pub idle_watchdog_timeout: Duration,
     pub stream_stage_timeout: Duration,
+    pub unix_socket_path: Option<String>,
 }
 
 impl Default for SidecarConfig {
@@ -61,6 +62,7 @@ impl Default for SidecarConfig {
             max_http_head_bytes: 64 * 1024,
             idle_watchdog_timeout: Duration::from_secs(30),
             stream_stage_timeout: Duration::from_secs(15),
+            unix_socket_path: None,
         }
     }
 }
@@ -76,6 +78,7 @@ where
     runtime_governor: Arc<runtime_governor::RuntimeGovernor>,
     tls_diagnostics: Arc<TlsDiagnostics>,
     tls_learning: Arc<TlsLearningGuardrails>,
+    flow_hooks: Arc<dyn FlowHooks>,
 }
 
 #[derive(Clone)]
@@ -89,6 +92,7 @@ where
     runtime_governor: Arc<runtime_governor::RuntimeGovernor>,
     tls_diagnostics: Arc<TlsDiagnostics>,
     tls_learning: Arc<TlsLearningGuardrails>,
+    flow_hooks: Arc<dyn FlowHooks>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -162,6 +166,14 @@ where
     S: EventConsumer + Send + Sync + 'static,
 {
     pub fn new(config: SidecarConfig, engine: MitmEngine<P, S>) -> io::Result<Self> {
+        Self::new_with_flow_hooks(config, engine, Arc::new(NoopFlowHooks))
+    }
+
+    pub fn new_with_flow_hooks(
+        config: SidecarConfig,
+        engine: MitmEngine<P, S>,
+        flow_hooks: Arc<dyn FlowHooks>,
+    ) -> io::Result<Self> {
         let ca_config = CertificateAuthorityConfig {
             ca_cert_pem_path: engine.config.ca_cert_pem_path.clone(),
             ca_key_pem_path: engine.config.ca_key_pem_path.clone(),
@@ -193,6 +205,7 @@ where
             runtime_governor,
             tls_diagnostics,
             tls_learning,
+            flow_hooks,
         })
     }
 
@@ -311,7 +324,14 @@ where
 
     pub async fn run(self) -> io::Result<()> {
         let listener = self.bind_listener().await?;
-        self.run_with_listener(listener).await
+        #[cfg(unix)]
+        {
+            return self.run_with_optional_unix_listener(listener).await;
+        }
+        #[cfg(not(unix))]
+        {
+            self.run_with_listener(listener).await
+        }
     }
 
     pub async fn bind_listener(&self) -> io::Result<TcpListener> {
@@ -340,15 +360,29 @@ where
                 runtime_governor: Arc::clone(&self.runtime_governor),
                 tls_diagnostics: Arc::clone(&self.tls_diagnostics),
                 tls_learning: Arc::clone(&self.tls_learning),
+                flow_hooks: Arc::clone(&self.flow_hooks),
             };
             let max_connect_head_bytes = self.config.max_connect_head_bytes;
             let max_http_head_bytes = self.config.max_http_head_bytes;
+            let client_addr = client_addr.to_string();
             tokio::spawn(async move {
                 let _flow_guard = runtime.runtime_governor.begin_flow(flow_permit);
+                let flow_id = runtime.engine.allocate_flow_id();
+                let accept_context = unknown_context(flow_id, client_addr.clone());
+                let process_info = runtime
+                    .flow_hooks
+                    .resolve_process_info(accept_context.clone())
+                    .await;
+                runtime
+                    .flow_hooks
+                    .on_connection_open(accept_context, process_info.clone())
+                    .await;
                 if let Err(error) = handle_client(
                     runtime,
                     stream,
-                    client_addr.to_string(),
+                    client_addr,
+                    flow_id,
+                    process_info,
                     max_connect_head_bytes,
                     max_http_head_bytes,
                 )
@@ -363,25 +397,4 @@ where
     }
 }
 
-include!("flow_connect_tunnel.rs");
-include!("close_codes.rs");
-include!("downstream_tls.rs");
-include!("io_timeouts.rs");
-include!("tls_profile_mapping.rs");
-include!("route_planner.rs");
-include!("flow_intercept.rs");
-include!("flow_intercept_http1.rs");
-include!("http2_relay_support.rs");
-include!("http2_stream_relay.rs");
-include!("websocket_relay.rs");
-include!("websocket_relay_support.rs");
-include!("websocket_turn_tracker.rs");
-include!("websocket_events.rs");
-include!("http_head_parser.rs");
-include!("http_head_parser_smuggling.rs");
-include!("http_head_parser_api.rs");
-include!("http_body_relay.rs");
-include!("event_emitters.rs");
-include!("event_emitters_protocol.rs");
-include!("sse_stream_observer.rs");
-include!("socket_hardening.rs");
+include!("module_includes.rs");

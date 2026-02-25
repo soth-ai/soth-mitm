@@ -43,7 +43,6 @@ required_protocols=(
   sse
   http3_passthrough
   grpc_http2
-  msgpack
 )
 
 echo -e "lane\tprotocol\tstatus\tlog_path\tsource_status_file" >"$aggregate_file"

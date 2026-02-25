@@ -50,13 +50,6 @@ doc = false
 bench = false
 
 [[bin]]
-name = "msgpack_decoder"
-path = "fuzz_targets/msgpack_decoder.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
 name = "decoder_layering_interactions"
 path = "fuzz_targets/decoder_layering_interactions.rs"
 test = false

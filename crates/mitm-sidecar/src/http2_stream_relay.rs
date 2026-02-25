@@ -6,7 +6,6 @@ const H2_INITIAL_WINDOW_SIZE: u32 = 65_535;
 const H2_INITIAL_CONNECTION_WINDOW_SIZE: u32 = 262_144;
 const H2_MAX_SEND_BUFFER_SIZE: usize = 128 * 1024;
 const H2_FORWARD_CHUNK_LIMIT: usize = 16 * 1024;
-const H2_END_STREAM_DRAIN_TIMEOUT: Duration = Duration::from_millis(250);
 const H2_TRAILERS_WAIT_TIMEOUT: Duration = Duration::from_secs(2);
 static H2_RELAY_DEBUG_ENABLED: OnceLock<bool> = OnceLock::new();
 
@@ -34,6 +33,7 @@ struct H2ByteCounters {
 async fn relay_http2_connection<P, S, D, U>(
     engine: Arc<MitmEngine<P, S>>,
     runtime_governor: Arc<runtime_governor::RuntimeGovernor>,
+    flow_hooks: Arc<dyn FlowHooks>,
     tunnel_context: FlowContext,
     downstream_tls: D,
     upstream_tls: U,
@@ -105,10 +105,12 @@ where
                 let stream_context = http2_context.clone();
                 let stream_upstream_sender = upstream_sender.clone();
                 let stream_byte_counters = byte_counters.clone();
+                let stream_flow_hooks = Arc::clone(&flow_hooks);
                 stream_tasks.spawn(async move {
                     relay_http2_stream(
                         stream_engine,
                         stream_runtime_governor,
+                        stream_flow_hooks,
                         stream_context,
                         stream_upstream_sender,
                         request,
@@ -192,182 +194,6 @@ where
             Some(bytes_from_client),
             Some(bytes_from_server),
         );
-    }
-
-    Ok(())
-}
-
-async fn relay_http2_stream<P, S>(
-    engine: Arc<MitmEngine<P, S>>,
-    runtime_governor: Arc<runtime_governor::RuntimeGovernor>,
-    stream_context: FlowContext,
-    upstream_sender: h2::client::SendRequest<bytes::Bytes>,
-    downstream_request: http::Request<h2::RecvStream>,
-    mut downstream_respond: h2::server::SendResponse<bytes::Bytes>,
-    max_header_list_size: u32,
-    byte_counters: H2ByteCounters,
-) -> io::Result<()>
-where
-    P: PolicyEngine + Send + Sync + 'static,
-    S: EventConsumer + Send + Sync + 'static,
-{
-    let (mut request_parts, mut downstream_request_body) = downstream_request.into_parts();
-    if let Err(error) = enforce_h2_request_header_limit(&request_parts, max_header_list_size) {
-        h2_relay_debug(format!(
-            "[h2-relay:request] request header limit exceeded; resetting stream: {error}"
-        ));
-        downstream_respond.send_reset(h2::Reason::PROTOCOL_ERROR);
-        return Ok(());
-    }
-
-    let grpc_observation = detect_grpc_request(&request_parts);
-    if let Some(observation) = grpc_observation.as_ref() {
-        emit_grpc_request_headers_event(
-            &engine,
-            stream_context.clone(),
-            observation,
-            &request_parts.headers,
-        );
-    }
-
-    request_parts.version = http::Version::HTTP_2;
-    let upstream_request = http::Request::from_parts(request_parts, ());
-    let request_end_stream = downstream_request_body.is_end_stream();
-
-    let mut ready_upstream_sender = match upstream_sender.ready().await {
-        Ok(sender) => sender,
-        Err(error) => {
-            if is_h2_nonfatal_stream_error(&error) {
-                downstream_respond.send_reset(h2_reason_for_downstream_reset(&error));
-                return Ok(());
-            }
-            return Err(h2_error_to_io("upstream HTTP/2 sender not ready", error));
-        }
-    };
-    let (upstream_response_future, mut upstream_request_stream) =
-        match ready_upstream_sender.send_request(upstream_request, request_end_stream) {
-            Ok(parts) => parts,
-            Err(error) => {
-                if is_h2_nonfatal_stream_error(&error) {
-                    downstream_respond.send_reset(h2_reason_for_downstream_reset(&error));
-                    return Ok(());
-                }
-                return Err(h2_error_to_io("forwarding HTTP/2 request failed", error));
-            }
-        };
-
-    if !request_end_stream {
-        let request_outcome = match with_stream_stage_timeout(
-            "http2_request_body_relay",
-            relay_h2_body(
-                &mut downstream_request_body,
-                &mut upstream_request_stream,
-                &runtime_governor,
-                "request",
-            ),
-        )
-        .await
-        {
-            Ok(outcome) => outcome,
-            Err(error) => {
-                if is_benign_h2_stream_io_error(&error) {
-                    upstream_request_stream.send_reset(h2::Reason::CANCEL);
-                    downstream_respond.send_reset(h2::Reason::CANCEL);
-                    return Ok(());
-                }
-                return Err(error);
-            }
-        };
-        byte_counters
-            .request_bytes
-            .fetch_add(request_outcome.bytes_forwarded, Ordering::Relaxed);
-    }
-
-    let upstream_response_result = with_stream_stage_timeout(
-        "http2_upstream_response_headers",
-        async { Ok(upstream_response_future.await) },
-    )
-    .await?;
-    let upstream_response = match upstream_response_result {
-        Ok(response) => response,
-        Err(error) => {
-            if is_h2_nonfatal_stream_error(&error) {
-                downstream_respond.send_reset(h2_reason_for_downstream_reset(&error));
-                return Ok(());
-            }
-            return Err(h2_error_to_io(
-                "awaiting upstream HTTP/2 response failed",
-                error,
-            ));
-        }
-    };
-    let (response_parts, mut upstream_response_body) = upstream_response.into_parts();
-    if enforce_h2_response_header_limit(&response_parts, max_header_list_size).is_err() {
-        h2_relay_debug("[h2-relay:response] response header limit exceeded; resetting stream");
-        downstream_respond.send_reset(h2::Reason::PROTOCOL_ERROR);
-        return Ok(());
-    }
-
-    if let Some(observation) = grpc_observation.as_ref() {
-        emit_grpc_response_headers_event(
-            &engine,
-            stream_context.clone(),
-            observation,
-            &response_parts,
-        );
-    }
-
-    let response_end_stream = upstream_response_body.is_end_stream();
-    let downstream_response = http::Response::from_parts(response_parts, ());
-    let mut downstream_response_stream =
-        match downstream_respond.send_response(downstream_response, response_end_stream) {
-            Ok(stream) => stream,
-            Err(error) => {
-                if is_h2_nonfatal_stream_error(&error) {
-                    return Ok(());
-                }
-                return Err(h2_error_to_io(
-                    "sending downstream HTTP/2 response headers failed",
-                    error,
-                ));
-            }
-        };
-
-    if !response_end_stream {
-        let response_outcome = match with_stream_stage_timeout(
-            "http2_response_body_relay",
-            relay_h2_body(
-                &mut upstream_response_body,
-                &mut downstream_response_stream,
-                &runtime_governor,
-                "response",
-            ),
-        )
-        .await
-        {
-            Ok(outcome) => outcome,
-            Err(error) => {
-                if is_benign_h2_stream_io_error(&error) {
-                    downstream_response_stream.send_reset(h2::Reason::CANCEL);
-                    return Ok(());
-                }
-                return Err(error);
-            }
-        };
-        byte_counters
-            .response_bytes
-            .fetch_add(response_outcome.bytes_forwarded, Ordering::Relaxed);
-        if let (Some(observation), Some(trailers)) = (
-            grpc_observation.as_ref(),
-            response_outcome.trailers.as_ref(),
-        ) {
-            emit_grpc_response_trailers_event(
-                &engine,
-                stream_context.clone(),
-                observation,
-                trailers,
-            );
-        }
     }
 
     Ok(())

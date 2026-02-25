@@ -7,6 +7,8 @@ rust-version.workspace = true
 
 [dependencies]
 bytes = "1"
+brotli = "6"
+flate2 = "1"
 h2 = { workspace = true }
 http = "1"
 mitm-core = { path = "../mitm-core", version = "0.1.0" }
@@ -21,5 +23,6 @@ serde_json = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
 tokio-openssl = "0.6"
 tokio-rustls = { workspace = true }
+zstd = "0.13"
 
 [dev-dependencies]

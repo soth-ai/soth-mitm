@@ -8,8 +8,8 @@ use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use soth_mitm::{
-    generate_ca, ConnectionInfo, HandlerAction, InterceptHandler, InterceptedRequest, MitmConfig,
-    MitmProxyBuilder, MitmProxyHandle,
+    generate_ca, HandlerDecision, InterceptHandler, MitmConfig, MitmProxyBuilder, MitmProxyHandle,
+    RawRequest,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -48,12 +48,8 @@ struct BenchResult {
 struct ForwardHandler;
 
 impl InterceptHandler for ForwardHandler {
-    async fn on_request(
-        &self,
-        _request: &InterceptedRequest,
-        _connection: &ConnectionInfo,
-    ) -> HandlerAction {
-        HandlerAction::Forward
+    fn on_request(&self, _request: &RawRequest) -> HandlerDecision {
+        HandlerDecision::Allow
     }
 }
 

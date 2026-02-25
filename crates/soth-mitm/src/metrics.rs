@@ -54,17 +54,6 @@ impl ProxyMetricsStore {
     pub(crate) fn record_handler_timeout(&self) {
         self.handler_timeout_count.fetch_add(1, Ordering::Relaxed);
     }
-
-    #[allow(dead_code)]
-    pub(crate) fn record_upstream_connect_error(&self) {
-        self.upstream_connect_error_count
-            .fetch_add(1, Ordering::Relaxed);
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn record_upstream_timeout(&self) {
-        self.upstream_timeout_count.fetch_add(1, Ordering::Relaxed);
-    }
 }
 
 #[derive(Debug)]
@@ -101,15 +90,13 @@ mod tests {
         store.record_connection_close();
         store.record_handler_timeout();
         store.record_handler_panic();
-        store.record_upstream_connect_error();
-        store.record_upstream_timeout();
 
         let snapshot = store.snapshot();
         assert_eq!(snapshot.total_connections, 2);
         assert_eq!(snapshot.active_connections, 1);
         assert_eq!(snapshot.handler_timeout_count, 1);
         assert_eq!(snapshot.handler_panic_count, 1);
-        assert_eq!(snapshot.upstream_connect_error_count, 1);
-        assert_eq!(snapshot.upstream_timeout_count, 1);
+        assert_eq!(snapshot.upstream_connect_error_count, 0);
+        assert_eq!(snapshot.upstream_timeout_count, 0);
     }
 }

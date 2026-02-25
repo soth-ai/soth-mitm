@@ -38,9 +38,10 @@ summary_md="$report_dir/summary.md"
 outcome_tsv="$report_dir/outcome.tsv"
 printf 'check\tstatus\tdetail\n' >"$status_tsv"
 
-ac_run_case "$status_tsv" sse_dispatch_budget_contract \
+ac_run_case "$status_tsv" sse_first_chunk_budget_contract \
   cargo test -p soth-mitm sse_first_chunk_delta_budget -q || true
 ac_run_case "$status_tsv" sse_first_chunk_benchmark \
+  ac_run_with_preferred_bench_linker \
   cargo bench -p soth-mitm --bench sse_first_chunk -- \
     --iterations "$iterations" \
     --warmup "$warmup" \

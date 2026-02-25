@@ -9,7 +9,7 @@ source testing/acceptance/common.sh
 report_dir="artifacts/p6-acceptance/ac11"
 strict_tools=0
 audit_report="${P6_AC11_AUDIT_REPORT:-}"
-enable_live_trace="${P6_AC11_ENABLE_LIVE_TRACE:-0}"
+enable_live_trace="${P6_AC11_ENABLE_LIVE_TRACE:-1}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -41,28 +41,16 @@ if [[ "$(uname -s)" == "Linux" ]]; then
   if command -v strace >/dev/null 2>&1; then
     ac_record_status "$status_tsv" syscall_trace_tool pass strace
   else
-    if [[ "$strict_tools" -eq 1 ]]; then
-      ac_record_status "$status_tsv" syscall_trace_tool fail missing_tools:strace
-    else
-      ac_record_status "$status_tsv" syscall_trace_tool pass trace_tool_optional_missing:strace
-    fi
+    ac_record_status "$status_tsv" syscall_trace_tool fail missing_tools:strace
   fi
 elif [[ "$(uname -s)" == "Darwin" ]]; then
   if command -v dtruss >/dev/null 2>&1; then
     ac_record_status "$status_tsv" syscall_trace_tool pass dtruss
   else
-    if [[ "$strict_tools" -eq 1 ]]; then
-      ac_record_status "$status_tsv" syscall_trace_tool fail missing_tools:dtruss
-    else
-      ac_record_status "$status_tsv" syscall_trace_tool pass trace_tool_optional_missing:dtruss
-    fi
+    ac_record_status "$status_tsv" syscall_trace_tool fail missing_tools:dtruss
   fi
 else
-  if [[ "$strict_tools" -eq 1 ]]; then
-    ac_record_status "$status_tsv" syscall_trace_tool fail unsupported_platform
-  else
-    ac_record_status "$status_tsv" syscall_trace_tool pass unsupported_platform
-  fi
+  ac_record_status "$status_tsv" syscall_trace_tool fail unsupported_platform
 fi
 
 generated_audit_report="$report_dir/audit_report.generated.txt"
@@ -100,16 +88,12 @@ if [[ "$enable_live_trace" == "1" ]]; then
       ac_record_status "$status_tsv" live_trace_capture fail command_failed
     fi
   elif [[ "$(uname -s)" == "Darwin" ]] && command -v dtruss >/dev/null 2>&1; then
-    ac_record_status "$status_tsv" live_trace_capture pass dtruss_available_manual_capture_path
+    ac_record_status "$status_tsv" live_trace_capture fail dtruss_capture_not_automated
   else
-    if [[ "$strict_tools" -eq 1 ]]; then
-      ac_record_status "$status_tsv" live_trace_capture fail trace_tool_unavailable
-    else
-      ac_record_status "$status_tsv" live_trace_capture pass trace_tool_optional_unavailable
-    fi
+    ac_record_status "$status_tsv" live_trace_capture fail trace_tool_unavailable
   fi
 else
-  ac_record_status "$status_tsv" live_trace_capture pass disabled_by_config
+  ac_record_status "$status_tsv" live_trace_capture fail disabled_by_config
 fi
 
 config_md=$'- strict_tools: '"${strict_tools}"$'\n- audit_report: '"${audit_report:-unset}"$'\n- enable_live_trace: '"${enable_live_trace}"$'\n- AC-11 static boundary audit is generated automatically; optional external report overrides it when provided.'

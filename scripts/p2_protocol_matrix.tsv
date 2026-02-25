@@ -4,4 +4,3 @@ websocket	websocket	cargo test -p mitm-sidecar --test websocket_mitm
 sse	sse	cargo test -p mitm-sidecar --test sse_mitm
 http3_passthrough	http3_passthrough	cargo test -p mitm-sidecar --test http3_passthrough_mitm
 grpc_http2	grpc_http2	cargo test -p mitm-sidecar --test grpc_http2_mitm
-msgpack	msgpack	cargo test -p mitm-http --test msgpack

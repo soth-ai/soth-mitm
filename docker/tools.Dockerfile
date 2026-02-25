@@ -15,13 +15,20 @@ RUN apt-get update \
         iproute2 \
         iputils-ping \
         jq \
+        lld \
         libssl-dev \
         llvm \
         nghttp2-client \
+        nghttp2-proxy \
+        nghttp2-server \
         openssl \
         pkg-config \
         python3 \
         python3-pip \
+        ripgrep \
+        strace \
+        time \
+        valgrind \
         wrk \
     && rm -rf /var/lib/apt/lists/*
 
@@ -52,7 +59,10 @@ RUN go install github.com/summerwind/h2spec/cmd/h2spec@latest \
     && mv /usr/local/bin/server /usr/local/bin/toxiproxy-server
 
 RUN cargo install cargo-fuzz --locked \
+    && cargo install cargo-deny --locked \
     && cargo install websocat --locked
+
+RUN rustup toolchain install nightly --profile minimal
 
 RUN pip3 install --no-cache-dir --break-system-packages autobahntestsuite
 RUN pip3 install --no-cache-dir --break-system-packages websocket-client

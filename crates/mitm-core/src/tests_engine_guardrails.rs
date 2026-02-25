@@ -107,10 +107,13 @@ fn known_pinning_hosts_can_be_forced_to_tunnel_via_ignore_hosts() {
         DefaultPolicyEngine::new(config.ignore_hosts.clone(), config.blocked_hosts.clone());
     let engine = MitmEngine::new(config, policy, sink);
 
+    let flow_id = engine.allocate_flow_id();
     let outcome = engine.decide_connect(
+        flow_id,
         "127.0.0.1:40400".to_string(),
         "api.openai.com".to_string(),
         443,
+        None,
         None,
     );
     assert_eq!(outcome.action, FlowAction::Tunnel);
@@ -134,10 +137,13 @@ fn compatibility_override_decision_emits_provenance_fields() {
     let policy = DefaultPolicyEngine::new(vec![], vec![]);
     let engine = MitmEngine::new(config, policy, sink.clone());
 
+    let flow_id = engine.allocate_flow_id();
     let outcome = engine.decide_connect(
+        flow_id,
         "127.0.0.1:40500".to_string(),
         "api.openai.com".to_string(),
         443,
+        None,
         None,
     );
     assert_eq!(outcome.action, FlowAction::Tunnel);

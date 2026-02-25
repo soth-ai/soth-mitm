@@ -5,14 +5,6 @@ trait HttpBodyObserver: Send {
     }
 }
 
-struct NoopHttpBodyObserver;
-
-impl HttpBodyObserver for NoopHttpBodyObserver {
-    fn on_chunk(&mut self, _chunk: &[u8]) -> io::Result<()> {
-        Ok(())
-    }
-}
-
 #[allow(clippy::too_many_arguments)]
 async fn relay_http_body<RS, WS, P, S>(
     engine: &Arc<MitmEngine<P, S>>,

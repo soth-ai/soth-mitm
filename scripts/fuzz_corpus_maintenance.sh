@@ -36,7 +36,6 @@ fuzz_targets=(
   http_header_parsing
   grpc_framing
   sse_parser
-  msgpack_decoder
   decoder_layering_interactions
 )
 

@@ -39,6 +39,7 @@ forbidden_telemetry_deps = [
 [dependencies]
 bytes = "1"
 http = "1"
+lru = "0.12"
 mitm-core = { path = "../mitm-core", version = "0.1.0" }
 mitm-http = { path = "../mitm-http", version = "0.1.0" }
 mitm-observe = { path = "../mitm-observe", version = "0.1.0" }

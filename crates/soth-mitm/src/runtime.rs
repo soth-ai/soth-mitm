@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use mitm_core::{MitmConfig as CoreMitmConfig, MitmEngine};
 use mitm_policy::{FlowAction, PolicyDecision, PolicyEngine, PolicyInput, PolicyOverrideState};
-use mitm_sidecar::{SidecarConfig, SidecarServer};
+use mitm_sidecar::{FlowHooks, SidecarConfig, SidecarServer};
 
 use crate::config::{InterceptionScope, MitmConfig};
 use crate::destination::{canonical_destination_key, normalize_destination_key};
@@ -12,15 +12,8 @@ use crate::errors::MitmError;
 use crate::handler::InterceptHandler;
 use crate::metrics::{MetricsEventConsumer, ProxyMetricsStore};
 
-#[allow(dead_code)]
-#[path = "runtime/fsm.rs"]
-pub(crate) mod fsm;
-#[allow(dead_code)]
-#[path = "runtime/http2_resilience.rs"]
-pub(crate) mod http2_resilience;
-#[allow(dead_code)]
-#[path = "runtime/timeouts.rs"]
-pub(crate) mod timeouts;
+#[path = "runtime/flow_hooks.rs"]
+mod flow_hooks;
 
 pub(crate) type RuntimeServer = SidecarServer<DestinationPolicyEngine, MetricsEventConsumer>;
 pub(crate) struct RuntimeServerBundle {
@@ -30,7 +23,7 @@ pub(crate) struct RuntimeServerBundle {
 
 pub(crate) fn build_runtime_server<H: InterceptHandler>(
     config: &MitmConfig,
-    _handler: Arc<H>,
+    handler: Arc<H>,
     metrics_store: Arc<ProxyMetricsStore>,
 ) -> Result<RuntimeServerBundle, MitmError> {
     let config_handle = RuntimeConfigHandle::from_config(config)?;
@@ -44,11 +37,17 @@ pub(crate) fn build_runtime_server<H: InterceptHandler>(
         max_http_head_bytes: core_config.max_http_head_bytes,
         idle_watchdog_timeout: Duration::from_millis(config.upstream.timeout_ms.max(1)),
         stream_stage_timeout: Duration::from_millis(config.upstream.connect_timeout_ms.max(1)),
+        unix_socket_path: config
+            .unix_socket_path
+            .as_ref()
+            .map(|path| path.to_string_lossy().to_string()),
     };
 
     let engine = MitmEngine::new_checked(core_config, policy, sink)
         .map_err(|error| MitmError::InvalidConfig(error.to_string()))?;
-    let server = SidecarServer::new(sidecar_config, engine).map_err(MitmError::from)?;
+    let flow_hooks: Arc<dyn FlowHooks> = flow_hooks::build_handler_flow_hooks(config, handler);
+    let server = SidecarServer::new_with_flow_hooks(sidecar_config, engine, flow_hooks)
+        .map_err(MitmError::from)?;
     Ok(RuntimeServerBundle {
         server,
         config_handle,
@@ -195,6 +194,7 @@ mod tests {
             server_host: "api.example.com".to_string(),
             server_port: 443,
             path: None,
+            process_info: None,
         });
         assert_eq!(intercept.action, FlowAction::Intercept);
         assert_eq!(intercept.reason, "interception_scope_match");
@@ -203,6 +203,7 @@ mod tests {
             server_host: "other.example.com".to_string(),
             server_port: 443,
             path: None,
+            process_info: None,
         });
         assert_eq!(passthrough.action, FlowAction::Tunnel);
         assert_eq!(passthrough.reason, "passthrough_unlisted");
@@ -219,6 +220,7 @@ mod tests {
             server_host: "other.example.com".to_string(),
             server_port: 443,
             path: None,
+            process_info: None,
         });
         assert_eq!(decision.action, FlowAction::Block);
         assert_eq!(decision.reason, "destination_not_allowed");
@@ -240,6 +242,7 @@ mod tests {
             server_host: "api.example.com".to_string(),
             server_port: 443,
             path: None,
+            process_info: None,
         });
         assert_eq!(in_flight.action, FlowAction::Intercept);
 
@@ -259,6 +262,7 @@ mod tests {
             server_host: "api.example.com".to_string(),
             server_port: 443,
             path: None,
+            process_info: None,
         });
         assert_eq!(old_destination_after_reload.action, FlowAction::Tunnel);
 
@@ -266,6 +270,7 @@ mod tests {
             server_host: "other.example.com".to_string(),
             server_port: 443,
             path: None,
+            process_info: None,
         });
         assert_eq!(new_destination_after_reload.action, FlowAction::Intercept);
     }

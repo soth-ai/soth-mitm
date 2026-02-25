@@ -1,9 +1,10 @@
-use std::collections::HashMap;
 use std::future::Future;
+use std::num::NonZeroUsize;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
+use lru::LruCache;
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
@@ -42,30 +43,41 @@ pub(crate) trait ProcessAttributor: Send + Sync + 'static {
 pub(crate) struct ProcessLookupService<A: ProcessAttributor> {
     attributor: Arc<A>,
     timeout: Duration,
-    cache: Mutex<HashMap<Uuid, Option<ProcessInfo>>>,
+    cache: Mutex<LruCache<Uuid, Option<ProcessInfo>>>,
 }
 
 impl<A: ProcessAttributor> ProcessLookupService<A> {
     pub(crate) fn new(attributor: Arc<A>, timeout: Duration) -> Self {
+        let capacity = NonZeroUsize::new(4096).expect("process cache capacity must be non-zero");
         Self {
             attributor,
             timeout,
-            cache: Mutex::new(HashMap::new()),
+            cache: Mutex::new(LruCache::new(capacity)),
         }
     }
 
     pub(crate) async fn resolve(&self, connection: &ConnectionInfo) -> Option<ProcessInfo> {
-        let mut cache = self.cache.lock().await;
-        if let Some(cached) = cache.get(&connection.connection_id) {
-            return cached.clone();
+        let connection_id = connection.connection_id;
+        let cached = {
+            let mut cache = self.cache.lock().await;
+            cache.get(&connection_id).cloned()
+        };
+        if let Some(cached) = cached {
+            return cached;
         }
 
         let resolved = tokio::time::timeout(self.timeout, self.attributor.lookup(connection))
             .await
             .ok()
             .flatten();
-        cache.insert(connection.connection_id, resolved.clone());
+        let mut cache = self.cache.lock().await;
+        cache.put(connection_id, resolved.clone());
         resolved
+    }
+
+    pub(crate) async fn remove_connection(&self, connection_id: Uuid) {
+        let mut cache = self.cache.lock().await;
+        let _ = cache.pop(&connection_id);
     }
 
     pub(crate) async fn bind_connection_info(&self, connection: &ConnectionInfo) -> ConnectionInfo {
@@ -88,6 +100,7 @@ mod tests {
     use uuid::Uuid;
 
     use super::{ConnectionInfo, ProcessAttributor, ProcessInfo, ProcessLookupService};
+    use crate::types::SocketFamily;
 
     #[derive(Debug)]
     struct SleepyAttributor {
@@ -119,12 +132,10 @@ mod tests {
                 tokio::time::sleep(sleep_for).await;
                 Some(ProcessInfo {
                     pid: 4242,
-                    process_name: "curl".to_string(),
-                    process_path: PathBuf::from("/usr/bin/curl"),
                     bundle_id: None,
-                    code_signature: None,
+                    exe_name: Some("curl".to_string()),
+                    exe_path: Some(PathBuf::from("/usr/bin/curl")),
                     parent_pid: Some(1),
-                    parent_name: Some("init".to_string()),
                 })
             })
         }
@@ -185,6 +196,10 @@ mod tests {
             source_port: 52431,
             destination_host: "api.example.com".to_string(),
             destination_port: 443,
+            socket_family: SocketFamily::TcpV4 {
+                local: std::net::SocketAddrV4::new(Ipv4Addr::LOCALHOST, 52431),
+                remote: std::net::SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 443),
+            },
             tls_fingerprint: None,
             alpn_protocol: Some("h2".to_string()),
             is_http2: true,

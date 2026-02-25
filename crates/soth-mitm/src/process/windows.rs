@@ -5,6 +5,7 @@ use std::pin::Pin;
 use tokio::process::Command;
 
 use super::{ConnectionInfo, ProcessAttributor, ProcessInfo};
+use crate::types::SocketFamily;
 
 #[derive(Debug, Default)]
 pub(crate) struct PlatformProcessAttributor;
@@ -20,26 +21,24 @@ impl ProcessAttributor for PlatformProcessAttributor {
 
 async fn lookup_process(connection: &ConnectionInfo) -> Option<ProcessInfo> {
     let pid = lookup_pid(connection).await?;
-    let process_name = tasklist_name(pid)
-        .await
-        .unwrap_or_else(|| "unknown".to_string());
-    let process_path = process_path(pid)
-        .await
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(&process_name));
+    let process_name = tasklist_name(pid).await;
+    let process_path = process_path(pid).await.map(PathBuf::from);
 
     Some(ProcessInfo {
         pid,
-        process_name,
-        process_path,
         bundle_id: None,
-        code_signature: None,
+        exe_name: process_name,
+        exe_path: process_path,
         parent_pid: None,
-        parent_name: None,
     })
 }
 
 async fn lookup_pid(connection: &ConnectionInfo) -> Option<u32> {
+    let source_port = match &connection.socket_family {
+        SocketFamily::TcpV4 { local, .. } => local.port(),
+        SocketFamily::TcpV6 { local, .. } => local.port(),
+        SocketFamily::UnixDomain { .. } => return None,
+    };
     let output = Command::new("netstat")
         .args(["-ano", "-p", "tcp"])
         .output()
@@ -48,7 +47,7 @@ async fn lookup_pid(connection: &ConnectionInfo) -> Option<u32> {
     if !output.status.success() {
         return None;
     }
-    parse_netstat_pid(&output.stdout, connection.source_port)
+    parse_netstat_pid(&output.stdout, source_port)
 }
 
 async fn tasklist_name(pid: u32) -> Option<String> {

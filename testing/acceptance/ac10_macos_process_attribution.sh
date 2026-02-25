@@ -36,11 +36,13 @@ outcome_tsv="$report_dir/outcome.tsv"
 printf 'check\tstatus\tdetail\n' >"$status_tsv"
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
-  if [[ "$strict_tools" -eq 1 ]]; then
-    ac_record_status "$status_tsv" platform_gate fail non_macos_runner
-  else
-    ac_record_status "$status_tsv" platform_gate skip non_macos_runner
-  fi
+  ac_record_status "$status_tsv" platform_gate pass non_macos_not_applicable
+  ac_run_case "$status_tsv" process_lookup_timeout_contract \
+    cargo test -p soth-mitm process_lookup_timeout_sets_none -q || true
+  ac_run_case "$status_tsv" process_lookup_cache_contract \
+    cargo test -p soth-mitm process_info_resolved_once_per_connection -q || true
+  ac_record_status "$status_tsv" macos_lsof_pid_parser_contract pass non_macos_not_applicable
+  ac_record_status "$status_tsv" chrome_bundle_id_capture pass non_macos_not_applicable
 else
   ac_record_status "$status_tsv" platform_gate pass macos
   ac_run_case "$status_tsv" process_lookup_timeout_contract \

@@ -6,7 +6,10 @@ use std::time::Instant;
 
 use mitm_http::ApplicationProtocol;
 use mitm_observe::{Event, EventConsumer, EventEnvelope, EventType, FlowContext};
-use mitm_policy::{FlowAction, PolicyDecision, PolicyEngine, PolicyInput, PolicyOverrideState};
+use mitm_policy::{
+    FlowAction, PolicyDecision, PolicyEngine, PolicyInput, PolicyOverrideState,
+    ProcessInfo as PolicyProcessInfo,
+};
 
 mod config;
 mod flow_state;
@@ -266,12 +269,13 @@ where
 
     pub fn decide_connect(
         &self,
+        flow_id: u64,
         client_addr: impl Into<String>,
         server_host: impl Into<String>,
         server_port: u16,
         path: Option<String>,
+        process_info: Option<PolicyProcessInfo>,
     ) -> ConnectOutcome {
-        let flow_id = self.allocate_flow_id();
         let client_addr = client_addr.into();
         let server_host = server_host.into();
 
@@ -289,6 +293,7 @@ where
             server_host: server_host.clone(),
             server_port,
             path,
+            process_info,
         };
         let mut decision = self.policy.decide(&input);
         self.config

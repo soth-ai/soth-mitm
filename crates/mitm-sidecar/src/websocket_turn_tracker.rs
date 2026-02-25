@@ -1,6 +1,7 @@
 async fn observe_websocket_frames<P, S>(
     engine: Arc<MitmEngine<P, S>>,
     websocket_context: FlowContext,
+    flow_hooks: Arc<dyn FlowHooks>,
     mut observer_rx: tokio::sync::mpsc::Receiver<WebSocketObserverMessage>,
 ) -> io::Result<()>
 where
@@ -9,6 +10,7 @@ where
 {
     let mut turn_aggregator = mitm_http::WebSocketTurnAggregator::new();
     let mut turn_state = WebSocketTurnTrackerState::default();
+    let mut message_assemblers = WebSocketMessageAssemblers::default();
     let mut final_flush_reason: Option<&'static str> = None;
     let idle_deadline = tokio::time::Instant::now() + WS_TURN_IDLE_TIMEOUT;
     let idle_sleep = tokio::time::sleep_until(idle_deadline);
@@ -23,10 +25,13 @@ where
                         track_websocket_frame(
                             &engine,
                             websocket_context.clone(),
+                            &flow_hooks,
                             &mut turn_aggregator,
                             &mut turn_state,
+                            &mut message_assemblers,
                             frame,
-                        );
+                        )
+                        .await;
 
                         if turn_state.active_turn_id.is_some() && !turn_state.closing {
                             idle_sleep.as_mut().reset(tokio::time::Instant::now() + WS_TURN_IDLE_TIMEOUT);
@@ -66,20 +71,53 @@ where
 
     flush_pending_turn(
         &engine,
-        websocket_context,
+        websocket_context.clone(),
         &mut turn_aggregator,
         &mut turn_state,
         final_flush_reason.unwrap_or("eof"),
     );
+    flow_hooks.on_stream_end(websocket_context).await;
 
     Ok(())
 }
 
-fn track_websocket_frame<P, S>(
+#[derive(Debug, Default)]
+struct WebSocketMessageAssemblers {
+    client_to_server: WebSocketMessageAssembler,
+    server_to_client: WebSocketMessageAssembler,
+}
+
+#[derive(Debug, Default)]
+struct WebSocketMessageAssembler {
+    frame_kind: Option<StreamFrameKind>,
+    payload: Vec<u8>,
+}
+
+fn assembler_for_direction_mut(
+    assemblers: &mut WebSocketMessageAssemblers,
+    direction: mitm_http::WsDirection,
+) -> &mut WebSocketMessageAssembler {
+    match direction {
+        mitm_http::WsDirection::ClientToServer => &mut assemblers.client_to_server,
+        mitm_http::WsDirection::ServerToClient => &mut assemblers.server_to_client,
+    }
+}
+
+fn append_with_cap(buffer: &mut Vec<u8>, payload: &[u8], cap: usize) {
+    if buffer.len() >= cap {
+        return;
+    }
+    let take = (cap - buffer.len()).min(payload.len());
+    buffer.extend_from_slice(&payload[..take]);
+}
+
+async fn track_websocket_frame<P, S>(
     engine: &MitmEngine<P, S>,
     websocket_context: FlowContext,
+    flow_hooks: &Arc<dyn FlowHooks>,
     turn_aggregator: &mut mitm_http::WebSocketTurnAggregator,
     turn_state: &mut WebSocketTurnTrackerState,
+    message_assemblers: &mut WebSocketMessageAssemblers,
     frame: WebSocketFrameObservation,
 ) where
     P: PolicyEngine + Send + Sync + 'static,
@@ -97,6 +135,74 @@ fn track_websocket_frame<P, S>(
         frame.payload_len,
         frame.frame_len,
     );
+
+    let max_message_bytes = engine.config.max_flow_decoder_buffer_bytes.max(1);
+    let assembler = assembler_for_direction_mut(message_assemblers, frame.direction);
+    match frame.opcode {
+        0x1 | 0x2 => {
+            let frame_kind = if frame.opcode == 0x1 {
+                StreamFrameKind::WebSocketText
+            } else {
+                StreamFrameKind::WebSocketBinary
+            };
+            if frame.fin {
+                let sequence = turn_state.next_chunk_sequence;
+                turn_state.next_chunk_sequence += 1;
+                flow_hooks
+                    .on_stream_chunk(
+                        websocket_context.clone(),
+                        StreamChunk {
+                            payload: frame.payload.clone(),
+                            sequence,
+                            frame_kind,
+                        },
+                    )
+                    .await;
+                assembler.frame_kind = None;
+                assembler.payload.clear();
+            } else {
+                assembler.frame_kind = Some(frame_kind);
+                assembler.payload.clear();
+                append_with_cap(&mut assembler.payload, frame.payload.as_ref(), max_message_bytes);
+            }
+        }
+        0x0 => {
+            if let Some(frame_kind) = assembler.frame_kind {
+                append_with_cap(&mut assembler.payload, frame.payload.as_ref(), max_message_bytes);
+                if frame.fin {
+                    let sequence = turn_state.next_chunk_sequence;
+                    turn_state.next_chunk_sequence += 1;
+                    flow_hooks
+                        .on_stream_chunk(
+                            websocket_context.clone(),
+                            StreamChunk {
+                                payload: bytes::Bytes::from(std::mem::take(&mut assembler.payload)),
+                                sequence,
+                                frame_kind,
+                            },
+                        )
+                        .await;
+                    assembler.frame_kind = None;
+                }
+            }
+        }
+        0x9 => {}
+        0x8 => {
+            let sequence = turn_state.next_chunk_sequence;
+            turn_state.next_chunk_sequence += 1;
+            flow_hooks
+                .on_stream_chunk(
+                    websocket_context.clone(),
+                    StreamChunk {
+                        payload: frame.payload.clone(),
+                        sequence,
+                        frame_kind: StreamFrameKind::WebSocketClose,
+                    },
+                )
+                .await;
+        }
+        _ => {}
+    }
 
     if turn_state.closing {
         return;

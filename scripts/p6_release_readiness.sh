@@ -86,19 +86,15 @@ SMOKE
 
 cat >"$smoke_dir/src/main.rs" <<'SMOKE'
 use soth_mitm::{
-    ConnectionInfo, HandlerAction, InterceptHandler, InterceptedRequest, MitmConfig,
+    HandlerDecision, InterceptHandler, MitmConfig, RawRequest,
     MitmProxyBuilder,
 };
 
 struct ForwardOnly;
 
 impl InterceptHandler for ForwardOnly {
-    async fn on_request(
-        &self,
-        _request: &InterceptedRequest,
-        _connection: &ConnectionInfo,
-    ) -> HandlerAction {
-        HandlerAction::Forward
+    fn on_request(&self, _request: &RawRequest) -> HandlerDecision {
+        HandlerDecision::Allow
     }
 }
 

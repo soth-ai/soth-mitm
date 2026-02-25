@@ -6,6 +6,7 @@ use std::pin::Pin;
 use tokio::process::Command;
 
 use super::{ConnectionInfo, ProcessAttributor, ProcessInfo};
+use crate::types::SocketFamily;
 
 #[derive(Debug, Default)]
 pub(crate) struct PlatformProcessAttributor;
@@ -21,37 +22,40 @@ impl ProcessAttributor for PlatformProcessAttributor {
 
 async fn lookup_process(connection: &ConnectionInfo) -> Option<ProcessInfo> {
     let pid = lookup_pid(connection).await?;
-    let process_command = ps_value(pid, "command").await?;
-    let process_name = ps_value(pid, "comm").await?;
+    let process_command = ps_value(pid, "command").await;
+    let process_name = ps_value(pid, "comm").await;
     let parent_pid = ps_value(pid, "ppid")
         .await
         .and_then(|value| value.parse::<u32>().ok());
-    let parent_name = match parent_pid {
-        Some(ppid) => ps_value(ppid, "comm").await,
-        None => None,
-    };
 
     let process_path = process_command
+        .as_deref()
+        .unwrap_or_default()
         .split_whitespace()
         .next()
         .filter(|value| value.starts_with('/'))
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(&process_name));
-    let bundle_id = lookup_bundle_id(&process_path).await;
+        .or_else(|| process_name.as_ref().map(PathBuf::from));
+    let bundle_id = match process_path.as_ref() {
+        Some(path) => lookup_bundle_id(path).await,
+        None => None,
+    };
 
     Some(ProcessInfo {
         pid,
-        process_name,
-        process_path,
+        exe_name: process_name,
+        exe_path: process_path,
         bundle_id,
-        code_signature: None,
         parent_pid,
-        parent_name,
     })
 }
 
 async fn lookup_pid(connection: &ConnectionInfo) -> Option<u32> {
-    let socket_filter = format!("{}:{}", connection.source_ip, connection.source_port);
+    let socket_filter = match &connection.socket_family {
+        SocketFamily::TcpV4 { local, .. } => format!("{}:{}", local.ip(), local.port()),
+        SocketFamily::TcpV6 { local, .. } => format!("[{}]:{}", local.ip(), local.port()),
+        SocketFamily::UnixDomain { .. } => return None,
+    };
     let output = Command::new("lsof")
         .args([
             "-nP",

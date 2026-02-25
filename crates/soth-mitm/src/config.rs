@@ -8,6 +8,7 @@ use crate::TlsVersion;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MitmConfig {
     pub bind: SocketAddr,
+    pub unix_socket_path: Option<PathBuf>,
     pub interception: InterceptionScope,
     pub tls: TlsConfig,
     pub upstream: UpstreamConfig,
@@ -66,6 +67,7 @@ impl Default for MitmConfig {
             bind: "127.0.0.1:8080"
                 .parse()
                 .expect("default bind address must parse"),
+            unix_socket_path: None,
             interception: InterceptionScope::default(),
             tls: TlsConfig::default(),
             upstream: UpstreamConfig::default(),

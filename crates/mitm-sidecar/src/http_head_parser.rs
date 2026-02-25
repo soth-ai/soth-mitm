@@ -1,10 +1,13 @@
-async fn read_connect_head(
-    stream: &mut TcpStream,
+async fn read_connect_head<S>(
+    stream: &mut S,
     max_connect_head_bytes: usize,
     runtime_governor: &Arc<runtime_governor::RuntimeGovernor>,
-) -> io::Result<Vec<u8>> {
-    let _in_flight_lease = runtime_governor
-        .reserve_in_flight_or_error(max_connect_head_bytes, "connect_head_read")?;
+) -> io::Result<Vec<u8>>
+where
+    S: AsyncRead + Unpin,
+{
+    let _in_flight_lease =
+        runtime_governor.reserve_in_flight_or_error(max_connect_head_bytes, "connect_head_read")?;
     let mut data = Vec::with_capacity(1024);
     let mut byte = [0_u8; 1];
 

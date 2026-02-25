@@ -39,7 +39,7 @@ scan_fixed_term() {
   fi
 }
 
-delay_usage_matches="$(rg -n --color=never --pcre2 'HandlerAction\s*::\s*(Delay|Hold)\b' "${rust_files[@]}" || true)"
+delay_usage_matches="$(rg -n --color=never --pcre2 'Handler(?:Decision|Action)\s*::\s*(Delay|Hold)\b' "${rust_files[@]}" || true)"
 if [[ -n "$delay_usage_matches" ]]; then
   report_violation "Delay/Hold action usage is prohibited" "$delay_usage_matches"
 fi

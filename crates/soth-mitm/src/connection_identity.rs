@@ -45,7 +45,7 @@ mod tests {
     use uuid::Uuid;
 
     use super::ConnectionRequestTracker;
-    use crate::types::ConnectionInfo;
+    use crate::types::{ConnectionInfo, SocketFamily};
 
     #[test]
     fn h2_connection_id_stable_request_count_increments() {
@@ -72,6 +72,10 @@ mod tests {
             source_port: 4242,
             destination_host: "api.example.com".to_string(),
             destination_port: 443,
+            socket_family: SocketFamily::TcpV4 {
+                local: std::net::SocketAddrV4::new(Ipv4Addr::LOCALHOST, 4242),
+                remote: std::net::SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 443),
+            },
             tls_fingerprint: None,
             alpn_protocol: Some("h2".to_string()),
             is_http2: true,

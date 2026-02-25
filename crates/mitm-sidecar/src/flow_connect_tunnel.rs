@@ -4,6 +4,8 @@ async fn handle_client<P, S>(
     runtime: RuntimeHandles<P, S>,
     mut downstream: TcpStream,
     client_addr: String,
+    flow_id: u64,
+    process_info: Option<mitm_policy::ProcessInfo>,
     max_connect_head_bytes: usize,
     max_http_head_bytes: usize,
 ) -> io::Result<()>
@@ -16,96 +18,96 @@ where
     let runtime_governor = Arc::clone(&runtime.runtime_governor);
     let tls_diagnostics = Arc::clone(&runtime.tls_diagnostics);
     let tls_learning = Arc::clone(&runtime.tls_learning);
+    let flow_hooks = Arc::clone(&runtime.flow_hooks);
 
     let mut input =
         match read_connect_head(&mut downstream, max_connect_head_bytes, &runtime_governor).await {
-        Ok(parsed) => parsed,
-        Err(error) => {
-            let parse_code = match error.kind() {
-                io::ErrorKind::UnexpectedEof => ParseFailureCode::IncompleteHeaders,
-                io::ErrorKind::InvalidData => ParseFailureCode::HeaderTooLarge,
-                _ => ParseFailureCode::ReadError,
-            };
-
-            let flow_id = engine.allocate_flow_id();
-            let context = unknown_context(flow_id, client_addr);
-
-            emit_connect_parse_failed(
-                &engine,
-                context.clone(),
-                parse_code,
-                Some(error.to_string()),
-            );
-            emit_stream_closed(
-                &engine,
-                context,
-                CloseReasonCode::ConnectParseFailed,
-                Some(parse_code.as_str().to_string()),
-                None,
-                None,
-            );
-
-            if error.kind() != io::ErrorKind::UnexpectedEof {
-                let status = if parse_code == ParseFailureCode::HeaderTooLarge {
-                    "431 Request Header Fields Too Large"
-                } else {
-                    "400 Bad Request"
+            Ok(parsed) => parsed,
+            Err(error) => {
+                let parse_code = match error.kind() {
+                    io::ErrorKind::UnexpectedEof => ParseFailureCode::IncompleteHeaders,
+                    io::ErrorKind::InvalidData => ParseFailureCode::HeaderTooLarge,
+                    _ => ParseFailureCode::ReadError,
                 };
+
+                let context = unknown_context(flow_id, client_addr);
+
+                emit_connect_parse_failed(
+                    &engine,
+                    context.clone(),
+                    parse_code,
+                    Some(error.to_string()),
+                );
+                emit_stream_closed(
+                    &engine,
+                    context,
+                    CloseReasonCode::ConnectParseFailed,
+                    Some(parse_code.as_str().to_string()),
+                    None,
+                    None,
+                );
+
+                if error.kind() != io::ErrorKind::UnexpectedEof {
+                    let status = if parse_code == ParseFailureCode::HeaderTooLarge {
+                        "431 Request Header Fields Too Large"
+                    } else {
+                        "400 Bad Request"
+                    };
+                    write_proxy_response(
+                        &mut downstream,
+                        status,
+                        "invalid or incomplete CONNECT request",
+                    )
+                    .await?;
+                }
+                return Ok(());
+            }
+        };
+
+    let (connect, header_len) =
+        match parse_connect_request_head_with_mode(&input, engine.config.connect_parse_mode) {
+            Ok(parsed) => parsed,
+            Err(ConnectParseError::MethodNotConnect)
+                if is_forward_http1_request_candidate(&input) =>
+            {
+                return handle_forward_http1_proxy_request(
+                    engine,
+                    runtime_governor,
+                    flow_hooks,
+                    downstream,
+                    client_addr,
+                    flow_id,
+                    process_info.clone(),
+                    input,
+                    max_http_head_bytes,
+                )
+                .await;
+            }
+            Err(parse_error) => {
+                let context = unknown_context(flow_id, client_addr);
+                emit_connect_parse_failed(
+                    &engine,
+                    context.clone(),
+                    ParseFailureCode::Parser(parse_error),
+                    None,
+                );
+                emit_stream_closed(
+                    &engine,
+                    context,
+                    CloseReasonCode::ConnectParseFailed,
+                    Some(parse_error.code().to_string()),
+                    None,
+                    None,
+                );
                 write_proxy_response(
                     &mut downstream,
-                    status,
-                    "invalid or incomplete CONNECT request",
+                    "400 Bad Request",
+                    "invalid CONNECT request",
                 )
                 .await?;
+                return Ok(());
             }
-            return Ok(());
-        }
-    };
-
-    let (connect, header_len) = match parse_connect_request_head_with_mode(
-        &input,
-        engine.config.connect_parse_mode,
-    ) {
-        Ok(parsed) => parsed,
-        Err(ConnectParseError::MethodNotConnect)
-            if is_absolute_form_forward_http_request(&input) =>
-        {
-            return handle_forward_http1_proxy_request(
-                engine,
-                runtime_governor,
-                downstream,
-                client_addr,
-                input,
-                max_http_head_bytes,
-            )
-            .await;
-        }
-        Err(parse_error) => {
-            let flow_id = engine.allocate_flow_id();
-            let context = unknown_context(flow_id, client_addr);
-            emit_connect_parse_failed(
-                &engine,
-                context.clone(),
-                ParseFailureCode::Parser(parse_error),
-                None,
-            );
-            emit_stream_closed(
-                &engine,
-                context,
-                CloseReasonCode::ConnectParseFailed,
-                Some(parse_error.code().to_string()),
-                None,
-                None,
-            );
-            write_proxy_response(
-                &mut downstream,
-                "400 Bad Request",
-                "invalid CONNECT request",
-            )
-            .await?;
-            return Ok(());
-        }
-    };
+        };
 
     let mut route_planner = FlowRoutePlanner::default();
     let route = match route_planner.bind_once(
@@ -114,7 +116,6 @@ where
     ) {
         Ok(binding) => binding,
         Err(error) => {
-            let flow_id = engine.allocate_flow_id();
             let context = FlowContext {
                 flow_id,
                 client_addr,
@@ -141,10 +142,12 @@ where
     };
 
     let outcome = engine.decide_connect(
+        flow_id,
         client_addr.clone(),
         route.target_host.clone(),
         route.target_port,
         route.policy_path.clone(),
+        process_info,
     );
 
     let context = FlowContext {
@@ -170,11 +173,14 @@ where
             );
         }
     }
-    let action = if http3_requested_by.is_some() && outcome.action != FlowAction::Block {
+    let mut action = if http3_requested_by.is_some() && outcome.action != FlowAction::Block {
         FlowAction::Tunnel
     } else {
         outcome.action
     };
+    if action == FlowAction::Intercept && !flow_hooks.should_intercept_tls(context.clone()).await {
+        action = FlowAction::Tunnel;
+    }
 
     match action {
         FlowAction::Block => {
@@ -190,7 +196,15 @@ where
             Ok(())
         }
         FlowAction::Tunnel => {
-            tunnel_connection(engine, context, route, &mut downstream, &mut input, header_len).await
+            tunnel_connection(
+                engine,
+                context,
+                route,
+                &mut downstream,
+                &mut input,
+                header_len,
+            )
+            .await
         }
         FlowAction::Intercept => {
             intercept_http_connection(
@@ -199,6 +213,7 @@ where
                 runtime_governor,
                 tls_diagnostics,
                 tls_learning,
+                flow_hooks,
                 context,
                 route,
                 outcome.override_state,
@@ -344,10 +359,7 @@ mod flow_connect_tunnel_tests {
     #[test]
     fn detects_http3_passthrough_via_proxy_protocol_hint() {
         let head = b"CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\nX-Proxy-Protocol: h3\r\n\r\n";
-        assert_eq!(
-            parse_http3_passthrough_hint(head),
-            Some("x-proxy-protocol")
-        );
+        assert_eq!(parse_http3_passthrough_hint(head), Some("x-proxy-protocol"));
     }
 
     #[test]

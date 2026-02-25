@@ -5,6 +5,7 @@ use std::pin::Pin;
 use tokio::process::Command;
 
 use super::{ConnectionInfo, ProcessAttributor, ProcessInfo};
+use crate::types::SocketFamily;
 
 #[derive(Debug, Default)]
 pub(crate) struct PlatformProcessAttributor;
@@ -20,24 +21,25 @@ impl ProcessAttributor for PlatformProcessAttributor {
 
 async fn lookup_process(connection: &ConnectionInfo) -> Option<ProcessInfo> {
     let pid = lookup_pid(connection).await?;
-    let process_name = read_process_name(pid)?;
-    let process_path = read_process_path(pid).unwrap_or_else(|| PathBuf::from(&process_name));
+    let process_name = read_process_name(pid);
+    let process_path = read_process_path(pid);
     let parent_pid = read_parent_pid(pid);
-    let parent_name = parent_pid.and_then(read_process_name);
 
     Some(ProcessInfo {
         pid,
-        process_name,
-        process_path,
         bundle_id: None,
-        code_signature: None,
+        exe_name: process_name,
+        exe_path: process_path,
         parent_pid,
-        parent_name,
     })
 }
 
 async fn lookup_pid(connection: &ConnectionInfo) -> Option<u32> {
-    let socket_filter = format!("{}:{}", connection.source_ip, connection.source_port);
+    let socket_filter = match &connection.socket_family {
+        SocketFamily::TcpV4 { local, .. } => format!("{}:{}", local.ip(), local.port()),
+        SocketFamily::TcpV6 { local, .. } => format!("[{}]:{}", local.ip(), local.port()),
+        SocketFamily::UnixDomain { .. } => return None,
+    };
     let output = Command::new("lsof")
         .args([
             "-nP",

@@ -5,6 +5,7 @@ async fn intercept_http_connection<P, S>(
     runtime_governor: Arc<runtime_governor::RuntimeGovernor>,
     tls_diagnostics: Arc<TlsDiagnostics>,
     tls_learning: Arc<TlsLearningGuardrails>,
+    flow_hooks: Arc<dyn FlowHooks>,
     tunnel_context: FlowContext,
     route: RouteBinding,
     policy_override_state: mitm_policy::PolicyOverrideState,
@@ -57,6 +58,12 @@ where
     ) {
         Ok(config) => config,
         Err(error) => {
+            flow_hooks
+                .on_tls_failure(
+                    handshake_context.clone(),
+                    format!("downstream leaf issuance error: {error}"),
+                )
+                .await;
             emit_tls_event_with_detail(
                 &engine,
                 &tls_diagnostics,
@@ -94,6 +101,12 @@ where
     {
         Ok(stream) => stream,
         Err(error) => {
+            flow_hooks
+                .on_tls_failure(
+                    handshake_context.clone(),
+                    format!("downstream handshake failed: {error}"),
+                )
+                .await;
             emit_tls_event_with_detail(
                 &engine,
                 &tls_diagnostics,
@@ -143,6 +156,9 @@ where
         Ok(value) => value,
         Err(error) => {
             let detail = format!("upstream TLS policy build failed: {error}");
+            flow_hooks
+                .on_tls_failure(downstream_context.clone(), detail.clone())
+                .await;
             emit_tls_event_with_detail(
                 &engine,
                 &tls_diagnostics,
@@ -170,6 +186,9 @@ where
         Ok(value) => value,
         Err(error) => {
             let detail = format!("invalid server name for upstream TLS: {error}");
+            flow_hooks
+                .on_tls_failure(downstream_context.clone(), detail.clone())
+                .await;
             emit_tls_event_with_detail(
                 &engine,
                 &tls_diagnostics,
@@ -208,6 +227,12 @@ where
     let upstream_tls = match connector.connect(server_name, upstream_tcp).await {
         Ok(stream) => stream,
         Err(error) => {
+            flow_hooks
+                .on_tls_failure(
+                    downstream_context.clone(),
+                    format!("upstream handshake failed: {error}"),
+                )
+                .await;
             emit_tls_event_with_detail(
                 &engine,
                 &tls_diagnostics,
@@ -273,6 +298,7 @@ where
         return relay_http2_connection(
             engine,
             Arc::clone(&runtime_governor),
+            flow_hooks,
             tunnel_context,
             downstream_tls,
             upstream_tls,
@@ -286,6 +312,7 @@ where
     relay_http1_mitm_loop(
         engine,
         runtime_governor,
+        flow_hooks,
         tunnel_context,
         UpstreamRequestTargetMode::OriginForm,
         downstream_conn,

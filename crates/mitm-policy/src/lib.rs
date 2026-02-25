@@ -13,10 +13,18 @@ pub enum FlowAction {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProcessInfo {
+    pub pid: u32,
+    pub bundle_id: Option<String>,
+    pub process_name: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PolicyInput {
     pub server_host: String,
     pub server_port: u16,
     pub path: Option<String>,
+    pub process_info: Option<ProcessInfo>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

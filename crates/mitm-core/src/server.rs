@@ -58,7 +58,8 @@ where
     S: EventConsumer + Send + Sync + 'static,
 {
     let client_addr = peer_addr.to_string();
-    let outcome = engine.decide_connect(client_addr.clone(), "<accepted>", 0, None);
+    let flow_id = engine.allocate_flow_id();
+    let outcome = engine.decide_connect(flow_id, client_addr.clone(), "<accepted>", 0, None, None);
     let context = FlowContext {
         flow_id: outcome.flow_id,
         client_addr,

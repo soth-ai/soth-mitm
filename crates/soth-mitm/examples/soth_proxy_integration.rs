@@ -1,17 +1,10 @@
-use soth_mitm::{
-    ConnectionInfo, HandlerAction, InterceptHandler, InterceptedRequest, MitmConfig,
-    MitmProxyBuilder,
-};
+use soth_mitm::{HandlerDecision, InterceptHandler, MitmConfig, MitmProxyBuilder, RawRequest};
 
 struct ForwardOnly;
 
 impl InterceptHandler for ForwardOnly {
-    async fn on_request(
-        &self,
-        _request: &InterceptedRequest,
-        _connection: &ConnectionInfo,
-    ) -> HandlerAction {
-        HandlerAction::Forward
+    fn on_request(&self, _request: &RawRequest) -> HandlerDecision {
+        HandlerDecision::Allow
     }
 }
 

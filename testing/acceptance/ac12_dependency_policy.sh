@@ -39,11 +39,7 @@ if command -v cargo-deny >/dev/null 2>&1; then
   ac_run_case "$status_tsv" cargo_deny_policy \
     cargo deny check bans licenses sources || true
 else
-  if [[ "$strict_tools" -eq 1 ]]; then
-    ac_record_status "$status_tsv" cargo_deny_policy fail missing_tools:cargo-deny
-  else
-    ac_record_status "$status_tsv" cargo_deny_policy pass missing_tools_fallback:policy_and_duplicate_scans
-  fi
+  ac_record_status "$status_tsv" cargo_deny_policy fail missing_tools:cargo-deny
 fi
 ac_run_case "$status_tsv" prohibition_policy \
   ./scripts/check_prohibitions.sh || true

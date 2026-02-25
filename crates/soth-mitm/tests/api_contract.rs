@@ -1,16 +1,12 @@
 use soth_mitm::{
-    generate_ca, HandlerAction, InterceptHandler, InterceptedRequest, MitmConfig, MitmProxyBuilder,
+    generate_ca, HandlerDecision, InterceptHandler, MitmConfig, MitmProxyBuilder, RawRequest,
 };
 
 struct ForwardHandler;
 
 impl InterceptHandler for ForwardHandler {
-    async fn on_request(
-        &self,
-        _request: &InterceptedRequest,
-        _connection: &soth_mitm::ConnectionInfo,
-    ) -> HandlerAction {
-        HandlerAction::Forward
+    fn on_request(&self, _request: &RawRequest) -> HandlerDecision {
+        HandlerDecision::Allow
     }
 }
 

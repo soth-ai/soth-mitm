@@ -1,17 +1,11 @@
 use std::net::IpAddr;
+use std::net::{SocketAddrV4, SocketAddrV6};
 use std::path::PathBuf;
-use std::time::{Duration, SystemTime};
+use std::time::SystemTime;
 
 use bytes::Bytes;
 use http::HeaderMap;
 use uuid::Uuid;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HttpVersion {
-    Http10,
-    Http11,
-    Http2,
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TlsVersion {
@@ -20,22 +14,68 @@ pub enum TlsVersion {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct InterceptedRequest {
+pub struct RawRequest {
     pub method: String,
     pub path: String,
-    pub version: HttpVersion,
     pub headers: HeaderMap,
     pub body: Bytes,
-    pub body_truncated: bool,
-    pub body_original_size: Option<usize>,
+    pub connection_meta: ConnectionMeta,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct InterceptedResponse {
+pub struct RawResponse {
     pub status: u16,
     pub headers: HeaderMap,
     pub body: Bytes,
-    pub is_streaming: bool,
+    pub connection_meta: ConnectionMeta,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FrameKind {
+    SseData,
+    NdjsonLine,
+    GrpcMessage,
+    WebSocketText,
+    WebSocketBinary,
+    WebSocketClose,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StreamChunk {
+    pub connection_id: Uuid,
+    pub payload: Bytes,
+    pub sequence: u64,
+    pub frame_kind: FrameKind,
+    pub connection_meta: ConnectionMeta,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TlsInfo {
+    pub sni: Option<String>,
+    pub negotiated_proto: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConnectionMeta {
+    pub connection_id: Uuid,
+    pub socket_family: SocketFamily,
+    pub process_info: Option<ProcessInfo>,
+    pub tls_info: Option<TlsInfo>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SocketFamily {
+    TcpV4 {
+        local: SocketAddrV4,
+        remote: SocketAddrV4,
+    },
+    TcpV6 {
+        local: SocketAddrV6,
+        remote: SocketAddrV6,
+    },
+    UnixDomain {
+        path: Option<PathBuf>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -45,6 +85,7 @@ pub struct ConnectionInfo {
     pub source_port: u16,
     pub destination_host: String,
     pub destination_port: u16,
+    pub socket_family: SocketFamily,
     pub tls_fingerprint: Option<TlsClientFingerprint>,
     pub alpn_protocol: Option<String>,
     pub is_http2: bool,
@@ -66,18 +107,8 @@ pub struct TlsClientFingerprint {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProcessInfo {
     pub pid: u32,
-    pub process_name: String,
-    pub process_path: PathBuf,
     pub bundle_id: Option<String>,
-    pub code_signature: Option<String>,
+    pub exe_name: Option<String>,
+    pub exe_path: Option<PathBuf>,
     pub parent_pid: Option<u32>,
-    pub parent_name: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ConnectionStats {
-    pub request_count: u32,
-    pub bytes_sent_upstream: u64,
-    pub bytes_received_upstream: u64,
-    pub duration: Duration,
 }

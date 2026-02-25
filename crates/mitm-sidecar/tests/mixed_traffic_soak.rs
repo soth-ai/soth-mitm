@@ -152,6 +152,7 @@ async fn start_sidecar(
         max_http_head_bytes: 64 * 1024,
         idle_watchdog_timeout: std::time::Duration::from_secs(30),
         stream_stage_timeout: std::time::Duration::from_secs(15),
+        unix_socket_path: None,
     };
     let engine = build_engine(config);
     let server = SidecarServer::new(sidecar_config, engine).expect("build sidecar");
@@ -178,6 +179,7 @@ async fn start_sidecar_with_vec_sink(
         max_http_head_bytes: 64 * 1024,
         idle_watchdog_timeout: std::time::Duration::from_secs(30),
         stream_stage_timeout: std::time::Duration::from_secs(15),
+        unix_socket_path: None,
     };
     let engine = build_engine_with_sink(config, sink.clone());
     let server = SidecarServer::new(sidecar_config, engine).expect("build sidecar");

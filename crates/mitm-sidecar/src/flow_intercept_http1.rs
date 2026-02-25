@@ -2,6 +2,7 @@
 async fn relay_http1_mitm_loop<P, S, D, U>(
     engine: Arc<MitmEngine<P, S>>,
     runtime_governor: Arc<runtime_governor::RuntimeGovernor>,
+    flow_hooks: Arc<dyn FlowHooks>,
     tunnel_context: FlowContext,
     upstream_target_mode: UpstreamRequestTargetMode,
     mut downstream_conn: BufferedConn<D>,
@@ -63,19 +64,117 @@ where
         };
         let upstream_request_head =
             match build_upstream_http1_request_head(&request, upstream_target_mode) {
-            Ok(value) => value,
-            Err(error) => {
-                emit_stream_closed(
-                    &engine,
-                    http_context.clone(),
-                    CloseReasonCode::MitmHttpError,
-                    Some(format!("request target normalization failed: {error}")),
-                    Some(bytes_from_client),
-                    Some(bytes_from_server),
-                );
-                return Ok(());
-            }
+                Ok(value) => value,
+                Err(error) => {
+                    emit_stream_closed(
+                        &engine,
+                        http_context.clone(),
+                        CloseReasonCode::MitmHttpError,
+                        Some(format!("request target normalization failed: {error}")),
+                        Some(bytes_from_client),
+                        Some(bytes_from_server),
+                    );
+                    return Ok(());
+                }
+            };
+
+        let max_handler_body = engine.config.max_flow_body_buffer_bytes.max(1);
+        let mut request_sink = tokio::io::sink();
+        let (request_body_bytes, request_body, request_body_truncated) =
+            match relay_http_body_with_capture(
+                &engine,
+                &http_context,
+                EventType::RequestBodyChunk,
+                &mut downstream_conn,
+                &mut request_sink,
+                request.body_mode,
+                max_http_head_bytes,
+                &runtime_governor,
+                max_handler_body,
+            )
+            .await
+            {
+                Ok(result) => result,
+                Err(error) => {
+                    emit_http1_relay_error_close(
+                        &engine,
+                        &http_context,
+                        "request body relay failed",
+                        &error,
+                        bytes_from_client,
+                        bytes_from_server,
+                    );
+                    return Ok(());
+                }
+            };
+        bytes_from_client += request_body_bytes;
+        if flow_body_budget_exceeded(
+            &engine,
+            &http_context,
+            "client",
+            bytes_from_client,
+            bytes_from_server,
+        ) {
+            return Ok(());
+        }
+
+        let mut handler_request_headers = build_handler_header_map(&request.headers);
+        if request_body_truncated {
+            mark_body_truncated(&mut handler_request_headers);
+        }
+        let request_is_grpc = is_grpc_request(&request.headers);
+        let mut handler_body = if request_body_truncated {
+            request_body.slice(..max_handler_body.min(request_body.len()))
+        } else {
+            request_body.clone()
         };
+        handler_body =
+            normalize_request_body_for_handler(&mut handler_request_headers, handler_body);
+        if request_is_grpc {
+            handler_body =
+                normalize_grpc_request_body_for_handler(&mut handler_request_headers, handler_body);
+        }
+        let request_decision = flow_hooks
+            .on_request(
+                http_context.clone(),
+                RawRequest {
+                    method: request.method.clone(),
+                    path: normalize_request_path_for_handler(&request.target),
+                    headers: handler_request_headers,
+                    body: handler_body,
+                },
+            )
+            .await;
+        if let RequestDecision::Block { status, body } = request_decision {
+            let status_line = format!("{status} Blocked");
+            let response_head = format!(
+                "HTTP/1.1 {status_line}\r\nConnection: close\r\nContent-Type: text/plain\r\nContent-Length: {}\r\n\r\n",
+                body.len()
+            );
+            let _ = write_all_with_idle_timeout(
+                &mut downstream_conn.stream,
+                response_head.as_bytes(),
+                "http1_block_response_head_write",
+            )
+            .await;
+            if !body.is_empty() {
+                let _ = write_all_with_idle_timeout(
+                    &mut downstream_conn.stream,
+                    &body,
+                    "http1_block_response_body_write",
+                )
+                .await;
+            }
+            emit_stream_closed(
+                &engine,
+                http_context,
+                CloseReasonCode::Blocked,
+                Some("blocked_by_handler".to_string()),
+                Some(bytes_from_client),
+                Some(bytes_from_server),
+            );
+            return Ok(());
+        }
 
         emit_request_headers_event(&engine, &http_context, &request);
         if let Err(error) = write_all_with_idle_timeout(
@@ -95,43 +194,24 @@ where
             );
             return Ok(());
         }
-
-        let mut request_observer = NoopHttpBodyObserver;
-        let request_body_result = relay_http_body(
-            &engine,
-            &http_context,
-            EventType::RequestBodyChunk,
-            &mut downstream_conn,
-            &mut upstream_conn.stream,
-            request.body_mode,
-            max_http_head_bytes,
-            &runtime_governor,
-            &mut request_observer,
-        )
-        .await;
-        let request_body_bytes = match request_body_result {
-            Ok(bytes) => bytes,
-            Err(error) => {
+        if !request_body.is_empty() {
+            if let Err(error) = write_all_with_idle_timeout(
+                &mut upstream_conn.stream,
+                &request_body,
+                "http1_request_body_write_upstream",
+            )
+            .await
+            {
                 emit_http1_relay_error_close(
                     &engine,
                     &http_context,
-                    "request body relay failed",
+                    "upstream write request body failed",
                     &error,
                     bytes_from_client,
                     bytes_from_server,
                 );
                 return Ok(());
             }
-        };
-        bytes_from_client += request_body_bytes;
-        if flow_body_budget_exceeded(
-            &engine,
-            &http_context,
-            "client",
-            bytes_from_client,
-            bytes_from_server,
-        ) {
-            return Ok(());
         }
 
         let response_raw = match read_until_pattern(
@@ -199,6 +279,7 @@ where
             return finalize_websocket_upgrade(
                 Arc::clone(&engine),
                 Arc::clone(&runtime_governor),
+                flow_hooks,
                 &tunnel_context,
                 downstream_conn,
                 upstream_conn,
@@ -208,74 +289,25 @@ where
             .await;
         }
 
-        if is_sse_response(&response) {
-            let sse_context = FlowContext {
-                protocol: ApplicationProtocol::Sse,
-                ..tunnel_context.clone()
-            };
-            let mut sse_observer = SseStreamObserver::new(
-                Arc::clone(&engine),
-                sse_context,
-                Arc::clone(&runtime_governor),
-                engine.config.max_flow_decoder_buffer_bytes,
-            );
-            let response_body_result = relay_http_body(
-                &engine,
-                &http_context,
-                EventType::ResponseBodyChunk,
-                &mut upstream_conn,
-                &mut downstream_conn.stream,
-                response.body_mode,
-                max_http_head_bytes,
-                &runtime_governor,
-                &mut sse_observer,
-            )
-            .await;
-            let response_body_bytes = match response_body_result {
-                Ok(bytes) => bytes,
-                Err(error) => {
-                    emit_http1_relay_error_close(
-                        &engine,
-                        &http_context,
-                        "response body relay failed",
-                        &error,
-                        bytes_from_client,
-                        bytes_from_server,
-                    );
-                    return Ok(());
-                }
-            };
-            bytes_from_server += response_body_bytes;
-        } else {
-            let mut response_observer = NoopHttpBodyObserver;
-            let response_body_result = relay_http_body(
-                &engine,
-                &http_context,
-                EventType::ResponseBodyChunk,
-                &mut upstream_conn,
-                &mut downstream_conn.stream,
-                response.body_mode,
-                max_http_head_bytes,
-                &runtime_governor,
-                &mut response_observer,
-            )
-            .await;
-            let response_body_bytes = match response_body_result {
-                Ok(bytes) => bytes,
-                Err(error) => {
-                    emit_http1_relay_error_close(
-                        &engine,
-                        &http_context,
-                        "response body relay failed",
-                        &error,
-                        bytes_from_client,
-                        bytes_from_server,
-                    );
-                    return Ok(());
-                }
-            };
-            bytes_from_server += response_body_bytes;
-        }
+        let response_body_bytes = match relay_http1_response_with_hooks(
+            Arc::clone(&engine),
+            Arc::clone(&runtime_governor),
+            Arc::clone(&flow_hooks),
+            &tunnel_context,
+            &http_context,
+            &response,
+            &mut upstream_conn,
+            &mut downstream_conn.stream,
+            max_http_head_bytes,
+            bytes_from_client,
+            bytes_from_server,
+        )
+        .await
+        {
+            Ok(bytes) => bytes,
+            Err(()) => return Ok(()),
+        };
+        bytes_from_server += response_body_bytes;
         if flow_body_budget_exceeded(
             &engine,
             &http_context,
@@ -285,7 +317,6 @@ where
         ) {
             return Ok(());
         }
-
         if request.connection_close
             || response.connection_close
             || response.body_mode == HttpBodyMode::CloseDelimited
@@ -302,7 +333,6 @@ where
         }
     }
 }
-
 fn flow_body_budget_exceeded<P, S>(
     engine: &Arc<MitmEngine<P, S>>,
     context: &FlowContext,

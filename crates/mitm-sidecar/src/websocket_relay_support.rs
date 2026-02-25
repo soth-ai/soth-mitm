@@ -1,6 +1,7 @@
 async fn finalize_websocket_upgrade<P, S, D, U>(
     engine: Arc<MitmEngine<P, S>>,
     runtime_governor: Arc<runtime_governor::RuntimeGovernor>,
+    flow_hooks: Arc<dyn FlowHooks>,
     tunnel_context: &FlowContext,
     downstream: BufferedConn<D>,
     upstream: BufferedConn<U>,
@@ -20,6 +21,7 @@ where
     match relay_websocket_connection(
         Arc::clone(&engine),
         runtime_governor,
+        flow_hooks,
         websocket_context.clone(),
         downstream,
         upstream,
