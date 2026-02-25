@@ -10,6 +10,7 @@ strict_tools=0
 skip_network=1
 enforce_faults=0
 fail_fast=1
+strict_soak=0
 list_lanes=0
 
 profiles=(stress parity benchmark)
@@ -21,6 +22,7 @@ cli_strict_tools=""
 cli_skip_network=""
 cli_enforce_faults=""
 cli_fail_fast=""
+cli_strict_soak=""
 
 registry_lane_ids=()
 declare -A lane_category=()
@@ -48,6 +50,7 @@ Options:
   --no-enforce-faults       Disable enforced live fault probes
   --fail-fast               Stop at first lane failure
   --no-fail-fast            Continue running remaining lanes after a failure
+  --strict-soak             Enforce strict runtime-soak gate settings on soak lanes
   --list-lanes              Print registered lanes and exit
   -h, --help                Show this help
 
@@ -123,6 +126,9 @@ load_config() {
   fi
   if [[ -n "${FAIL_FAST:-}" ]]; then
     fail_fast="$(parse_bool "$FAIL_FAST")"
+  fi
+  if [[ -n "${SOAK_STRICT_GATE:-}" ]]; then
+    strict_soak="$(parse_bool "$SOAK_STRICT_GATE")"
   fi
 }
 
@@ -250,6 +256,10 @@ while [[ $# -gt 0 ]]; do
       cli_fail_fast=0
       shift
       ;;
+    --strict-soak)
+      cli_strict_soak=1
+      shift
+      ;;
     --list-lanes)
       list_lanes=1
       shift
@@ -288,6 +298,9 @@ if [[ -n "$cli_enforce_faults" ]]; then
 fi
 if [[ -n "$cli_fail_fast" ]]; then
   fail_fast="$cli_fail_fast"
+fi
+if [[ -n "$cli_strict_soak" ]]; then
+  strict_soak="$cli_strict_soak"
 fi
 
 load_registry
@@ -342,6 +355,16 @@ for lane_id in "${selected_lanes[@]}"; do
   if [[ "$enforce_faults" -eq 1 && "${lane_supports_enforce_faults[$lane_id]}" == "1" ]]; then
     lane_cmd+=("--enforce-faults")
   fi
+  if [[ "$strict_soak" -eq 1 ]]; then
+    case "$lane_id" in
+      phase5_runtime_soak)
+        lane_cmd+=("--strict-gate")
+        ;;
+      phase6_reliability_integration)
+        lane_cmd+=("--strict-soak")
+        ;;
+    esac
+  fi
 
   echo "[lane:${lane_id}] ${lane_cmd[*]}"
   if "${lane_cmd[@]}" >"$lane_report_dir/run.log" 2>&1; then
@@ -380,6 +403,7 @@ skipped_count=$(( ${#selected_lanes[@]} - run_count ))
   echo "- skip_network: ${skip_network}"
   echo "- enforce_faults: ${enforce_faults}"
   echo "- fail_fast: ${fail_fast}"
+  echo "- strict_soak: ${strict_soak}"
   echo "- selected_lane_count: ${#selected_lanes[@]}"
   echo "- executed_lane_count: ${run_count}"
   echo "- skipped_after_failure: ${skipped_count}"

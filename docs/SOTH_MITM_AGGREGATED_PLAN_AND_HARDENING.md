@@ -1147,6 +1147,7 @@ This checklist turns `LIGHTWEIGHT_PROXY_REPO_IMPLEMENTATION_PLAN.md` into an exe
   - [x] Implementation start: runtime budget hooks wired into HTTP body relay (`content-length`, `chunked`, `close-delimited`), WebSocket frame/payload relay, and HTTP/2 data/trailer forwarding.
   - [x] Implementation start: runtime tripwire metric `budget_denial_count` added and incremented on in-flight reservation denial + flow-permit saturation.
   - [x] Implementation closure: mixed-traffic soak gate lane added (`crates/mitm-sidecar/tests/mixed_traffic_soak.rs`, `scripts/p5_runtime_soak.sh`) and wired into configurable profiles (`testing/lanes/registry.tsv`, `scripts/run_testing_plan.sh`).
+  - [x] Implementation closure: strict soak launch-gate wiring added (`--strict-gate` on `scripts/p5_runtime_soak.sh`, `--strict-soak` on `scripts/run_testing_plan.sh`, Docker entrypoint `scripts/docker_run_p5_runtime_soak.sh`).
   - [x] Reliability contract `1-6` implementation:
     - [x] failure-class matrix and hard invariants documented (`docs/testing/reliability-invariants.md`).
     - [x] invariants wired to executable gate lane (`scripts/p5_reliability_contract.sh`, `testing/lanes/registry.tsv`).

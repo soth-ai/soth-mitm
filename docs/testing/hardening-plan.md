@@ -81,6 +81,7 @@ Use the configurable runner when selecting stress/parity/benchmark/soak subsets:
 ./scripts/run_testing_plan.sh --profile stress
 ./scripts/run_testing_plan.sh --profile parity --profile benchmark --strict-tools
 SOTH_MITM_SOAK_DURATION_SECONDS=300 ./scripts/run_testing_plan.sh --profile soak
+./scripts/run_testing_plan.sh --profile soak --strict-soak
 ./scripts/run_testing_plan.sh --lane phase4_differential_validation
 ./scripts/run_testing_plan.sh --config testing/test-plan.env
 ```
@@ -89,6 +90,7 @@ Docker entrypoint:
 
 ```bash
 ./scripts/docker_run_testing.sh --config testing/test-plan.env
+./scripts/docker_run_p5_runtime_soak.sh
 ```
 
 Lane registry and defaults:

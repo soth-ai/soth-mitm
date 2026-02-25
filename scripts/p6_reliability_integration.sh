@@ -3,6 +3,7 @@ set -euo pipefail
 
 report_dir="artifacts/p6-reliability-integration"
 strict_tools=0
+strict_soak=0
 soak_duration_seconds="${SOTH_MITM_SOAK_DURATION_SECONDS:-21600}"
 soak_min_iterations="${SOTH_MITM_SOAK_MIN_ITERATIONS:-1}"
 soak_exchange_timeout_seconds="${SOTH_MITM_SOAK_EXCHANGE_TIMEOUT_SECONDS:-60}"
@@ -18,6 +19,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --strict-tools)
       strict_tools=1
+      shift
+      ;;
+    --strict-soak)
+      strict_soak=1
       shift
       ;;
     --duration-seconds)
@@ -83,13 +88,24 @@ else
     --report-dir "$report_dir/phase5-http2-resilience" || true
 fi
 
-run_case phase5_runtime_soak \
-  env \
-    SOTH_MITM_SOAK_DURATION_SECONDS="$soak_duration_seconds" \
-    SOTH_MITM_SOAK_MIN_ITERATIONS="$soak_min_iterations" \
-    SOTH_MITM_SOAK_EXCHANGE_TIMEOUT_SECONDS="$soak_exchange_timeout_seconds" \
-    ./scripts/p5_runtime_soak.sh \
-    --report-dir "$report_dir/phase5-runtime-soak" || true
+if [[ "$strict_soak" -eq 1 ]]; then
+  run_case phase5_runtime_soak \
+    env \
+      SOTH_MITM_SOAK_DURATION_SECONDS="$soak_duration_seconds" \
+      SOTH_MITM_SOAK_MIN_ITERATIONS="$soak_min_iterations" \
+      SOTH_MITM_SOAK_EXCHANGE_TIMEOUT_SECONDS="$soak_exchange_timeout_seconds" \
+      ./scripts/p5_runtime_soak.sh \
+      --strict-gate \
+      --report-dir "$report_dir/phase5-runtime-soak" || true
+else
+  run_case phase5_runtime_soak \
+    env \
+      SOTH_MITM_SOAK_DURATION_SECONDS="$soak_duration_seconds" \
+      SOTH_MITM_SOAK_MIN_ITERATIONS="$soak_min_iterations" \
+      SOTH_MITM_SOAK_EXCHANGE_TIMEOUT_SECONDS="$soak_exchange_timeout_seconds" \
+      ./scripts/p5_runtime_soak.sh \
+      --report-dir "$report_dir/phase5-runtime-soak" || true
+fi
 
 run_case mixed_traffic_close_reason_determinism \
   env \
@@ -115,6 +131,7 @@ failed="$(awk '$2 != "pass" {print $1}' "$status_tsv" || true)"
   echo
   echo "Config:"
   echo "- strict_tools: ${strict_tools}"
+  echo "- strict_soak: ${strict_soak}"
   echo "- soak_duration_seconds: ${soak_duration_seconds}"
   echo "- soak_min_iterations: ${soak_min_iterations}"
   echo "- soak_exchange_timeout_seconds: ${soak_exchange_timeout_seconds}"

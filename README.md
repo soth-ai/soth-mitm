@@ -64,6 +64,8 @@ Run configurable stress/parity/benchmark/soak plans inside Docker:
 ./scripts/docker_run_testing.sh --profile stress
 ./scripts/docker_run_testing.sh --profile parity --profile benchmark --strict-tools
 SOTH_MITM_SOAK_DURATION_SECONDS=300 ./scripts/docker_run_testing.sh --profile soak
+./scripts/docker_run_testing.sh --profile soak --strict-soak
+SOTH_MITM_SOAK_DURATION_SECONDS=21600 ./scripts/docker_run_p5_runtime_soak.sh
 ./scripts/docker_run_testing.sh --lane phase4_differential_validation
 ./scripts/docker_run_testing.sh --config testing/test-plan.env
 ```
