@@ -8,28 +8,32 @@ where
 {
     let _in_flight_lease =
         runtime_governor.reserve_in_flight_or_error(max_connect_head_bytes, "connect_head_read")?;
-    let mut data = Vec::with_capacity(1024);
-    let mut byte = [0_u8; 1];
 
-    while !data.windows(4).any(|window| window == b"\r\n\r\n") {
-        let read = read_with_idle_timeout(stream, &mut byte, "connect_head_read").await?;
-        if read == 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "client closed before CONNECT headers completed",
-            ));
+    with_stream_stage_timeout("connect_head_total", async {
+        let mut data = Vec::with_capacity(1024);
+        let mut byte = [0_u8; 1];
+
+        while !data.windows(4).any(|window| window == b"\r\n\r\n") {
+            let read = read_with_idle_timeout(stream, &mut byte, "connect_head_read").await?;
+            if read == 0 {
+                return Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "client closed before CONNECT headers completed",
+                ));
+            }
+
+            data.push(byte[0]);
+            if data.len() > max_connect_head_bytes {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "CONNECT header exceeded configured limit",
+                ));
+            }
         }
 
-        data.push(byte[0]);
-        if data.len() > max_connect_head_bytes {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "CONNECT header exceeded configured limit",
-            ));
-        }
-    }
-
-    Ok(data)
+        Ok(data)
+    })
+    .await
 }
 
 async fn read_until_pattern<S: AsyncRead + Unpin>(
@@ -40,34 +44,38 @@ async fn read_until_pattern<S: AsyncRead + Unpin>(
 ) -> io::Result<Option<Vec<u8>>> {
     let _in_flight_lease =
         runtime_governor.reserve_in_flight_or_error(max_bytes, "http_head_read")?;
-    loop {
-        if let Some(start) = find_subsequence(&conn.read_buf, pattern) {
-            let end = start + pattern.len();
-            let bytes = conn.read_buf.drain(..end).collect::<Vec<_>>();
-            return Ok(Some(bytes));
-        }
-
-        if conn.read_buf.len() > max_bytes {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "HTTP header exceeded configured limit",
-            ));
-        }
-
-        let mut chunk = [0_u8; IO_CHUNK_SIZE];
-        let read =
-            read_with_idle_timeout(&mut conn.stream, &mut chunk, "http_head_pattern_read").await?;
-        if read == 0 {
-            if conn.read_buf.is_empty() {
-                return Ok(None);
+    with_stream_stage_timeout("http_head_pattern_total", async {
+        loop {
+            if let Some(start) = find_subsequence(&conn.read_buf, pattern) {
+                let end = start + pattern.len();
+                let bytes = conn.read_buf.drain(..end).collect::<Vec<_>>();
+                return Ok(Some(bytes));
             }
-            return Err(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "connection closed before message boundary was reached",
-            ));
+
+            if conn.read_buf.len() > max_bytes {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "HTTP header exceeded configured limit",
+                ));
+            }
+
+            let mut chunk = [0_u8; IO_CHUNK_SIZE];
+            let read =
+                read_with_idle_timeout(&mut conn.stream, &mut chunk, "http_head_pattern_read")
+                    .await?;
+            if read == 0 {
+                if conn.read_buf.is_empty() {
+                    return Ok(None);
+                }
+                return Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "connection closed before message boundary was reached",
+                ));
+            }
+            conn.read_buf.extend_from_slice(&chunk[..read]);
         }
-        conn.read_buf.extend_from_slice(&chunk[..read]);
-    }
+    })
+    .await
 }
 
 fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
