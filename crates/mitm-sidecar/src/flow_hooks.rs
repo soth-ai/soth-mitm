@@ -55,6 +55,7 @@ pub trait FlowHooks: Send + Sync + 'static {
     fn should_intercept_tls(
         &self,
         _context: FlowContext,
+        _process_info: Option<PolicyProcessInfo>,
     ) -> Pin<Box<dyn Future<Output = bool> + Send>> {
         Box::pin(async { true })
     }

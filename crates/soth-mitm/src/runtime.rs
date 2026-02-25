@@ -12,8 +12,12 @@ use crate::errors::MitmError;
 use crate::handler::InterceptHandler;
 use crate::metrics::{MetricsEventConsumer, ProxyMetricsStore};
 
+#[path = "runtime/connection_meta.rs"]
+mod connection_meta;
 #[path = "runtime/flow_hooks.rs"]
 mod flow_hooks;
+#[path = "runtime/handler_guard.rs"]
+mod handler_guard;
 
 pub(crate) type RuntimeServer = SidecarServer<DestinationPolicyEngine, MetricsEventConsumer>;
 pub(crate) struct RuntimeServerBundle {
@@ -28,7 +32,7 @@ pub(crate) fn build_runtime_server<H: InterceptHandler>(
 ) -> Result<RuntimeServerBundle, MitmError> {
     let config_handle = RuntimeConfigHandle::from_config(config)?;
     let policy = config_handle.policy_engine();
-    let sink = MetricsEventConsumer::new(metrics_store);
+    let sink = MetricsEventConsumer::new(Arc::clone(&metrics_store));
     let core_config = map_core_config(config);
     let sidecar_config = SidecarConfig {
         listen_addr: core_config.listen_addr.clone(),
@@ -45,7 +49,8 @@ pub(crate) fn build_runtime_server<H: InterceptHandler>(
 
     let engine = MitmEngine::new_checked(core_config, policy, sink)
         .map_err(|error| MitmError::InvalidConfig(error.to_string()))?;
-    let flow_hooks: Arc<dyn FlowHooks> = flow_hooks::build_handler_flow_hooks(config, handler);
+    let flow_hooks: Arc<dyn FlowHooks> =
+        flow_hooks::build_handler_flow_hooks(config, handler, Arc::clone(&metrics_store));
     let server = SidecarServer::new_with_flow_hooks(sidecar_config, engine, flow_hooks)
         .map_err(MitmError::from)?;
     Ok(RuntimeServerBundle {
@@ -187,7 +192,6 @@ mod tests {
     fn destination_scope_intercept_vs_passthrough() {
         let engine = policy(InterceptionScope {
             destinations: vec!["API.Example.COM:443".to_string()],
-            process_allowlist: Vec::new(),
             passthrough_unlisted: true,
         });
         let intercept = engine.decide(&PolicyInput {
@@ -213,7 +217,6 @@ mod tests {
     fn passthrough_unlisted_false_rst() {
         let engine = policy(InterceptionScope {
             destinations: vec!["api.example.com:443".to_string()],
-            process_allowlist: Vec::new(),
             passthrough_unlisted: false,
         });
         let decision = engine.decide(&PolicyInput {

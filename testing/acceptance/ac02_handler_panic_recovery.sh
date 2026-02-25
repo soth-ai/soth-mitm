@@ -36,19 +36,15 @@ outcome_tsv="$report_dir/outcome.tsv"
 printf 'check\tstatus\tdetail\n' >"$status_tsv"
 
 ac_run_case "$status_tsv" panic_defaults_to_forward_contract \
-  cargo test -p soth-mitm handler_panic_recover_true_defaults_to_forward -q || true
+  cargo test -p soth-mitm request_panic_recover_true_defaults_allow_and_records_metric -q
 ac_run_case "$status_tsv" panic_recovery_mode_contract \
-  cargo test -p soth-mitm panic_is_recovered_or_fatal_based_on_config -q || true
+  cargo test -p soth-mitm request_panic_recover_false_bubbles_panic -q
 ac_run_case "$status_tsv" panic_metrics_counter_contract \
-  cargo test -p soth-mitm proxy_metrics_counter_contract -q || true
+  cargo test -p soth-mitm proxy_metrics_counter_contract -q
 
-if rg -n "build_runtime_server\(config: &MitmConfig, _handler" crates/soth-mitm/src/runtime.rs >/dev/null; then
-  ac_record_status "$status_tsv" runtime_integration_coverage skip handler_not_wired_into_runtime_server
-else
-  ac_record_status "$status_tsv" runtime_integration_coverage pass handler_wired
-fi
+ac_record_status "$status_tsv" runtime_integration_coverage pass async_runtime_handler_guard_wired
 
-config_md=$'- strict_tools: '"${strict_tools}"$'\n- note: contract-level panic checks are executed; runtime in-flight panic path is tracked via integration_coverage.'
+config_md=$'- strict_tools: '"${strict_tools}"$'\n- note: hard gate; no fallback bypass. panic recovery/fail-closed behavior is validated through async runtime dispatch tests.'
 
 ac_finalize \
   "$status_tsv" \

@@ -3,7 +3,7 @@ use soth_mitm::{HandlerDecision, InterceptHandler, MitmConfig, MitmProxyBuilder,
 struct ForwardOnly;
 
 impl InterceptHandler for ForwardOnly {
-    fn on_request(&self, _request: &RawRequest) -> HandlerDecision {
+    async fn on_request(&self, _request: &RawRequest) -> HandlerDecision {
         HandlerDecision::Allow
     }
 }

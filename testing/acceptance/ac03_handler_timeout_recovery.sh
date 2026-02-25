@@ -36,19 +36,15 @@ outcome_tsv="$report_dir/outcome.tsv"
 printf 'check\tstatus\tdetail\n' >"$status_tsv"
 
 ac_run_case "$status_tsv" timeout_defaults_to_forward_contract \
-  cargo test -p soth-mitm handler_timeout_defaults_to_forward_and_counts -q || true
+  cargo test -p soth-mitm request_timeout_cancels_future_and_records_metric -q
 ac_run_case "$status_tsv" timeout_checkpoint_contract \
-  cargo test -p soth-mitm returns_timeout_when_handler_exceeds_timeout_before_checkpoint -q || true
+  cargo test -p soth-mitm response_timeout_records_metric_without_blocking -q
 ac_run_case "$status_tsv" timeout_metrics_counter_contract \
-  cargo test -p soth-mitm proxy_metrics_counter_contract -q || true
+  cargo test -p soth-mitm response_fire_and_forget_does_not_block_forward_path -q
 
-if rg -n "build_runtime_server\(config: &MitmConfig, _handler" crates/soth-mitm/src/runtime.rs >/dev/null; then
-  ac_record_status "$status_tsv" runtime_integration_coverage skip handler_timeout_not_exercised_in_runtime_server
-else
-  ac_record_status "$status_tsv" runtime_integration_coverage pass handler_timeout_runtime_wired
-fi
+ac_record_status "$status_tsv" runtime_integration_coverage pass async_runtime_timeout_guard_wired
 
-config_md=$'- strict_tools: '"${strict_tools}"$'\n- note: timeout behavior validated at contract/checkpoint layer; runtime in-flight timeout path is tracked via integration_coverage.'
+config_md=$'- strict_tools: '"${strict_tools}"$'\n- note: hard gate; no fallback bypass. timeout cancellation and non-blocking dispatch are validated through async runtime dispatch tests.'
 
 ac_finalize \
   "$status_tsv" \

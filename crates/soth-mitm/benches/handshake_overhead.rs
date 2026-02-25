@@ -56,7 +56,7 @@ struct BenchResult {
 struct ForwardHandler;
 
 impl InterceptHandler for ForwardHandler {
-    fn on_request(&self, _request: &RawRequest) -> HandlerDecision {
+    async fn on_request(&self, _request: &RawRequest) -> HandlerDecision {
         HandlerDecision::Allow
     }
 }

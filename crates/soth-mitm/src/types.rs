@@ -46,7 +46,6 @@ pub struct StreamChunk {
     pub payload: Bytes,
     pub sequence: u64,
     pub frame_kind: FrameKind,
-    pub connection_meta: ConnectionMeta,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

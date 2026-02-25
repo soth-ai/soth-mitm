@@ -55,6 +55,7 @@ lanes=(
   $'AC-10\tac10_macos_process_attribution\ttesting/acceptance/ac10_macos_process_attribution.sh'
   $'AC-11\tac11_syscall_boundary_audit\ttesting/acceptance/ac11_syscall_boundary_audit.sh'
   $'AC-12\tac12_dependency_policy\ttesting/acceptance/ac12_dependency_policy.sh'
+  $'AC-13\tac13_async_handler_runtime_safety\ttesting/acceptance/ac13_async_handler_runtime_safety.sh'
 )
 
 failed_acs=()
@@ -143,7 +144,7 @@ elif [[ "$skipped_count" -gt 0 ]]; then
 fi
 
 {
-  echo "# P6 Acceptance Matrix (AC-01 .. AC-12)"
+  echo "# P6 Acceptance Matrix (AC-01 .. AC-13)"
   echo
   echo "Generated: $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
   echo

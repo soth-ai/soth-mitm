@@ -39,11 +39,23 @@ pub(crate) trait ProcessAttributor: Send + Sync + 'static {
     ) -> Pin<Box<dyn Future<Output = Option<ProcessInfo>> + Send + 'a>>;
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CachedLookupResult {
+    process_info: Option<ProcessInfo>,
+    timed_out: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ProcessLookupResult {
+    pub(crate) process_info: Option<ProcessInfo>,
+    pub(crate) timed_out: bool,
+}
+
 #[derive(Debug)]
 pub(crate) struct ProcessLookupService<A: ProcessAttributor> {
     attributor: Arc<A>,
     timeout: Duration,
-    cache: Mutex<LruCache<Uuid, Option<ProcessInfo>>>,
+    cache: Mutex<LruCache<Uuid, CachedLookupResult>>,
 }
 
 impl<A: ProcessAttributor> ProcessLookupService<A> {
@@ -56,34 +68,44 @@ impl<A: ProcessAttributor> ProcessLookupService<A> {
         }
     }
 
-    pub(crate) async fn resolve(&self, connection: &ConnectionInfo) -> Option<ProcessInfo> {
+    pub(crate) async fn resolve_with_status(
+        &self,
+        connection: &ConnectionInfo,
+    ) -> ProcessLookupResult {
         let connection_id = connection.connection_id;
         let cached = {
             let mut cache = self.cache.lock().await;
             cache.get(&connection_id).cloned()
         };
         if let Some(cached) = cached {
-            return cached;
+            return ProcessLookupResult {
+                process_info: cached.process_info,
+                timed_out: cached.timed_out,
+            };
         }
 
-        let resolved = tokio::time::timeout(self.timeout, self.attributor.lookup(connection))
-            .await
-            .ok()
-            .flatten();
+        let (resolved, timed_out) =
+            match tokio::time::timeout(self.timeout, self.attributor.lookup(connection)).await {
+                Ok(process_info) => (process_info, false),
+                Err(_) => (None, true),
+            };
         let mut cache = self.cache.lock().await;
-        cache.put(connection_id, resolved.clone());
-        resolved
+        cache.put(
+            connection_id,
+            CachedLookupResult {
+                process_info: resolved.clone(),
+                timed_out,
+            },
+        );
+        ProcessLookupResult {
+            process_info: resolved,
+            timed_out,
+        }
     }
 
     pub(crate) async fn remove_connection(&self, connection_id: Uuid) {
         let mut cache = self.cache.lock().await;
         let _ = cache.pop(&connection_id);
-    }
-
-    pub(crate) async fn bind_connection_info(&self, connection: &ConnectionInfo) -> ConnectionInfo {
-        let mut updated = connection.clone();
-        updated.process_info = self.resolve(connection).await;
-        updated
     }
 }
 
@@ -147,17 +169,19 @@ mod tests {
         let service = ProcessLookupService::new(Arc::clone(&attributor), Duration::from_millis(5));
         let connection = sample_connection();
 
-        let process = service.resolve(&connection).await;
+        let first = service.resolve_with_status(&connection).await;
         assert!(
-            process.is_none(),
+            first.process_info.is_none(),
             "timed out process lookup should return None"
         );
+        assert!(first.timed_out, "timed out lookup should be tagged");
 
-        let second = service.resolve(&connection).await;
+        let second = service.resolve_with_status(&connection).await;
         assert!(
-            second.is_none(),
+            second.process_info.is_none(),
             "once timed out and cached, repeated lookup should stay None"
         );
+        assert!(second.timed_out, "cached timeout should preserve status");
         assert_eq!(
             attributor.calls(),
             1,
@@ -171,8 +195,8 @@ mod tests {
         let service = ProcessLookupService::new(Arc::clone(&attributor), Duration::from_millis(50));
         let connection = sample_connection();
 
-        let first = service.bind_connection_info(&connection).await;
-        let second = service.bind_connection_info(&first).await;
+        let first = service.resolve_with_status(&connection).await;
+        let second = service.resolve_with_status(&connection).await;
 
         assert!(
             first.process_info.is_some(),
@@ -182,6 +206,8 @@ mod tests {
             second.process_info.is_some(),
             "cached resolve must attach process"
         );
+        assert!(!first.timed_out, "successful lookup should not timeout");
+        assert!(!second.timed_out, "cached success should not timeout");
         assert_eq!(
             attributor.calls(),
             1,

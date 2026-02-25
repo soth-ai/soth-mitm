@@ -10,6 +10,7 @@ pub struct MitmConfig {
     pub bind: SocketAddr,
     pub unix_socket_path: Option<PathBuf>,
     pub interception: InterceptionScope,
+    pub process_attribution: ProcessAttributionConfig,
     pub tls: TlsConfig,
     pub upstream: UpstreamConfig,
     pub connection_pool: ConnectionPoolConfig,
@@ -20,7 +21,6 @@ pub struct MitmConfig {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InterceptionScope {
     pub destinations: Vec<String>,
-    pub process_allowlist: Vec<String>,
     pub passthrough_unlisted: bool,
 }
 
@@ -30,7 +30,12 @@ pub struct TlsConfig {
     pub ca_key_path: PathBuf,
     pub min_version: TlsVersion,
     pub capture_fingerprint: bool,
-    pub process_info: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProcessAttributionConfig {
+    pub enabled: bool,
+    pub lookup_timeout_ms: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -52,12 +57,13 @@ pub struct ConnectionPoolConfig {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BodyConfig {
     pub max_size_bytes: usize,
-    pub buffer_streaming: bool,
+    pub buffer_request_bodies: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HandlerConfig {
-    pub timeout_ms: u64,
+    pub request_timeout_ms: u64,
+    pub response_timeout_ms: u64,
     pub recover_from_panics: bool,
 }
 
@@ -69,6 +75,7 @@ impl Default for MitmConfig {
                 .expect("default bind address must parse"),
             unix_socket_path: None,
             interception: InterceptionScope::default(),
+            process_attribution: ProcessAttributionConfig::default(),
             tls: TlsConfig::default(),
             upstream: UpstreamConfig::default(),
             connection_pool: ConnectionPoolConfig::default(),
@@ -82,7 +89,6 @@ impl Default for InterceptionScope {
     fn default() -> Self {
         Self {
             destinations: Vec::new(),
-            process_allowlist: Vec::new(),
             passthrough_unlisted: true,
         }
     }
@@ -95,7 +101,15 @@ impl Default for TlsConfig {
             ca_key_path: PathBuf::from("./certs/soth-mitm-ca-key.pem"),
             min_version: TlsVersion::Tls12,
             capture_fingerprint: true,
-            process_info: true,
+        }
+    }
+}
+
+impl Default for ProcessAttributionConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            lookup_timeout_ms: 5_000,
         }
     }
 }
@@ -126,7 +140,7 @@ impl Default for BodyConfig {
     fn default() -> Self {
         Self {
             max_size_bytes: 10 * 1024 * 1024,
-            buffer_streaming: false,
+            buffer_request_bodies: false,
         }
     }
 }
@@ -134,7 +148,8 @@ impl Default for BodyConfig {
 impl Default for HandlerConfig {
     fn default() -> Self {
         Self {
-            timeout_ms: 5_000,
+            request_timeout_ms: 5_000,
+            response_timeout_ms: 5_000,
             recover_from_panics: true,
         }
     }
@@ -149,6 +164,11 @@ impl MitmConfig {
         }
         for destination in &self.interception.destinations {
             normalize_destination_key(destination)?;
+        }
+        if self.process_attribution.enabled && self.process_attribution.lookup_timeout_ms == 0 {
+            return Err(MitmError::InvalidConfig(
+                "process_attribution.lookup_timeout_ms must be greater than zero".to_string(),
+            ));
         }
         if self.upstream.timeout_ms == 0 {
             return Err(MitmError::InvalidConfig(
@@ -165,9 +185,14 @@ impl MitmConfig {
                 "body.max_size_bytes must be greater than zero".to_string(),
             ));
         }
-        if self.handler.timeout_ms == 0 {
+        if self.handler.request_timeout_ms == 0 {
             return Err(MitmError::InvalidConfig(
-                "handler.timeout_ms must be greater than zero".to_string(),
+                "handler.request_timeout_ms must be greater than zero".to_string(),
+            ));
+        }
+        if self.handler.response_timeout_ms == 0 {
+            return Err(MitmError::InvalidConfig(
+                "handler.response_timeout_ms must be greater than zero".to_string(),
             ));
         }
         if self.connection_pool.max_connections_per_host == 0 {

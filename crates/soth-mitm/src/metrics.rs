@@ -10,6 +10,8 @@ pub struct ProxyMetrics {
     pub handler_timeout_count: u64,
     pub upstream_connect_error_count: u64,
     pub upstream_timeout_count: u64,
+    pub process_attribution_failure_count: u64,
+    pub process_attribution_timeout_count: u64,
 }
 
 #[derive(Debug, Default)]
@@ -20,6 +22,8 @@ pub(crate) struct ProxyMetricsStore {
     handler_timeout_count: AtomicU64,
     upstream_connect_error_count: AtomicU64,
     upstream_timeout_count: AtomicU64,
+    process_attribution_failure_count: AtomicU64,
+    process_attribution_timeout_count: AtomicU64,
 }
 
 impl ProxyMetricsStore {
@@ -31,6 +35,12 @@ impl ProxyMetricsStore {
             handler_timeout_count: self.handler_timeout_count.load(Ordering::Relaxed),
             upstream_connect_error_count: self.upstream_connect_error_count.load(Ordering::Relaxed),
             upstream_timeout_count: self.upstream_timeout_count.load(Ordering::Relaxed),
+            process_attribution_failure_count: self
+                .process_attribution_failure_count
+                .load(Ordering::Relaxed),
+            process_attribution_timeout_count: self
+                .process_attribution_timeout_count
+                .load(Ordering::Relaxed),
         }
     }
 
@@ -53,6 +63,16 @@ impl ProxyMetricsStore {
 
     pub(crate) fn record_handler_timeout(&self) {
         self.handler_timeout_count.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub(crate) fn record_process_attribution_failure(&self) {
+        self.process_attribution_failure_count
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub(crate) fn record_process_attribution_timeout(&self) {
+        self.process_attribution_timeout_count
+            .fetch_add(1, Ordering::Relaxed);
     }
 }
 
@@ -98,5 +118,7 @@ mod tests {
         assert_eq!(snapshot.handler_panic_count, 1);
         assert_eq!(snapshot.upstream_connect_error_count, 0);
         assert_eq!(snapshot.upstream_timeout_count, 0);
+        assert_eq!(snapshot.process_attribution_failure_count, 0);
+        assert_eq!(snapshot.process_attribution_timeout_count, 0);
     }
 }

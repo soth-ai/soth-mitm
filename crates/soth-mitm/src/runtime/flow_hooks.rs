@@ -1,10 +1,14 @@
 use crate::config::MitmConfig;
 use crate::handler::InterceptHandler;
+use crate::metrics::ProxyMetricsStore;
 use crate::process::{PlatformProcessAttributor, ProcessLookupService};
-use crate::types::{
-    ConnectionInfo, ConnectionMeta, FrameKind, ProcessInfo, RawRequest, RawResponse, SocketFamily,
-    StreamChunk,
+use crate::runtime::connection_meta::{
+    connection_meta_from_accept_context, lookup_connection_info_from_flow_context,
+    policy_process_info_from_runtime, process_info_from_unix_client_addr,
+    runtime_process_info_from_policy,
 };
+use crate::runtime::handler_guard::HandlerCallbackGuard;
+use crate::types::{ConnectionMeta, FrameKind, RawRequest, RawResponse, StreamChunk};
 use crate::HandlerDecision;
 use bytes::Bytes;
 use mitm_observe::FlowContext;
@@ -14,8 +18,6 @@ use mitm_sidecar::{
 };
 use std::collections::HashMap;
 use std::future::Future;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
-use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
@@ -24,6 +26,8 @@ use uuid::Uuid;
 #[derive(Debug)]
 struct HandlerFlowHooks<H: InterceptHandler> {
     handler: Arc<H>,
+    metrics_store: Arc<ProxyMetricsStore>,
+    callback_guard: Arc<HandlerCallbackGuard>,
     process_lookup: Option<Arc<ProcessLookupService<PlatformProcessAttributor>>>,
     stream_sequences: Arc<Mutex<HashMap<u64, u64>>>,
     connection_meta_by_flow: Arc<Mutex<HashMap<u64, ConnectionMeta>>>,
@@ -31,10 +35,14 @@ struct HandlerFlowHooks<H: InterceptHandler> {
 impl<H: InterceptHandler> HandlerFlowHooks<H> {
     fn new(
         handler: Arc<H>,
+        metrics_store: Arc<ProxyMetricsStore>,
+        callback_guard: Arc<HandlerCallbackGuard>,
         process_lookup: Option<Arc<ProcessLookupService<PlatformProcessAttributor>>>,
     ) -> Self {
         Self {
             handler,
+            metrics_store,
+            callback_guard,
             process_lookup,
             stream_sequences: Arc::new(Mutex::new(HashMap::new())),
             connection_meta_by_flow: Arc::new(Mutex::new(HashMap::new())),
@@ -47,6 +55,7 @@ impl<H: InterceptHandler> FlowHooks for HandlerFlowHooks<H> {
         context: FlowContext,
     ) -> Pin<Box<dyn Future<Output = Option<mitm_policy::ProcessInfo>> + Send>> {
         let process_lookup = self.process_lookup.clone();
+        let metrics_store = Arc::clone(&self.metrics_store);
         Box::pin(async move {
             let Some(lookup) = process_lookup.as_ref() else {
                 return None;
@@ -55,13 +64,18 @@ impl<H: InterceptHandler> FlowHooks for HandlerFlowHooks<H> {
             {
                 return Some(policy_process_info_from_runtime(&uds_process_info));
             }
-            let lookup_info = lookup
-                .bind_connection_info(&lookup_connection_info_from_flow_context(&context))
+            let result = lookup
+                .resolve_with_status(&lookup_connection_info_from_flow_context(&context))
                 .await;
-            lookup_info
-                .process_info
-                .as_ref()
-                .map(policy_process_info_from_runtime)
+            if result.timed_out {
+                metrics_store.record_process_attribution_timeout();
+                return None;
+            }
+            let Some(process_info) = result.process_info.as_ref() else {
+                metrics_store.record_process_attribution_failure();
+                return None;
+            };
+            Some(policy_process_info_from_runtime(process_info))
         })
     }
     fn on_connection_open(
@@ -70,6 +84,7 @@ impl<H: InterceptHandler> FlowHooks for HandlerFlowHooks<H> {
         process_info: Option<mitm_policy::ProcessInfo>,
     ) -> Pin<Box<dyn Future<Output = ()> + Send>> {
         let handler = Arc::clone(&self.handler);
+        let callback_guard = Arc::clone(&self.callback_guard);
         let connection_meta_by_flow = Arc::clone(&self.connection_meta_by_flow);
         Box::pin(async move {
             let connection_meta = connection_meta_from_accept_context(
@@ -77,17 +92,26 @@ impl<H: InterceptHandler> FlowHooks for HandlerFlowHooks<H> {
                 process_info.map(runtime_process_info_from_policy),
             );
             let mut guard = connection_meta_by_flow.lock().await;
-            guard.insert(context.flow_id, connection_meta);
+            guard.insert(context.flow_id, connection_meta.clone());
             drop(guard);
-            handler.on_connection_open(Uuid::from_u128(context.flow_id as u128));
+            callback_guard.run_sync(Duration::ZERO, (), || {
+                handler.on_connection_open(&connection_meta)
+            });
         })
     }
     fn should_intercept_tls(
         &self,
         context: FlowContext,
+        process_info: Option<mitm_policy::ProcessInfo>,
     ) -> Pin<Box<dyn Future<Output = bool> + Send>> {
         let handler = Arc::clone(&self.handler);
-        Box::pin(async move { handler.should_intercept_tls(&context.server_host) })
+        let callback_guard = Arc::clone(&self.callback_guard);
+        Box::pin(async move {
+            let process_info = process_info.map(runtime_process_info_from_policy);
+            callback_guard.run_sync(Duration::ZERO, false, || {
+                handler.should_intercept_tls(&context.server_host, process_info.as_ref())
+            })
+        })
     }
     fn on_tls_failure(
         &self,
@@ -95,7 +119,12 @@ impl<H: InterceptHandler> FlowHooks for HandlerFlowHooks<H> {
         error: String,
     ) -> Pin<Box<dyn Future<Output = ()> + Send>> {
         let handler = Arc::clone(&self.handler);
-        Box::pin(async move { handler.on_tls_failure(&context.server_host, &error) })
+        let callback_guard = Arc::clone(&self.callback_guard);
+        Box::pin(async move {
+            callback_guard.run_sync(Duration::ZERO, (), || {
+                handler.on_tls_failure(&context.server_host, &error)
+            })
+        })
     }
     fn on_request(
         &self,
@@ -103,6 +132,7 @@ impl<H: InterceptHandler> FlowHooks for HandlerFlowHooks<H> {
         request: SidecarRawRequest,
     ) -> Pin<Box<dyn Future<Output = RequestDecision> + Send>> {
         let handler = Arc::clone(&self.handler);
+        let callback_guard = Arc::clone(&self.callback_guard);
         let connection_meta_by_flow = Arc::clone(&self.connection_meta_by_flow);
         Box::pin(async move {
             let Some(connection_meta) =
@@ -120,7 +150,10 @@ impl<H: InterceptHandler> FlowHooks for HandlerFlowHooks<H> {
                 body: request.body,
                 connection_meta,
             };
-            match handler.on_request(&raw_request) {
+            let decision = callback_guard
+                .run_request(HandlerDecision::Allow, handler.on_request(&raw_request))
+                .await;
+            match decision {
                 HandlerDecision::Allow => RequestDecision::Allow,
                 HandlerDecision::Block { status, body } => RequestDecision::Block { status, body },
             }
@@ -132,6 +165,7 @@ impl<H: InterceptHandler> FlowHooks for HandlerFlowHooks<H> {
         response: SidecarRawResponse,
     ) -> Pin<Box<dyn Future<Output = ()> + Send>> {
         let handler = Arc::clone(&self.handler);
+        let callback_guard = Arc::clone(&self.callback_guard);
         let connection_meta_by_flow = Arc::clone(&self.connection_meta_by_flow);
         Box::pin(async move {
             let Some(connection_meta) =
@@ -145,7 +179,13 @@ impl<H: InterceptHandler> FlowHooks for HandlerFlowHooks<H> {
                 body: response.body,
                 connection_meta,
             };
-            handler.on_response(&raw_response);
+            let handler = Arc::clone(&handler);
+            let callback_guard = Arc::clone(&callback_guard);
+            tokio::spawn(async move {
+                callback_guard
+                    .run_response((), handler.on_response(&raw_response))
+                    .await;
+            });
         })
     }
     fn on_stream_chunk(
@@ -154,15 +194,10 @@ impl<H: InterceptHandler> FlowHooks for HandlerFlowHooks<H> {
         chunk: SidecarStreamChunk,
     ) -> Pin<Box<dyn Future<Output = ()> + Send>> {
         let handler = Arc::clone(&self.handler);
+        let callback_guard = Arc::clone(&self.callback_guard);
         let stream_sequences = Arc::clone(&self.stream_sequences);
-        let connection_meta_by_flow = Arc::clone(&self.connection_meta_by_flow);
         Box::pin(async move {
             let Some(frame_kind) = map_stream_frame_kind(chunk.frame_kind) else {
-                return;
-            };
-            let Some(connection_meta) =
-                connection_meta_for_context(&context, &connection_meta_by_flow).await
-            else {
                 return;
             };
             let sequence = {
@@ -177,13 +212,19 @@ impl<H: InterceptHandler> FlowHooks for HandlerFlowHooks<H> {
                 payload: chunk.payload,
                 sequence,
                 frame_kind,
-                connection_meta,
             };
-            handler.on_stream_chunk(&translated);
+            let handler = Arc::clone(&handler);
+            let callback_guard = Arc::clone(&callback_guard);
+            tokio::spawn(async move {
+                callback_guard
+                    .run_response((), handler.on_stream_chunk(&translated))
+                    .await;
+            });
         })
     }
     fn on_stream_end(&self, context: FlowContext) -> Pin<Box<dyn Future<Output = ()> + Send>> {
         let handler = Arc::clone(&self.handler);
+        let callback_guard = Arc::clone(&self.callback_guard);
         let stream_sequences = Arc::clone(&self.stream_sequences);
         let connection_meta_by_flow = Arc::clone(&self.connection_meta_by_flow);
         let process_lookup = self.process_lookup.clone();
@@ -199,23 +240,41 @@ impl<H: InterceptHandler> FlowHooks for HandlerFlowHooks<H> {
                     .remove_connection(Uuid::from_u128(context.flow_id as u128))
                     .await;
             }
-            handler.on_stream_end(Uuid::from_u128(context.flow_id as u128));
+            let connection_id = Uuid::from_u128(context.flow_id as u128);
+            callback_guard
+                .run_response((), handler.on_stream_end(connection_id))
+                .await;
+            callback_guard.run_sync(Duration::ZERO, (), || {
+                handler.on_connection_close(connection_id)
+            });
         })
     }
 }
 pub(crate) fn build_handler_flow_hooks<H: InterceptHandler>(
     config: &MitmConfig,
     handler: Arc<H>,
+    metrics_store: Arc<ProxyMetricsStore>,
 ) -> Arc<dyn FlowHooks> {
-    let process_lookup = if config.tls.process_info {
+    let callback_guard = Arc::new(HandlerCallbackGuard::new(
+        Duration::from_millis(config.handler.request_timeout_ms.max(1)),
+        Duration::from_millis(config.handler.response_timeout_ms.max(1)),
+        config.handler.recover_from_panics,
+        Arc::clone(&metrics_store),
+    ));
+    let process_lookup = if config.process_attribution.enabled {
         Some(Arc::new(ProcessLookupService::new(
             Arc::new(PlatformProcessAttributor),
-            Duration::from_millis(config.handler.timeout_ms.max(1)),
+            Duration::from_millis(config.process_attribution.lookup_timeout_ms.max(1)),
         )))
     } else {
         None
     };
-    Arc::new(HandlerFlowHooks::new(handler, process_lookup))
+    Arc::new(HandlerFlowHooks::new(
+        handler,
+        metrics_store,
+        callback_guard,
+        process_lookup,
+    ))
 }
 fn map_stream_frame_kind(kind: StreamFrameKind) -> Option<FrameKind> {
     match kind {
@@ -227,103 +286,7 @@ fn map_stream_frame_kind(kind: StreamFrameKind) -> Option<FrameKind> {
         StreamFrameKind::WebSocketClose => Some(FrameKind::WebSocketClose),
     }
 }
-fn connection_meta_from_accept_context(
-    context: &FlowContext,
-    process_info: Option<ProcessInfo>,
-) -> ConnectionMeta {
-    ConnectionMeta {
-        connection_id: Uuid::from_u128(context.flow_id as u128),
-        socket_family: socket_family_from_flow_context(context),
-        process_info,
-        tls_info: None,
-    }
-}
-fn socket_family_from_flow_context(context: &FlowContext) -> SocketFamily {
-    if let Some(meta) = parse_unix_client_addr_meta(&context.client_addr) {
-        return SocketFamily::UnixDomain { path: meta.path };
-    }
-    let local = context.client_addr.parse::<SocketAddr>().ok();
-    match local {
-        Some(SocketAddr::V4(local_v4)) => SocketFamily::TcpV4 {
-            local: local_v4,
-            remote: SocketAddrV4::new(
-                context
-                    .server_host
-                    .parse::<Ipv4Addr>()
-                    .unwrap_or(Ipv4Addr::UNSPECIFIED),
-                context.server_port,
-            ),
-        },
-        Some(SocketAddr::V6(local_v6)) => SocketFamily::TcpV6 {
-            local: local_v6,
-            remote: SocketAddrV6::new(
-                context
-                    .server_host
-                    .parse::<Ipv6Addr>()
-                    .unwrap_or(Ipv6Addr::UNSPECIFIED),
-                context.server_port,
-                0,
-                0,
-            ),
-        },
-        None => SocketFamily::TcpV4 {
-            local: SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0),
-            remote: SocketAddrV4::new(
-                context
-                    .server_host
-                    .parse::<Ipv4Addr>()
-                    .unwrap_or(Ipv4Addr::UNSPECIFIED),
-                context.server_port,
-            ),
-        },
-    }
-}
-fn lookup_connection_info_from_flow_context(context: &FlowContext) -> ConnectionInfo {
-    let socket_family = socket_family_from_flow_context(context);
-    let (source_ip, source_port) = match &socket_family {
-        SocketFamily::TcpV4 { local, .. } => (IpAddr::V4(*local.ip()), local.port()),
-        SocketFamily::TcpV6 { local, .. } => (IpAddr::V6(*local.ip()), local.port()),
-        SocketFamily::UnixDomain { .. } => (IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0),
-    };
-    ConnectionInfo {
-        connection_id: Uuid::from_u128(context.flow_id as u128),
-        source_ip,
-        source_port,
-        destination_host: context.server_host.clone(),
-        destination_port: context.server_port,
-        socket_family,
-        tls_fingerprint: None,
-        alpn_protocol: None,
-        is_http2: false,
-        process_info: None,
-        connected_at: std::time::SystemTime::now(),
-        request_count: 0,
-    }
-}
-fn policy_process_info_from_runtime(process_info: &ProcessInfo) -> mitm_policy::ProcessInfo {
-    let process_name = process_info.exe_name.clone().or_else(|| {
-        process_info
-            .exe_path
-            .as_ref()
-            .and_then(|path| path.file_name())
-            .and_then(|name| name.to_str())
-            .map(|value| value.to_string())
-    });
-    mitm_policy::ProcessInfo {
-        pid: process_info.pid,
-        bundle_id: process_info.bundle_id.clone(),
-        process_name,
-    }
-}
-fn runtime_process_info_from_policy(process_info: mitm_policy::ProcessInfo) -> ProcessInfo {
-    ProcessInfo {
-        pid: process_info.pid,
-        bundle_id: process_info.bundle_id,
-        exe_name: process_info.process_name,
-        exe_path: None,
-        parent_pid: None,
-    }
-}
+
 async fn connection_meta_for_context(
     context: &FlowContext,
     connection_meta_by_flow: &Arc<Mutex<HashMap<u64, ConnectionMeta>>>,
@@ -342,52 +305,6 @@ async fn connection_meta_for_context(
         return None;
     };
     Some(connection_meta)
-}
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct UnixClientAddrMeta {
-    pid: Option<u32>,
-    path: Option<PathBuf>,
-}
-fn parse_unix_client_addr_meta(client_addr: &str) -> Option<UnixClientAddrMeta> {
-    let raw = client_addr.strip_prefix("unix:")?;
-    if raw.is_empty() {
-        return Some(UnixClientAddrMeta {
-            pid: None,
-            path: None,
-        });
-    }
-    let mut pid = None;
-    let mut path = None;
-    for part in raw
-        .split(',')
-        .map(str::trim)
-        .filter(|part| !part.is_empty())
-    {
-        if let Some(raw_pid) = part.strip_prefix("pid=") {
-            if let Ok(parsed) = raw_pid.trim().parse::<u32>() {
-                pid = Some(parsed);
-            }
-            continue;
-        }
-        if let Some(raw_path) = part.strip_prefix("path=") {
-            let value = raw_path.trim();
-            if !value.is_empty() {
-                path = Some(PathBuf::from(value));
-            }
-        }
-    }
-    Some(UnixClientAddrMeta { pid, path })
-}
-fn process_info_from_unix_client_addr(client_addr: &str) -> Option<ProcessInfo> {
-    let meta = parse_unix_client_addr_meta(client_addr)?;
-    let pid = meta.pid?;
-    Some(ProcessInfo {
-        pid,
-        bundle_id: None,
-        exe_name: None,
-        exe_path: None,
-        parent_pid: None,
-    })
 }
 
 #[cfg(test)]

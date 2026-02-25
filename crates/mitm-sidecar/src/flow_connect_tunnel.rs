@@ -141,13 +141,14 @@ where
         }
     };
 
+    let policy_process_info = process_info.clone();
     let outcome = engine.decide_connect(
         flow_id,
         client_addr.clone(),
         route.target_host.clone(),
         route.target_port,
         route.policy_path.clone(),
-        process_info,
+        policy_process_info,
     );
 
     let context = FlowContext {
@@ -178,7 +179,11 @@ where
     } else {
         outcome.action
     };
-    if action == FlowAction::Intercept && !flow_hooks.should_intercept_tls(context.clone()).await {
+    if action == FlowAction::Intercept
+        && !flow_hooks
+            .should_intercept_tls(context.clone(), process_info.clone())
+            .await
+    {
         action = FlowAction::Tunnel;
     }
 
