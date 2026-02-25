@@ -30,6 +30,22 @@ async fn bind_listener_with_socket_hardening(config: &SidecarConfig) -> io::Resu
     socket.listen(1024)
 }
 
+#[cfg(unix)]
+async fn bind_unix_listener_with_socket_hardening(
+    socket_path: &str,
+) -> io::Result<tokio::net::UnixListener> {
+    let path = std::path::Path::new(socket_path);
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent)?;
+        }
+    }
+    if path.exists() {
+        std::fs::remove_file(path)?;
+    }
+    tokio::net::UnixListener::bind(path)
+}
+
 fn apply_per_connection_socket_hardening(stream: &TcpStream) {
     let _ = stream.set_nodelay(true);
 }
@@ -46,7 +62,7 @@ fn is_benign_socket_close_error(error: &io::Error) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
+mod socket_hardening_tests {
     use super::is_benign_socket_close_error;
     use std::io;
 

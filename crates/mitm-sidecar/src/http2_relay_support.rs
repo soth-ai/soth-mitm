@@ -7,12 +7,6 @@ struct GrpcRequestObservation {
     content_type: Option<String>,
 }
 
-#[derive(Debug)]
-struct H2BodyRelayOutcome {
-    bytes_forwarded: u64,
-    trailers: Option<http::HeaderMap>,
-}
-
 fn configure_h2_server(builder: &mut h2::server::Builder, max_header_list_size: u32) {
     builder.max_header_list_size(max_header_list_size);
     builder.max_concurrent_streams(H2_MAX_CONCURRENT_STREAMS);
@@ -206,7 +200,7 @@ fn header_field_size(name: &str, value: impl AsRef<[u8]>) -> usize {
 }
 
 #[cfg(test)]
-mod tests {
+mod http2_relay_support_tests {
     use super::detect_grpc_request;
 
     #[test]

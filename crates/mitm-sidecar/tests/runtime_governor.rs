@@ -6,6 +6,7 @@ use mitm_policy::DefaultPolicyEngine;
 use mitm_sidecar::{SidecarConfig, SidecarServer};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio::time::{sleep, timeout};
 
 fn build_engine(
@@ -52,8 +53,22 @@ async fn bind_loopback_listener_with_retry(label: &str) -> TcpListener {
     unreachable!("bind retries exhausted unexpectedly")
 }
 
+fn runtime_governor_test_gate() -> &'static std::sync::Arc<Semaphore> {
+    static TEST_GATE: std::sync::OnceLock<std::sync::Arc<Semaphore>> = std::sync::OnceLock::new();
+    TEST_GATE.get_or_init(|| std::sync::Arc::new(Semaphore::new(1)))
+}
+
+async fn acquire_runtime_governor_test_permit() -> OwnedSemaphorePermit {
+    runtime_governor_test_gate()
+        .clone()
+        .acquire_owned()
+        .await
+        .expect("runtime-governor test gate closed")
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn runtime_governor_enforces_concurrent_flow_limit_and_records_metrics() {
+    let _serial_permit = acquire_runtime_governor_test_permit().await;
     let upstream = bind_loopback_listener_with_retry("bind upstream").await;
     let upstream_addr = upstream.local_addr().expect("upstream addr");
     let upstream_task = tokio::spawn(async move {
@@ -85,6 +100,7 @@ async fn runtime_governor_enforces_concurrent_flow_limit_and_records_metrics() {
         max_http_head_bytes: 4 * 1024,
         idle_watchdog_timeout: std::time::Duration::from_secs(30),
         stream_stage_timeout: std::time::Duration::from_secs(5),
+        unix_socket_path: None,
     };
     let engine = build_engine(config, sink);
     let server = SidecarServer::new(sidecar_config, engine).expect("build sidecar");
@@ -168,6 +184,7 @@ async fn runtime_governor_enforces_concurrent_flow_limit_and_records_metrics() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn idle_watchdog_timeout_closes_stuck_tunnel_and_records_metrics() {
+    let _serial_permit = acquire_runtime_governor_test_permit().await;
     let upstream = bind_loopback_listener_with_retry("bind upstream").await;
     let upstream_addr = upstream.local_addr().expect("upstream addr");
     let upstream_task = tokio::spawn(async move {
@@ -190,6 +207,7 @@ async fn idle_watchdog_timeout_closes_stuck_tunnel_and_records_metrics() {
         max_http_head_bytes: 4 * 1024,
         idle_watchdog_timeout: Duration::from_millis(120),
         stream_stage_timeout: Duration::from_secs(1),
+        unix_socket_path: None,
     };
     let engine = build_engine(config, sink);
     let server = SidecarServer::new(sidecar_config, engine).expect("build sidecar");

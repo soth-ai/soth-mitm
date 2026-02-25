@@ -1,36 +1,46 @@
 use http::Uri;
 
-fn is_absolute_form_forward_http_request(input: &[u8]) -> bool {
-    let Some(header_end) = input
-        .windows(4)
-        .position(|window| window == b"\r\n\r\n")
-        .map(|index| index + 4)
-    else {
+fn is_forward_http1_request_candidate(input: &[u8]) -> bool {
+    if let Ok(request) = parse_http_request_head(input) {
+        return !request.method.eq_ignore_ascii_case("CONNECT");
+    }
+    is_non_connect_http1_request_line(input)
+}
+
+fn is_non_connect_http1_request_line(input: &[u8]) -> bool {
+    let Ok(text) = std::str::from_utf8(input) else {
         return false;
     };
-    let Ok(head) = std::str::from_utf8(&input[..header_end]) else {
+    let Some(line) = text.split("\r\n").next() else {
         return false;
     };
-    let Some(request_line) = head.split("\r\n").next() else {
-        return false;
-    };
-    let mut parts = request_line.split_whitespace();
+    let mut parts = line.split_whitespace();
     let Some(method) = parts.next() else {
         return false;
     };
-    let Some(target) = parts.next() else {
+    let Some(_target) = parts.next() else {
         return false;
     };
+    let Some(version) = parts.next() else {
+        return false;
+    };
+    if parts.next().is_some() {
+        return false;
+    }
     if method.eq_ignore_ascii_case("CONNECT") {
         return false;
     }
-    if method.bytes().any(|byte| byte.is_ascii_lowercase()) {
-        return false;
-    }
-    target.starts_with("http://") || target.starts_with("https://")
+    matches!(version, "HTTP/1.0" | "HTTP/1.1")
 }
 
 fn resolve_forward_http_route(request: &HttpRequestHead) -> io::Result<RouteTarget> {
+    if request.target.starts_with("http://") || request.target.starts_with("https://") {
+        return resolve_absolute_form_forward_http_route(request);
+    }
+    resolve_origin_form_forward_http_route(request)
+}
+
+fn resolve_absolute_form_forward_http_route(request: &HttpRequestHead) -> io::Result<RouteTarget> {
     let uri = request.target.parse::<Uri>().map_err(|_| {
         io::Error::new(
             io::ErrorKind::InvalidData,
@@ -61,7 +71,43 @@ fn resolve_forward_http_route(request: &HttpRequestHead) -> io::Result<RouteTarg
         .path_and_query()
         .map(|value| value.as_str().to_string())
         .unwrap_or_else(|| "/".to_string());
-    Ok(RouteTarget::new(server_host, server_port, Some(policy_path)))
+    Ok(RouteTarget::new(
+        server_host,
+        server_port,
+        Some(policy_path),
+    ))
+}
+
+fn resolve_origin_form_forward_http_route(request: &HttpRequestHead) -> io::Result<RouteTarget> {
+    let host_header = request
+        .headers
+        .iter()
+        .find(|header| header.name.eq_ignore_ascii_case("host"))
+        .map(|header| header.value.as_str())
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "origin-form request missing Host header",
+            )
+        })?;
+    let authority = host_header.parse::<http::uri::Authority>().map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "origin-form request had invalid Host header authority",
+        )
+    })?;
+    let server_host = authority.host().to_string();
+    let server_port = authority.port_u16().unwrap_or(80);
+    let policy_path = if request.target.starts_with('/') || request.target == "*" {
+        request.target.clone()
+    } else {
+        "/".to_string()
+    };
+    Ok(RouteTarget::new(
+        server_host,
+        server_port,
+        Some(policy_path),
+    ))
 }
 
 fn build_upstream_http1_request_head(

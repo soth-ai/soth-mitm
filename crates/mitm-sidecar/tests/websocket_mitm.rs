@@ -44,6 +44,7 @@ async fn start_sidecar_with_sink(
         max_http_head_bytes: 64 * 1024,
         idle_watchdog_timeout: std::time::Duration::from_secs(30),
         stream_stage_timeout: std::time::Duration::from_secs(5),
+        unix_socket_path: None,
     };
     let engine = build_engine(config, sink.clone());
     let server = SidecarServer::new(sidecar_config, engine).expect("build sidecar");
@@ -521,7 +522,39 @@ async fn websocket_server_initiated_turns_emit_expected_boundaries() {
     tokio::time::sleep(Duration::from_millis(25)).await;
     proxy_task.abort();
 
-    let events = sink.snapshot();
+    let events = tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            let events = sink.snapshot();
+            let turn_started = events
+                .iter()
+                .filter(|event| event.kind == EventType::WebSocketTurnStarted)
+                .collect::<Vec<_>>();
+            let turn_completed = events
+                .iter()
+                .filter(|event| event.kind == EventType::WebSocketTurnCompleted)
+                .collect::<Vec<_>>();
+            let started = turn_started.iter().any(|event| {
+                attr(event, "turn_id") == Some("1")
+                    && attr(event, "initiated_by") == Some("server_to_client")
+            });
+            let rolled = turn_completed.iter().any(|event| {
+                attr(event, "turn_id") == Some("1")
+                    && attr(event, "initiated_by") == Some("server_to_client")
+                    && attr(event, "flush_reason") == Some("rollover")
+            });
+            let closed = turn_completed.iter().any(|event| {
+                attr(event, "turn_id") == Some("2")
+                    && attr(event, "flush_reason") == Some("close_frame")
+            });
+            if started && rolled && closed {
+                break events;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("websocket turn rollover events should be observed");
+
     let turn_started = events
         .iter()
         .filter(|event| event.kind == EventType::WebSocketTurnStarted)
@@ -531,13 +564,10 @@ async fn websocket_server_initiated_turns_emit_expected_boundaries() {
         .filter(|event| event.kind == EventType::WebSocketTurnCompleted)
         .collect::<Vec<_>>();
 
-    assert!(
-        turn_started.iter().any(|event| {
-            attr(event, "turn_id") == Some("1")
-                && attr(event, "initiated_by") == Some("server_to_client")
-        }),
-        "missing server-initiated turn start"
-    );
+    assert!(turn_started.iter().any(|event| {
+        attr(event, "turn_id") == Some("1")
+            && attr(event, "initiated_by") == Some("server_to_client")
+    }));
     assert!(turn_completed.iter().any(|event| {
         attr(event, "turn_id") == Some("1")
             && attr(event, "initiated_by") == Some("server_to_client")
