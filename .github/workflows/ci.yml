@@ -11,7 +11,15 @@ permissions:
 
 jobs:
   feature_matrix:
-    runs-on: ubuntu-latest
+    name: feature_matrix (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -24,6 +32,9 @@ jobs:
 
       - name: Check default feature set
         run: cargo check --workspace
+
+      - name: Check all feature set
+        run: cargo check --workspace --all-features
 
       - name: Check OpenSSL backend feature path
         run: cargo check -p mitm-tls --features openssl-backend
@@ -73,7 +84,15 @@ jobs:
         run: ./scripts/check_prohibitions.sh
 
   test:
-    runs-on: ubuntu-latest
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -135,6 +154,7 @@ jobs:
         os:
           - ubuntu-latest
           - macos-latest
+          - windows-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -146,6 +166,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Run Phase 1 reliability suite
+        shell: bash
         run: ./scripts/p1_reliability.sh
 
       - name: Upload Phase 1 reliability report
