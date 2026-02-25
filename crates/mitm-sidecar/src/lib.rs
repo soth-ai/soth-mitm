@@ -49,6 +49,7 @@ pub struct SidecarConfig {
     pub max_connect_head_bytes: usize,
     pub max_http_head_bytes: usize,
     pub idle_watchdog_timeout: Duration,
+    pub upstream_connect_timeout: Duration,
     pub stream_stage_timeout: Duration,
     pub unix_socket_path: Option<String>,
 }
@@ -61,6 +62,7 @@ impl Default for SidecarConfig {
             max_connect_head_bytes: 64 * 1024,
             max_http_head_bytes: 64 * 1024,
             idle_watchdog_timeout: Duration::from_secs(30),
+            upstream_connect_timeout: Duration::from_secs(10),
             stream_stage_timeout: Duration::from_secs(15),
             unix_socket_path: None,
         }
@@ -195,7 +197,11 @@ where
         ));
         runtime_governor::install_global_runtime_governor(Arc::clone(&runtime_governor));
         runtime_governor::set_event_queue_depth_global(0);
-        install_io_timeout_config(config.idle_watchdog_timeout, config.stream_stage_timeout);
+        install_io_timeout_config(
+            config.idle_watchdog_timeout,
+            config.upstream_connect_timeout,
+            config.stream_stage_timeout,
+        );
         let tls_diagnostics = Arc::new(TlsDiagnostics::default());
         let tls_learning = Arc::new(TlsLearningGuardrails::new());
         Ok(Self {

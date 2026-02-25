@@ -99,6 +99,7 @@ async fn runtime_governor_enforces_concurrent_flow_limit_and_records_metrics() {
         max_connect_head_bytes: 4 * 1024,
         max_http_head_bytes: 4 * 1024,
         idle_watchdog_timeout: std::time::Duration::from_secs(30),
+        upstream_connect_timeout: std::time::Duration::from_secs(10),
         stream_stage_timeout: std::time::Duration::from_secs(5),
         unix_socket_path: None,
     };
@@ -206,6 +207,7 @@ async fn idle_watchdog_timeout_closes_stuck_tunnel_and_records_metrics() {
         max_connect_head_bytes: 4 * 1024,
         max_http_head_bytes: 4 * 1024,
         idle_watchdog_timeout: Duration::from_millis(120),
+        upstream_connect_timeout: std::time::Duration::from_secs(10),
         stream_stage_timeout: Duration::from_secs(1),
         unix_socket_path: None,
     };

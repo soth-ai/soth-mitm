@@ -151,6 +151,7 @@ async fn start_sidecar(
         max_connect_head_bytes: 64 * 1024,
         max_http_head_bytes: 64 * 1024,
         idle_watchdog_timeout: std::time::Duration::from_secs(30),
+        upstream_connect_timeout: std::time::Duration::from_secs(10),
         stream_stage_timeout: std::time::Duration::from_secs(15),
         unix_socket_path: None,
     };
@@ -178,6 +179,7 @@ async fn start_sidecar_with_vec_sink(
         max_connect_head_bytes: 64 * 1024,
         max_http_head_bytes: 64 * 1024,
         idle_watchdog_timeout: std::time::Duration::from_secs(30),
+        upstream_connect_timeout: std::time::Duration::from_secs(10),
         stream_stage_timeout: std::time::Duration::from_secs(15),
         unix_socket_path: None,
     };

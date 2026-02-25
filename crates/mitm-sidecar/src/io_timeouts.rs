@@ -4,6 +4,7 @@ const STREAM_STAGE_TIMEOUT_ERROR_PREFIX: &str = "stream_stage_timeout";
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct IoTimeoutConfig {
     idle_watchdog_timeout: std::time::Duration,
+    upstream_connect_timeout: std::time::Duration,
     stream_stage_timeout: std::time::Duration,
 }
 
@@ -11,6 +12,7 @@ impl Default for IoTimeoutConfig {
     fn default() -> Self {
         Self {
             idle_watchdog_timeout: std::time::Duration::from_secs(30),
+            upstream_connect_timeout: std::time::Duration::from_secs(10),
             stream_stage_timeout: std::time::Duration::from_secs(5),
         }
     }
@@ -60,10 +62,12 @@ fn ensure_bounded_timeout(timeout: std::time::Duration) -> std::time::Duration {
 
 fn install_io_timeout_config(
     idle_watchdog_timeout: std::time::Duration,
+    upstream_connect_timeout: std::time::Duration,
     stream_stage_timeout: std::time::Duration,
 ) {
     let config = IoTimeoutConfig {
         idle_watchdog_timeout: ensure_bounded_timeout(idle_watchdog_timeout),
+        upstream_connect_timeout: ensure_bounded_timeout(upstream_connect_timeout),
         stream_stage_timeout: ensure_bounded_timeout(stream_stage_timeout),
     };
     let mut guard = IO_TIMEOUT_CONFIG
@@ -71,6 +75,22 @@ fn install_io_timeout_config(
         .lock()
         .expect("io timeout config lock poisoned");
     *guard = config;
+}
+
+async fn connect_with_upstream_timeout(
+    host: &str,
+    port: u16,
+    stage: &'static str,
+) -> std::io::Result<tokio::net::TcpStream> {
+    let timeout = io_timeout_config().upstream_connect_timeout;
+    match tokio::time::timeout(timeout, tokio::net::TcpStream::connect((host, port))).await {
+        Ok(result) => result,
+        Err(_) => {
+            runtime_governor::mark_stream_stage_timeout_global();
+            runtime_governor::mark_stuck_flow_global();
+            Err(timeout_error(STREAM_STAGE_TIMEOUT_ERROR_PREFIX, stage, timeout))
+        }
+    }
 }
 
 fn is_idle_watchdog_timeout(error: &std::io::Error) -> bool {
