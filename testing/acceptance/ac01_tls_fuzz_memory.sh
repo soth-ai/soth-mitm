@@ -57,12 +57,22 @@ if command -v cargo-fuzz >/dev/null 2>&1; then
     ac_run_case "$status_tsv" websocket_framing_fuzz_runs \
       cargo +nightly fuzz run websocket_framing -- "-runs=${fuzz_runs}" || true
   else
-    ac_record_status "$status_tsv" tls_classification_fuzz_runs fail missing_tools:nightly_toolchain
-    ac_record_status "$status_tsv" websocket_framing_fuzz_runs fail missing_tools:nightly_toolchain
+    if [[ "$strict_tools" -eq 1 ]]; then
+      ac_record_status "$status_tsv" tls_classification_fuzz_runs fail missing_tools:nightly_toolchain
+      ac_record_status "$status_tsv" websocket_framing_fuzz_runs fail missing_tools:nightly_toolchain
+    else
+      ac_record_status "$status_tsv" tls_classification_fuzz_runs skip missing_tools:nightly_toolchain
+      ac_record_status "$status_tsv" websocket_framing_fuzz_runs skip missing_tools:nightly_toolchain
+    fi
   fi
 else
-  ac_record_status "$status_tsv" tls_classification_fuzz_runs fail missing_tools:cargo-fuzz
-  ac_record_status "$status_tsv" websocket_framing_fuzz_runs fail missing_tools:cargo-fuzz
+  if [[ "$strict_tools" -eq 1 ]]; then
+    ac_record_status "$status_tsv" tls_classification_fuzz_runs fail missing_tools:cargo-fuzz
+    ac_record_status "$status_tsv" websocket_framing_fuzz_runs fail missing_tools:cargo-fuzz
+  else
+    ac_record_status "$status_tsv" tls_classification_fuzz_runs skip missing_tools:cargo-fuzz
+    ac_record_status "$status_tsv" websocket_framing_fuzz_runs skip missing_tools:cargo-fuzz
+  fi
 fi
 
 effective_soak_seconds="$soak_seconds"
@@ -83,7 +93,11 @@ ac_run_case "$status_tsv" mixed_traffic_soak_30m \
 if command -v heaptrack >/dev/null 2>&1 || command -v valgrind >/dev/null 2>&1; then
   ac_record_status "$status_tsv" memory_tool_probe pass available
 else
-  ac_record_status "$status_tsv" memory_tool_probe fail missing_tools:heaptrack_or_valgrind
+  if [[ "$strict_tools" -eq 1 ]]; then
+    ac_record_status "$status_tsv" memory_tool_probe fail missing_tools:heaptrack_or_valgrind
+  else
+    ac_record_status "$status_tsv" memory_tool_probe skip missing_tools:heaptrack_or_valgrind
+  fi
 fi
 
 config_md=$'- strict_tools: '"${strict_tools}"$'\n- long_run: '"${long_run}"$'\n- decoder_runs: '"${decoder_runs}"$'\n- fuzz_runs: '"${fuzz_runs}"$'\n- soak_seconds: '"${soak_seconds}"$'\n- smoke_soak_seconds: '"${smoke_soak_seconds}"$'\n- soak_min_iterations: '"${soak_min_iterations}"$'\n- soak_exchange_timeout_seconds: '"${soak_exchange_timeout_seconds}"$'\n- soak_h2_retries: '"${soak_h2_retries}"$'\n- soak_h2_upstream_accept_timeout_seconds: '"${soak_h2_upstream_accept_timeout_seconds}"

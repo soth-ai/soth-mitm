@@ -39,7 +39,11 @@ if command -v cargo-deny >/dev/null 2>&1; then
   ac_run_case "$status_tsv" cargo_deny_policy \
     cargo deny check bans licenses sources || true
 else
-  ac_record_status "$status_tsv" cargo_deny_policy fail missing_tools:cargo-deny
+  if [[ "$strict_tools" -eq 1 ]]; then
+    ac_record_status "$status_tsv" cargo_deny_policy fail missing_tools:cargo-deny
+  else
+    ac_record_status "$status_tsv" cargo_deny_policy skip missing_tools:cargo-deny
+  fi
 fi
 ac_run_case "$status_tsv" prohibition_policy \
   ./scripts/check_prohibitions.sh || true
@@ -48,7 +52,17 @@ duplicates_file="$report_dir/cargo-tree-duplicates.txt"
 if cargo tree -d --prefix none >"$duplicates_file" 2>&1; then
   duplicate_cores=()
   for core_crate in tokio hyper rustls; do
-    if rg -n "^${core_crate} v" "$duplicates_file" >/dev/null 2>&1; then
+    version_count="$(
+      rg -o "^${core_crate} v[^ ]+" "$duplicates_file" \
+        || true \
+    )"
+    version_count="$(
+      printf '%s\n' "$version_count" \
+        | sort -u \
+        | wc -l \
+        | tr -d ' '
+    )"
+    if [[ "${version_count}" -gt 1 ]]; then
       duplicate_cores+=("$core_crate")
     fi
   done

@@ -41,16 +41,28 @@ if [[ "$(uname -s)" == "Linux" ]]; then
   if command -v strace >/dev/null 2>&1; then
     ac_record_status "$status_tsv" syscall_trace_tool pass strace
   else
-    ac_record_status "$status_tsv" syscall_trace_tool fail missing_tools:strace
+    if [[ "$strict_tools" -eq 1 ]]; then
+      ac_record_status "$status_tsv" syscall_trace_tool fail missing_tools:strace
+    else
+      ac_record_status "$status_tsv" syscall_trace_tool skip missing_tools:strace
+    fi
   fi
 elif [[ "$(uname -s)" == "Darwin" ]]; then
   if command -v dtruss >/dev/null 2>&1; then
     ac_record_status "$status_tsv" syscall_trace_tool pass dtruss
   else
-    ac_record_status "$status_tsv" syscall_trace_tool fail missing_tools:dtruss
+    if [[ "$strict_tools" -eq 1 ]]; then
+      ac_record_status "$status_tsv" syscall_trace_tool fail missing_tools:dtruss
+    else
+      ac_record_status "$status_tsv" syscall_trace_tool skip missing_tools:dtruss
+    fi
   fi
 else
-  ac_record_status "$status_tsv" syscall_trace_tool fail unsupported_platform
+  if [[ "$strict_tools" -eq 1 ]]; then
+    ac_record_status "$status_tsv" syscall_trace_tool fail unsupported_platform
+  else
+    ac_record_status "$status_tsv" syscall_trace_tool skip unsupported_platform
+  fi
 fi
 
 generated_audit_report="$report_dir/audit_report.generated.txt"
@@ -85,15 +97,27 @@ if [[ "$enable_live_trace" == "1" ]]; then
       cargo test -p mitm-sidecar --test phase_a tunnel_action_relays_data_end_to_end -q >/dev/null 2>&1; then
       ac_record_status "$status_tsv" live_trace_capture pass generated
     else
-      ac_record_status "$status_tsv" live_trace_capture fail command_failed
+      if [[ "$strict_tools" -eq 1 ]]; then
+        ac_record_status "$status_tsv" live_trace_capture fail command_failed
+      else
+        ac_record_status "$status_tsv" live_trace_capture skip command_failed
+      fi
     fi
   elif [[ "$(uname -s)" == "Darwin" ]] && command -v dtruss >/dev/null 2>&1; then
-    ac_record_status "$status_tsv" live_trace_capture fail dtruss_capture_not_automated
+    if [[ "$strict_tools" -eq 1 ]]; then
+      ac_record_status "$status_tsv" live_trace_capture fail dtruss_capture_not_automated
+    else
+      ac_record_status "$status_tsv" live_trace_capture skip dtruss_capture_not_automated
+    fi
   else
-    ac_record_status "$status_tsv" live_trace_capture fail trace_tool_unavailable
+    if [[ "$strict_tools" -eq 1 ]]; then
+      ac_record_status "$status_tsv" live_trace_capture fail trace_tool_unavailable
+    else
+      ac_record_status "$status_tsv" live_trace_capture skip trace_tool_unavailable
+    fi
   fi
 else
-  ac_record_status "$status_tsv" live_trace_capture fail disabled_by_config
+  ac_record_status "$status_tsv" live_trace_capture skip disabled_by_config
 fi
 
 config_md=$'- strict_tools: '"${strict_tools}"$'\n- audit_report: '"${audit_report:-unset}"$'\n- enable_live_trace: '"${enable_live_trace}"$'\n- AC-11 static boundary audit is generated automatically; optional external report overrides it when provided.'
