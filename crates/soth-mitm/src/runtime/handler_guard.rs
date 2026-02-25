@@ -33,8 +33,31 @@ impl HandlerCallbackGuard {
         R: Send + 'static,
         F: FnOnce() -> R + Send + 'static,
     {
+        self.run_sync_with_timeout(self.request_timeout, default_value, callback)
+            .await
+    }
+
+    pub(crate) async fn run_lifecycle<R, F>(&self, default_value: R, callback: F) -> R
+    where
+        R: Send + 'static,
+        F: FnOnce() -> R + Send + 'static,
+    {
+        self.run_sync_with_timeout(self.response_timeout, default_value, callback)
+            .await
+    }
+
+    async fn run_sync_with_timeout<R, F>(
+        &self,
+        timeout: Duration,
+        default_value: R,
+        callback: F,
+    ) -> R
+    where
+        R: Send + 'static,
+        F: FnOnce() -> R + Send + 'static,
+    {
         let mut task = tokio::task::spawn_blocking(callback);
-        match tokio::time::timeout(self.request_timeout, &mut task).await {
+        match tokio::time::timeout(timeout, &mut task).await {
             Ok(Ok(value)) => value,
             Ok(Err(join_error)) if join_error.is_panic() => {
                 self.metrics_store.record_handler_panic();

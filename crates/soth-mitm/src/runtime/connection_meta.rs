@@ -92,6 +92,20 @@ pub(crate) fn tls_info_from_flow_context(context: &FlowContext) -> Option<TlsInf
         return None;
     }
 
+    tls_info_from_protocol_hints(context)
+}
+
+pub(crate) fn tls_info_from_intercept_decision(
+    context: &FlowContext,
+    intercepted_tls: bool,
+) -> Option<TlsInfo> {
+    if intercepted_tls {
+        return tls_info_from_protocol_hints(context);
+    }
+    tls_info_from_flow_context(context)
+}
+
+fn tls_info_from_protocol_hints(context: &FlowContext) -> Option<TlsInfo> {
     let sni = normalize_sni(&context.server_host);
     let negotiated_proto = match context.protocol {
         ApplicationProtocol::Http2 => Some("h2".to_string()),
