@@ -103,7 +103,8 @@ where
         }
     };
 
-    let outcome = engine.decide_connect(
+    let policy_snapshot = resolve_flow_policy_snapshot(
+        &engine,
         flow_id,
         client_addr.clone(),
         route.target_host.clone(),
@@ -112,21 +113,21 @@ where
         process_info,
     );
     let context = FlowContext {
-        flow_id: outcome.flow_id,
+        flow_id: policy_snapshot.flow_id,
         client_addr,
         server_host: route.target_host.clone(),
         server_port: route.target_port,
         protocol: ApplicationProtocol::Http1,
     };
 
-    if outcome.action == FlowAction::Block {
-        write_forward_proxy_error_response(&mut downstream, "403 Forbidden", &outcome.reason)
+    if policy_snapshot.action == FlowAction::Block {
+        write_forward_proxy_error_response(&mut downstream, "403 Forbidden", &policy_snapshot.reason)
             .await?;
         emit_stream_closed(
             &engine,
             context,
             CloseReasonCode::Blocked,
-            Some(outcome.reason),
+            Some(policy_snapshot.reason),
             None,
             None,
         );
@@ -158,7 +159,7 @@ where
         }
     };
 
-    if outcome.action == FlowAction::Tunnel {
+    if policy_snapshot.action == FlowAction::Tunnel {
         return tunnel_http1_forward_stream(
             engine,
             context,
@@ -181,7 +182,7 @@ where
         downstream_conn,
         upstream_conn,
         max_http_head_bytes,
-        outcome.override_state.strict_header_mode,
+        policy_snapshot.override_state.strict_header_mode,
     )
     .await
 }

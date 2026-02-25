@@ -5,6 +5,7 @@ include!("downstream_tls.rs");
 include!("io_timeouts.rs");
 include!("tls_profile_mapping.rs");
 include!("route_planner.rs");
+include!("flow_policy_snapshot.rs");
 include!("flow_intercept.rs");
 include!("flow_intercept_http1.rs");
 include!("flow_intercept_http1_response.rs");

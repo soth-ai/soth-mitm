@@ -8,6 +8,7 @@ rust-version.workspace = true
 [dependencies]
 bytes = "1"
 brotli = "6"
+dashmap = { workspace = true }
 flate2 = "1"
 h2 = { workspace = true }
 http = "1"

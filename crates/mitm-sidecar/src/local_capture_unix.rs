@@ -209,6 +209,7 @@ where
         max_http_head_bytes,
     )
     .await;
+    clear_flow_policy_snapshot(flow_id);
     flow_hooks.on_stream_end(close_context).await;
     result
 }

@@ -986,6 +986,7 @@ version = "0.1.0"
 dependencies = [
  "brotli",
  "bytes",
+ "dashmap",
  "flate2",
  "h2",
  "http",

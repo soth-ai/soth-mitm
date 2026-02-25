@@ -25,6 +25,7 @@ where
         max_http_head_bytes,
     )
     .await;
+    clear_flow_policy_snapshot(flow_id);
     flow_hooks.on_stream_end(close_context).await;
     result
 }
@@ -170,18 +171,18 @@ where
         }
     };
 
-    let policy_process_info = process_info.clone();
-    let outcome = engine.decide_connect(
+    let policy_snapshot = resolve_flow_policy_snapshot(
+        &engine,
         flow_id,
         client_addr.clone(),
         route.target_host.clone(),
         route.target_port,
         route.policy_path.clone(),
-        policy_process_info,
+        process_info.clone(),
     );
 
     let context = FlowContext {
-        flow_id: outcome.flow_id,
+        flow_id: policy_snapshot.flow_id,
         client_addr,
         server_host: route.target_host.clone(),
         server_port: route.target_port,
@@ -194,19 +195,20 @@ where
         None
     };
     if let Some(requested_by) = http3_requested_by {
-        if outcome.action != FlowAction::Block {
+        if policy_snapshot.action != FlowAction::Block {
             emit_http3_passthrough_event(
                 &engine,
                 context.clone(),
                 requested_by,
-                flow_action_label(outcome.action),
+                flow_action_label(policy_snapshot.action),
             );
         }
     }
-    let mut action = if http3_requested_by.is_some() && outcome.action != FlowAction::Block {
+    let mut action =
+        if http3_requested_by.is_some() && policy_snapshot.action != FlowAction::Block {
         FlowAction::Tunnel
     } else {
-        outcome.action
+        policy_snapshot.action
     };
     if action == FlowAction::Intercept
         && !flow_hooks
@@ -218,12 +220,12 @@ where
 
     match action {
         FlowAction::Block => {
-            write_proxy_response(&mut downstream, "403 Forbidden", &outcome.reason).await?;
+            write_proxy_response(&mut downstream, "403 Forbidden", &policy_snapshot.reason).await?;
             emit_stream_closed(
                 &engine,
                 context,
                 CloseReasonCode::Blocked,
-                Some(outcome.reason),
+                Some(policy_snapshot.reason),
                 None,
                 None,
             );
@@ -250,7 +252,7 @@ where
                 flow_hooks,
                 context,
                 route,
-                outcome.override_state,
+                policy_snapshot.override_state,
                 downstream,
                 max_http_head_bytes,
             )
