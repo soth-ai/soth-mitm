@@ -85,7 +85,9 @@ pub(crate) fn lookup_connection_info_from_flow_context(context: &FlowContext) ->
 }
 
 pub(crate) fn tls_info_from_flow_context(context: &FlowContext) -> Option<TlsInfo> {
-    let likely_tls = context.server_port == 443 || context.protocol == ApplicationProtocol::Http2;
+    const COMMON_TLS_PORTS: [u16; 4] = [443, 8443, 4433, 9443];
+    let likely_tls = context.protocol == ApplicationProtocol::Http2
+        || COMMON_TLS_PORTS.contains(&context.server_port);
     if !likely_tls {
         return None;
     }

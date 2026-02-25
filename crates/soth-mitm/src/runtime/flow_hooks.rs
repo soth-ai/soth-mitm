@@ -9,6 +9,7 @@ use crate::runtime::connection_meta::{
     runtime_process_info_from_policy, tls_info_from_flow_context,
 };
 use crate::runtime::flow_dispatch::FlowDispatchers;
+use crate::runtime::flow_lifecycle::{finalize_flow, reap_stale_flows};
 use crate::runtime::handler_guard::HandlerCallbackGuard;
 use crate::types::{ConnectionMeta, FrameKind, RawRequest, RawResponse, StreamChunk};
 use crate::HandlerDecision;
@@ -24,7 +25,7 @@ use std::future::Future;
 use std::num::NonZeroUsize;
 use std::pin::Pin;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 #[derive(Debug)]
 struct HandlerFlowHooks<H: InterceptHandler> {
@@ -35,7 +36,11 @@ struct HandlerFlowHooks<H: InterceptHandler> {
     flow_dispatchers: Arc<FlowDispatchers<H>>,
     stream_sequences: Arc<DashMap<u64, u64>>,
     connection_meta_by_flow: Arc<DashMap<u64, Arc<ConnectionMeta>>>,
+    flow_last_touched: Arc<DashMap<u64, Instant>>,
     closed_flow_ids: Arc<Mutex<LruCache<u64, ()>>>,
+    stale_flow_ttl: Duration,
+    stale_reap_interval: Duration,
+    last_stale_reap_at: Arc<Mutex<Instant>>,
 }
 impl<H: InterceptHandler> HandlerFlowHooks<H> {
     fn new(
@@ -43,12 +48,17 @@ impl<H: InterceptHandler> HandlerFlowHooks<H> {
         metrics_store: Arc<ProxyMetricsStore>,
         callback_guard: Arc<HandlerCallbackGuard>,
         process_lookup: Option<Arc<ProcessLookupService<PlatformProcessAttributor>>>,
+        flow_dispatch_queue_capacity: usize,
+        closed_flow_lru_capacity: usize,
+        stale_flow_ttl: Duration,
     ) -> Self {
         let flow_dispatchers = Arc::new(FlowDispatchers::new(
             Arc::clone(&handler),
             Arc::clone(&callback_guard),
-            256,
+            Arc::clone(&metrics_store),
+            flow_dispatch_queue_capacity,
         ));
+        let stale_reap_interval = (stale_flow_ttl / 4).max(Duration::from_secs(15));
         Self {
             handler,
             metrics_store,
@@ -57,9 +67,14 @@ impl<H: InterceptHandler> HandlerFlowHooks<H> {
             flow_dispatchers,
             stream_sequences: Arc::new(DashMap::new()),
             connection_meta_by_flow: Arc::new(DashMap::new()),
+            flow_last_touched: Arc::new(DashMap::new()),
             closed_flow_ids: Arc::new(Mutex::new(LruCache::new(
-                NonZeroUsize::new(16_384).expect("closed flow cache capacity must be non-zero"),
+                NonZeroUsize::new(closed_flow_lru_capacity.max(1))
+                    .expect("closed flow cache capacity must be non-zero"),
             ))),
+            stale_flow_ttl,
+            stale_reap_interval,
+            last_stale_reap_at: Arc::new(Mutex::new(Instant::now())),
         }
     }
 }
@@ -100,7 +115,14 @@ impl<H: InterceptHandler> FlowHooks for HandlerFlowHooks<H> {
         let handler = Arc::clone(&self.handler);
         let callback_guard = Arc::clone(&self.callback_guard);
         let connection_meta_by_flow = Arc::clone(&self.connection_meta_by_flow);
+        let flow_last_touched = Arc::clone(&self.flow_last_touched);
         let closed_flow_ids = Arc::clone(&self.closed_flow_ids);
+        let process_lookup = self.process_lookup.clone();
+        let flow_dispatchers = Arc::clone(&self.flow_dispatchers);
+        let stream_sequences = Arc::clone(&self.stream_sequences);
+        let stale_flow_ttl = self.stale_flow_ttl;
+        let stale_reap_interval = self.stale_reap_interval;
+        let last_stale_reap_at = Arc::clone(&self.last_stale_reap_at);
         Box::pin(async move {
             {
                 let mut closed = closed_flow_ids.lock().await;
@@ -112,6 +134,21 @@ impl<H: InterceptHandler> FlowHooks for HandlerFlowHooks<H> {
             );
             let connection_meta = Arc::new(connection_meta);
             connection_meta_by_flow.insert(context.flow_id, Arc::clone(&connection_meta));
+            flow_last_touched.insert(context.flow_id, Instant::now());
+            reap_stale_flows(
+                stale_flow_ttl,
+                stale_reap_interval,
+                Arc::clone(&last_stale_reap_at),
+                Arc::clone(&flow_last_touched),
+                Arc::clone(&closed_flow_ids),
+                Arc::clone(&flow_dispatchers),
+                Arc::clone(&stream_sequences),
+                Arc::clone(&connection_meta_by_flow),
+                process_lookup.clone(),
+                Arc::clone(&handler),
+                Arc::clone(&callback_guard),
+            )
+            .await;
             callback_guard
                 .run_sync((), move || handler.on_connection_open(&connection_meta))
                 .await;
@@ -156,7 +193,9 @@ impl<H: InterceptHandler> FlowHooks for HandlerFlowHooks<H> {
         let handler = Arc::clone(&self.handler);
         let callback_guard = Arc::clone(&self.callback_guard);
         let connection_meta_by_flow = Arc::clone(&self.connection_meta_by_flow);
+        let flow_last_touched = Arc::clone(&self.flow_last_touched);
         Box::pin(async move {
+            flow_last_touched.insert(context.flow_id, Instant::now());
             let Some(connection_meta) =
                 connection_meta_for_context(&context, &connection_meta_by_flow).await
             else {
@@ -191,7 +230,9 @@ impl<H: InterceptHandler> FlowHooks for HandlerFlowHooks<H> {
     ) -> Pin<Box<dyn Future<Output = ()> + Send>> {
         let connection_meta_by_flow = Arc::clone(&self.connection_meta_by_flow);
         let flow_dispatchers = Arc::clone(&self.flow_dispatchers);
+        let flow_last_touched = Arc::clone(&self.flow_last_touched);
         Box::pin(async move {
+            flow_last_touched.insert(context.flow_id, Instant::now());
             let Some(connection_meta) =
                 connection_meta_for_context(&context, &connection_meta_by_flow).await
             else {
@@ -215,7 +256,9 @@ impl<H: InterceptHandler> FlowHooks for HandlerFlowHooks<H> {
     ) -> Pin<Box<dyn Future<Output = ()> + Send>> {
         let flow_dispatchers = Arc::clone(&self.flow_dispatchers);
         let stream_sequences = Arc::clone(&self.stream_sequences);
+        let flow_last_touched = Arc::clone(&self.flow_last_touched);
         Box::pin(async move {
+            flow_last_touched.insert(context.flow_id, Instant::now());
             let Some(frame_kind) = map_stream_frame_kind(chunk.frame_kind) else {
                 return;
             };
@@ -242,44 +285,22 @@ impl<H: InterceptHandler> FlowHooks for HandlerFlowHooks<H> {
         let flow_dispatchers = Arc::clone(&self.flow_dispatchers);
         let stream_sequences = Arc::clone(&self.stream_sequences);
         let connection_meta_by_flow = Arc::clone(&self.connection_meta_by_flow);
+        let flow_last_touched = Arc::clone(&self.flow_last_touched);
         let closed_flow_ids = Arc::clone(&self.closed_flow_ids);
         let process_lookup = self.process_lookup.clone();
         Box::pin(async move {
-            let should_finalize = {
-                let mut closed = closed_flow_ids.lock().await;
-                if closed.get(&context.flow_id).is_some() {
-                    false
-                } else {
-                    closed.put(context.flow_id, ());
-                    true
-                }
-            };
-            if !should_finalize {
-                return;
-            }
-
-            flow_dispatchers.close_and_drain(context.flow_id).await;
-
-            stream_sequences.remove(&context.flow_id);
-            connection_meta_by_flow.remove(&context.flow_id);
-            if let Some(lookup) = process_lookup.as_ref() {
-                lookup
-                    .remove_connection(connection_id_for_flow_id(context.flow_id))
-                    .await;
-            }
-            let connection_id = connection_id_for_flow_id(context.flow_id);
-            let handler_for_end = Arc::clone(&handler);
-            callback_guard
-                .run_response((), async move {
-                    handler_for_end.on_stream_end(connection_id).await
-                })
-                .await;
-            let handler_for_close = Arc::clone(&handler);
-            callback_guard
-                .run_sync((), move || {
-                    handler_for_close.on_connection_close(connection_id)
-                })
-                .await;
+            finalize_flow(
+                context.flow_id,
+                Arc::clone(&closed_flow_ids),
+                Arc::clone(&flow_dispatchers),
+                Arc::clone(&stream_sequences),
+                Arc::clone(&connection_meta_by_flow),
+                Arc::clone(&flow_last_touched),
+                process_lookup.clone(),
+                Arc::clone(&handler),
+                Arc::clone(&callback_guard),
+            )
+            .await;
         })
     }
 }
@@ -288,6 +309,17 @@ pub(crate) fn build_handler_flow_hooks<H: InterceptHandler>(
     handler: Arc<H>,
     metrics_store: Arc<ProxyMetricsStore>,
 ) -> Arc<dyn FlowHooks> {
+    let expected_live_flows = (config.connection_pool.max_connections_per_host as usize)
+        .saturating_mul(config.interception.destinations.len().max(1));
+    let flow_dispatch_queue_capacity = expected_live_flows.clamp(128, 1024);
+    let closed_flow_lru_capacity = expected_live_flows.saturating_mul(8).clamp(4096, 65_536);
+    let stale_flow_ttl = Duration::from_millis(
+        config
+            .connection_pool
+            .idle_timeout_ms
+            .saturating_mul(3)
+            .max(30_000),
+    );
     let callback_guard = Arc::new(HandlerCallbackGuard::new(
         Duration::from_millis(config.handler.request_timeout_ms.max(1)),
         Duration::from_millis(config.handler.response_timeout_ms.max(1)),
@@ -307,6 +339,9 @@ pub(crate) fn build_handler_flow_hooks<H: InterceptHandler>(
         metrics_store,
         callback_guard,
         process_lookup,
+        flow_dispatch_queue_capacity,
+        closed_flow_lru_capacity,
+        stale_flow_ttl,
     ))
 }
 fn map_stream_frame_kind(kind: StreamFrameKind) -> Option<FrameKind> {

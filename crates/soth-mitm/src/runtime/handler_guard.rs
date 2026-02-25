@@ -33,9 +33,10 @@ impl HandlerCallbackGuard {
         R: Send + 'static,
         F: FnOnce() -> R + Send + 'static,
     {
-        match tokio::task::spawn_blocking(callback).await {
-            Ok(value) => value,
-            Err(join_error) if join_error.is_panic() => {
+        let mut task = tokio::task::spawn_blocking(callback);
+        match tokio::time::timeout(self.request_timeout, &mut task).await {
+            Ok(Ok(value)) => value,
+            Ok(Err(join_error)) if join_error.is_panic() => {
                 self.metrics_store.record_handler_panic();
                 if self.recover_from_panics {
                     default_value
@@ -43,7 +44,13 @@ impl HandlerCallbackGuard {
                     resume_unwind(join_error.into_panic());
                 }
             }
-            Err(_join_error) => default_value,
+            Ok(Err(_join_error)) => default_value,
+            Err(_) => {
+                task.abort();
+                let _ = task.await;
+                self.metrics_store.record_handler_timeout();
+                default_value
+            }
         }
     }
 

@@ -17,6 +17,7 @@ mod connection_id;
 mod connection_meta;
 mod flow_dispatch;
 mod flow_hooks;
+mod flow_lifecycle;
 mod handler_guard;
 
 pub(crate) type RuntimeServer = SidecarServer<DestinationPolicyEngine, MetricsEventConsumer>;
@@ -40,7 +41,8 @@ pub(crate) fn build_runtime_server<H: InterceptHandler>(
         max_connect_head_bytes: 64 * 1024,
         max_http_head_bytes: core_config.max_http_head_bytes,
         idle_watchdog_timeout: Duration::from_millis(config.connection_pool.idle_timeout_ms.max(1)),
-        stream_stage_timeout: Duration::from_millis(config.upstream.connect_timeout_ms.max(1)),
+        upstream_connect_timeout: Duration::from_millis(config.upstream.connect_timeout_ms.max(1)),
+        stream_stage_timeout: Duration::from_millis(config.upstream.timeout_ms.max(1)),
         unix_socket_path: config
             .unix_socket_path
             .as_ref()
@@ -76,38 +78,45 @@ fn map_core_config(config: &MitmConfig) -> CoreMitmConfig {
 
 #[derive(Debug, Clone)]
 pub(crate) struct RuntimeConfigHandle {
-    policy_state: Arc<RwLock<DestinationPolicyState>>,
-    active_config: Arc<RwLock<MitmConfig>>,
+    snapshot: Arc<RwLock<RuntimeConfigSnapshot>>,
 }
 
 impl RuntimeConfigHandle {
     pub(crate) fn from_config(config: &MitmConfig) -> Result<Self, MitmError> {
         let policy_state = DestinationPolicyState::from_scope(&config.interception)?;
         Ok(Self {
-            policy_state: Arc::new(RwLock::new(policy_state)),
-            active_config: Arc::new(RwLock::new(config.clone())),
+            snapshot: Arc::new(RwLock::new(RuntimeConfigSnapshot {
+                policy_state,
+                active_config: config.clone(),
+            })),
         })
     }
 
     pub(crate) fn policy_engine(&self) -> DestinationPolicyEngine {
         DestinationPolicyEngine {
-            policy_state: Arc::clone(&self.policy_state),
+            snapshot: Arc::clone(&self.snapshot),
         }
     }
 
     pub(crate) fn apply_reload(&self, next_config: &MitmConfig) -> Result<(), MitmError> {
         next_config.validate()?;
-        let current = self.active_config.read().clone();
-        validate_reload_contract(&current, next_config)?;
         let next_policy_state = DestinationPolicyState::from_scope(&next_config.interception)?;
-        *self.policy_state.write() = next_policy_state;
-        *self.active_config.write() = next_config.clone();
+        let mut snapshot = self.snapshot.write();
+        validate_reload_contract(&snapshot.active_config, next_config)?;
+        snapshot.policy_state = next_policy_state;
+        snapshot.active_config = next_config.clone();
         Ok(())
     }
 
     pub(crate) fn current_config(&self) -> MitmConfig {
-        self.active_config.read().clone()
+        self.snapshot.read().active_config.clone()
     }
+}
+
+#[derive(Debug, Clone)]
+struct RuntimeConfigSnapshot {
+    policy_state: DestinationPolicyState,
+    active_config: MitmConfig,
 }
 
 #[derive(Debug, Clone)]
@@ -132,7 +141,7 @@ impl DestinationPolicyState {
 
 #[derive(Debug, Clone)]
 pub(crate) struct DestinationPolicyEngine {
-    policy_state: Arc<RwLock<DestinationPolicyState>>,
+    snapshot: Arc<RwLock<RuntimeConfigSnapshot>>,
 }
 
 impl DestinationPolicyEngine {
@@ -140,14 +149,18 @@ impl DestinationPolicyEngine {
     pub(crate) fn new(scope: &InterceptionScope) -> Result<Self, MitmError> {
         let policy_state = DestinationPolicyState::from_scope(scope)?;
         Ok(Self {
-            policy_state: Arc::new(RwLock::new(policy_state)),
+            snapshot: Arc::new(RwLock::new(RuntimeConfigSnapshot {
+                policy_state,
+                active_config: MitmConfig::default(),
+            })),
         })
     }
 }
 
 impl PolicyEngine for DestinationPolicyEngine {
     fn decide(&self, input: &PolicyInput) -> PolicyDecision {
-        let state = self.policy_state.read();
+        let snapshot = self.snapshot.read();
+        let state = &snapshot.policy_state;
 
         let key = canonical_destination_key(&input.server_host, input.server_port);
         if state.destination_keys.contains(&key) {
@@ -175,37 +188,16 @@ impl PolicyEngine for DestinationPolicyEngine {
 }
 
 fn validate_reload_contract(current: &MitmConfig, next: &MitmConfig) -> Result<(), MitmError> {
-    if current.bind != next.bind {
-        return Err(non_hot_reloadable_change("bind"));
+    let mut allowed = current.clone();
+    allowed.interception = next.interception.clone();
+    if allowed == *next {
+        Ok(())
+    } else {
+        Err(MitmError::InvalidConfig(
+            "reload only supports interception scope updates; non-interception fields changed"
+                .to_string(),
+        ))
     }
-    if current.unix_socket_path != next.unix_socket_path {
-        return Err(non_hot_reloadable_change("unix_socket_path"));
-    }
-    if current.process_attribution != next.process_attribution {
-        return Err(non_hot_reloadable_change("process_attribution"));
-    }
-    if current.tls != next.tls {
-        return Err(non_hot_reloadable_change("tls"));
-    }
-    if current.upstream != next.upstream {
-        return Err(non_hot_reloadable_change("upstream"));
-    }
-    if current.connection_pool != next.connection_pool {
-        return Err(non_hot_reloadable_change("connection_pool"));
-    }
-    if current.body != next.body {
-        return Err(non_hot_reloadable_change("body"));
-    }
-    if current.handler != next.handler {
-        return Err(non_hot_reloadable_change("handler"));
-    }
-    Ok(())
-}
-
-fn non_hot_reloadable_change(field: &'static str) -> MitmError {
-    MitmError::InvalidConfig(format!(
-        "reload only supports interception scope updates; field changed: {field}"
-    ))
 }
 
 #[cfg(test)]
@@ -352,7 +344,7 @@ mod tests {
             .expect_err("non hot-reloadable field changes must fail reload");
         match error {
             crate::MitmError::InvalidConfig(message) => {
-                assert!(message.contains("field changed: upstream"));
+                assert!(message.contains("non-interception fields changed"));
             }
             other => panic!("expected invalid config error, got {other}"),
         }

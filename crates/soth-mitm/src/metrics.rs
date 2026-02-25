@@ -12,6 +12,7 @@ pub struct ProxyMetrics {
     pub upstream_timeout_count: u64,
     pub process_attribution_failure_count: u64,
     pub process_attribution_timeout_count: u64,
+    pub dropped_dispatch_work_count: u64,
 }
 
 #[derive(Debug, Default)]
@@ -24,6 +25,7 @@ pub(crate) struct ProxyMetricsStore {
     upstream_timeout_count: AtomicU64,
     process_attribution_failure_count: AtomicU64,
     process_attribution_timeout_count: AtomicU64,
+    dropped_dispatch_work_count: AtomicU64,
 }
 
 impl ProxyMetricsStore {
@@ -41,6 +43,7 @@ impl ProxyMetricsStore {
             process_attribution_timeout_count: self
                 .process_attribution_timeout_count
                 .load(Ordering::Relaxed),
+            dropped_dispatch_work_count: self.dropped_dispatch_work_count.load(Ordering::Relaxed),
         }
     }
 
@@ -81,6 +84,11 @@ impl ProxyMetricsStore {
 
     pub(crate) fn record_process_attribution_timeout(&self) {
         self.process_attribution_timeout_count
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub(crate) fn record_dispatch_drop(&self) {
+        self.dropped_dispatch_work_count
             .fetch_add(1, Ordering::Relaxed);
     }
 }
@@ -162,6 +170,7 @@ mod tests {
         assert_eq!(snapshot.upstream_timeout_count, 0);
         assert_eq!(snapshot.process_attribution_failure_count, 0);
         assert_eq!(snapshot.process_attribution_timeout_count, 0);
+        assert_eq!(snapshot.dropped_dispatch_work_count, 0);
     }
 
     #[test]
