@@ -11,7 +11,6 @@ The gate is only valid when all required protocols are present:
 3. `sse`
 4. `http3_passthrough`
 5. `grpc_http2`
-6. `msgpack`
 
 Coverage is asserted by `scripts/p2_protocol_triage.sh`.
 
@@ -31,7 +30,6 @@ Coverage is asserted by `scripts/p2_protocol_triage.sh`.
 | `sse` | `sse` | `cargo test -p mitm-sidecar --test sse_mitm` |
 | `http3_passthrough` | `http3_passthrough` | `cargo test -p mitm-sidecar --test http3_passthrough_mitm` |
 | `grpc_http2` | `grpc_http2` | `cargo test -p mitm-sidecar --test grpc_http2_mitm` |
-| `msgpack` | `msgpack` | `cargo test -p mitm-http --test msgpack` |
 
 ## Local Usage
 
@@ -44,7 +42,7 @@ Run all lanes with triage aggregation:
 Run one lane only:
 
 ```bash
-./scripts/p2_protocol_gate.sh --lane msgpack --report-dir artifacts/p2-protocol/msgpack
+./scripts/p2_protocol_gate.sh --lane grpc_http2 --report-dir artifacts/p2-protocol/grpc_http2
 ```
 
 Generate triage output from existing lane artifacts:

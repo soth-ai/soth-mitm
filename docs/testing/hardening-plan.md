@@ -115,7 +115,7 @@ To add a new contributor lane:
 - `phase5_http1_smuggling_guard`: HTTP/1 request/response canonicalization and smuggling corpus (`TE/CL`, malformed heads, absolute-form semantics).
 - `phase5_tls_profile_matrix`: `strict|default|compat` TLS profile behavior, cert-profile fixture checks, and optional `openssl`/`badssl` probes.
 - `phase5_route_mode_matrix`: route planner mode/config matrix and chained upstream host policy semantics (`direct|reverse|upstream-http|upstream-socks5`).
-- `phase5_http2_resilience`: stream lifecycle hardening checks (parallel streams, benign reset/GOAWAY tolerance, header-limit guard) plus optional `h2spec` blocking command contract.
+- `phase5_http2_resilience`: stream lifecycle hardening checks (parallel streams, benign reset/GOAWAY tolerance, header-limit guard) plus mandatory `h2spec` blocking command contract.
 - `phase5_event_log_contract`: deterministic event log v2 serialization/index contract, sidecar machine-readable exit status contract, and differential replay fixture stability (`.events.v2.jsonl` preferred).
 - `p5_runtime_soak`: mixed-protocol runtime budget soak gate (`HTTP/1`, `HTTP/2`, tunnel, SSE, gRPC envelope path) with denial/watermark assertions.
 

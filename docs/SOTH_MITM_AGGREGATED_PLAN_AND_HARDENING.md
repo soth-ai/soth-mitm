@@ -1192,6 +1192,13 @@ This checklist turns `LIGHTWEIGHT_PROXY_REPO_IMPLEMENTATION_PLAN.md` into an exe
   - [x] Acceptance: deterministic TLS taxonomy outcomes across profile matrix with no unexpected handshake regressions.
     - [x] `cargo test -p mitm-sidecar --test tls_profile_matrix -q` passes.
     - [x] `./scripts/p5_tls_profile_matrix.sh --report-dir testing/reports/phase5_tls_profile_matrix --skip-network` passes (`badssl_probe` skipped by explicit flag).
+  - [ ] Temporary compatibility decision (tracked):
+    - [x] Keep downstream OpenSSL backend enabled as a fallback for client-handshake edge cases where Rustls is currently stricter in real lanes.
+    - [x] Keep Rustls as the default backend (`downstream_tls_backend=rustls`).
+    - [ ] Remove OpenSSL backend and dependency chain only after Rustls-only stability gate passes:
+      - [ ] Go/hey HTTPS CONNECT lane has zero `remote error: tls: illegal parameter` failures under Rustls-only.
+      - [ ] `P5-04` matrix and parity lanes pass with Rustls-only downstream backend.
+      - [ ] `P5-01` long soak (6-12h mixed traffic) passes with Rustls-only downstream backend.
 - [x] `P5-05` Upstream route planner abstraction.
   - [x] Scope: route modes `direct|reverse|upstream-http|upstream-socks5` with immutable per-flow route binding.
   - [x] Deliverables: route planner module + config validation + deterministic policy integration.
@@ -1258,6 +1265,38 @@ This checklist turns `LIGHTWEIGHT_PROXY_REPO_IMPLEMENTATION_PLAN.md` into an exe
     - [x] conditional guard lane added: `scripts/p5_control_plane_boundary.sh` + `testing/lanes/registry.tsv` to fail on introduction of unmanaged control-plane tokens/surfaces.
   - [x] Acceptance: control-plane endpoints are non-bypassable by default.
     - [x] with zero exposed control endpoints, bypass surface is structurally absent and lane-enforced.
+
+### Deferred Follow-up (2026-02-25): Cross-OS Proof Debt for `soth-mitm` as `soth-proxy` Dependency
+
+Status: deferred; keep current implementation, close these before claiming "fully proven Linux/macOS/Windows support."
+
+- [ ] Add Windows CI coverage for core lanes.
+  - Scope:
+    - add `windows-latest` jobs for `cargo check/test` on `mitm-core`, `mitm-tls`, `mitm-sidecar`, and `soth-mitm`.
+    - include at least one reliability lane equivalent to current `p1_reliability` coverage.
+  - Why: current CI matrix is mostly Ubuntu, with partial macOS and no Windows runtime lane.
+- [ ] Make release-readiness cross-OS, not Ubuntu-only.
+  - Scope:
+    - extend `.github/workflows/release.yml` and `scripts/p6_release_readiness.sh` to require Linux/macOS/Windows build validation.
+    - fail release-readiness when any required OS lane is missing.
+- [ ] Add Windows-specific acceptance lanes.
+  - Scope:
+    - process attribution lane for Windows parser/runtime contract (`netstat`/`tasklist` path today).
+    - syscall boundary/observability lane for Windows (current AC-11 is Linux/macOS only).
+    - CA trust install/uninstall/is_trusted smoke lane for Windows cert store path.
+- [ ] Reduce OS command dependency risk in process attribution.
+  - Scope:
+    - replace shell-driven attribution paths with native OS APIs where feasible.
+    - Linux: `/proc`/socket mapping path.
+    - macOS: `proc_pidinfo`/platform-native path.
+    - Windows: native TCP table + process metadata APIs; remove `wmic` dependence.
+  - Why: shell tool availability/format drift can break attribution determinism.
+- [ ] Define closure criteria for "true cross-OS support".
+  - Required evidence:
+    - green Linux/macOS/Windows CI runtime lanes.
+    - release-readiness artifact includes all three OS statuses.
+    - acceptance lanes for process attribution + CA trust pass on all supported OS targets.
+    - no critical fallback/skip statuses in strict mode for OS-specific gates.
 
 ## 13) Phase 7: Local Capture and Transparent Mode
 

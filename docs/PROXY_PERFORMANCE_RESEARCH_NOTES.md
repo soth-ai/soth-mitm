@@ -41,7 +41,7 @@ This document captures key learnings from the provided research write-up and sto
    - MITM TLS path
    - protocol parser path
 3. Protocol layer:
-   - H1/H2 + WebSocket + SSE + gRPC framing + payload parsers (msgpack, anti-hijack)
+   - H1/H2 + WebSocket + SSE + gRPC framing + transport sanitizers (anti-hijack)
 4. Upstream connector pool:
    - key by scheme/host/port/ALPN
    - strict budgets and circuit-breaker style controls
@@ -118,9 +118,8 @@ This document captures key learnings from the provided research write-up and sto
 7. badssl.com test endpoints: https://badssl.com
 8. MDN Server-Sent Events: https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events
 9. gRPC over HTTP/2 protocol details: https://grpc.github.io/grpc/core/md_doc__p_r_o_t_o_c_o_l-_h_t_t_p2.html
-10. MessagePack spec: https://github.com/msgpack/msgpack/blob/master/spec.md
-11. OWASP JSON Hijacking: https://owasp.org/www-community/attacks/JSON_Hijacking
-12. GitHub Actions artifacts: https://docs.github.com/en/actions/using-workflows/storing-workflow-data-as-artifacts
+10. OWASP JSON Hijacking: https://owasp.org/www-community/attacks/JSON_Hijacking
+11. GitHub Actions artifacts: https://docs.github.com/en/actions/using-workflows/storing-workflow-data-as-artifacts
 
 ## For `soth-mitm` implementation tracking
 
