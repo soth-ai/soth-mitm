@@ -5,6 +5,16 @@ on:
     branches:
       - main
   pull_request:
+  workflow_dispatch:
+    inputs:
+      run_profile:
+        description: "CI profile to run"
+        required: true
+        type: choice
+        options:
+          - fast
+          - full
+        default: fast
 
 permissions:
   contents: read
@@ -197,6 +207,11 @@ jobs:
 
   phase2_protocol_matrix:
     name: phase2_protocol_matrix (${{ matrix.os }} / ${{ matrix.lane }})
+    if: >-
+      ${{
+        github.event_name == 'push' ||
+        (github.event_name == 'workflow_dispatch' && github.event.inputs.run_profile == 'full')
+      }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -235,6 +250,11 @@ jobs:
 
   phase2_protocol_triage:
     name: phase2_protocol_triage
+    if: >-
+      ${{
+        github.event_name == 'push' ||
+        (github.event_name == 'workflow_dispatch' && github.event.inputs.run_profile == 'full')
+      }}
     runs-on: ubuntu-latest
     needs:
       - phase2_protocol_matrix
@@ -262,6 +282,11 @@ jobs:
 
   phase4_differential_validation:
     name: phase4_differential_validation (${{ matrix.os }})
+    if: >-
+      ${{
+        github.event_name == 'push' ||
+        (github.event_name == 'workflow_dispatch' && github.event.inputs.run_profile == 'full')
+      }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -294,6 +319,11 @@ jobs:
 
   phase4_performance_gates:
     name: phase4_performance_gates (${{ matrix.os }})
+    if: >-
+      ${{
+        github.event_name == 'push' ||
+        (github.event_name == 'workflow_dispatch' && github.event.inputs.run_profile == 'full')
+      }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -326,6 +356,11 @@ jobs:
 
   phase4_failure_injection:
     name: phase4_failure_injection (${{ matrix.os }})
+    if: >-
+      ${{
+        github.event_name == 'push' ||
+        (github.event_name == 'workflow_dispatch' && github.event.inputs.run_profile == 'full')
+      }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -358,6 +393,11 @@ jobs:
 
   phase4_tool_lanes:
     name: phase4_tool_lanes (${{ matrix.os }})
+    if: >-
+      ${{
+        github.event_name == 'push' ||
+        (github.event_name == 'workflow_dispatch' && github.event.inputs.run_profile == 'full')
+      }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -390,6 +430,11 @@ jobs:
 
   phase4_chaos_network_faults:
     name: phase4_chaos_network_faults (${{ matrix.os }})
+    if: >-
+      ${{
+        github.event_name == 'push' ||
+        (github.event_name == 'workflow_dispatch' && github.event.inputs.run_profile == 'full')
+      }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -422,6 +467,11 @@ jobs:
 
   phase4_chaos_adversarial:
     name: phase4_chaos_adversarial (${{ matrix.os }})
+    if: >-
+      ${{
+        github.event_name == 'push' ||
+        (github.event_name == 'workflow_dispatch' && github.event.inputs.run_profile == 'full')
+      }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -454,6 +504,11 @@ jobs:
 
   phase6_performance_gates:
     name: phase6_performance_gates (${{ matrix.os }})
+    if: >-
+      ${{
+        github.event_name == 'push' ||
+        (github.event_name == 'workflow_dispatch' && github.event.inputs.run_profile == 'full')
+      }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -486,6 +541,11 @@ jobs:
 
   phase6_acceptance_matrix:
     name: phase6_acceptance_matrix (${{ matrix.os }})
+    if: >-
+      ${{
+        github.event_name == 'push' ||
+        (github.event_name == 'workflow_dispatch' && github.event.inputs.run_profile == 'full')
+      }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -505,6 +565,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Install cargo-deny
+        if: runner.os != 'Windows'
         uses: taiki-e/install-action@cargo-deny
 
       - name: Run phase 6 acceptance matrix
