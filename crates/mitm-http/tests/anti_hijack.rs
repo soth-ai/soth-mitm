@@ -22,21 +22,21 @@ fn anti_hijack_fixtures_parse_successfully_with_metadata() {
         (
             include_bytes!("fixtures/anti_hijack/angular_guard.json").as_slice(),
             true,
-            Some("xssi_angular_prefix_lf"),
+            &["xssi_angular_prefix_lf", "xssi_angular_prefix_crlf"][..],
         ),
         (
             include_bytes!("fixtures/anti_hijack/while_guard.json").as_slice(),
             true,
-            Some("while_1_prefix"),
+            &["while_1_prefix"][..],
         ),
         (
             include_bytes!("fixtures/anti_hijack/plain.json").as_slice(),
             false,
-            None,
+            &[][..],
         ),
     ];
 
-    for (fixture, expect_sanitized, expect_prefix) in cases {
+    for (fixture, expect_sanitized, expected_prefixes) in cases {
         let result = run_payload_stage(fixture);
         assert!(result.failure.is_none());
         assert_eq!(result.reports.len(), 1);
@@ -57,23 +57,30 @@ fn anti_hijack_fixtures_parse_successfully_with_metadata() {
             .attributes
             .get(SANITIZED_PREFIX_ATTRIBUTE)
             .map(String::as_str);
-        assert_eq!(prefix_attr, expect_prefix);
-        if let Some(prefix) = expect_prefix {
-            let expected_provenance = format!("anti_hijack_prefix:{prefix}");
-            assert_eq!(
-                result
-                    .output
-                    .attributes
-                    .get(SANITIZED_PROVENANCE_ATTRIBUTE)
-                    .map(String::as_str),
-                Some(expected_provenance.as_str())
-            );
-        } else {
+
+        if expected_prefixes.is_empty() {
+            assert_eq!(prefix_attr, None);
             assert!(!result
                 .output
                 .attributes
                 .contains_key(SANITIZED_PROVENANCE_ATTRIBUTE));
+            continue;
         }
+
+        let observed_prefix = prefix_attr.expect("expected anti-hijack prefix metadata");
+        assert!(
+            expected_prefixes.contains(&observed_prefix),
+            "unexpected anti-hijack prefix: {observed_prefix}"
+        );
+        let expected_provenance = format!("anti_hijack_prefix:{observed_prefix}");
+        assert_eq!(
+            result
+                .output
+                .attributes
+                .get(SANITIZED_PROVENANCE_ATTRIBUTE)
+                .map(String::as_str),
+            Some(expected_provenance.as_str())
+        );
     }
 }
 

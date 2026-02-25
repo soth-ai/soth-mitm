@@ -43,10 +43,16 @@ jobs:
       - name: Check default feature set
         run: cargo check --workspace
 
-      - name: Check all feature set
+      - name: Check all feature set (non-Windows)
+        if: runner.os != 'Windows'
         run: cargo check --workspace --all-features
 
-      - name: Check OpenSSL backend feature path
+      - name: Check all feature set (Windows sans OpenSSL backend)
+        if: runner.os == 'Windows'
+        run: cargo check --workspace --all-features --exclude mitm-tls
+
+      - name: Check OpenSSL backend feature path (non-Windows)
+        if: runner.os != 'Windows'
         run: cargo check -p mitm-tls --features openssl-backend
 
   fmt_clippy:

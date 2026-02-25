@@ -4,7 +4,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
-cargo_args=()
+declare -a cargo_args=()
 if [[ "${OFFLINE:-0}" == "1" ]]; then
   cargo_args+=(--offline)
 fi
@@ -42,13 +42,23 @@ run_suite() {
   fi
 }
 
-run_suite mitm_core cargo test -p mitm-core "${cargo_args[@]}"
-run_suite mitm_tls cargo test -p mitm-tls "${cargo_args[@]}"
-run_suite mitm_sidecar_lib cargo test -p mitm-sidecar --lib "${cargo_args[@]}"
-run_suite phase_a_fixture cargo test -p mitm-sidecar --test phase_a "${cargo_args[@]}"
-run_suite http1_mitm_fixture cargo test -p mitm-sidecar --test http1_mitm "${cargo_args[@]}"
-run_suite tls_learning_guardrails_fixture cargo test -p mitm-sidecar --test tls_learning_guardrails "${cargo_args[@]}"
-run_suite mitmproxy_tls_adapter_fixture cargo test -p mitm-sidecar --test mitmproxy_tls_adapter "${cargo_args[@]}"
+run_cargo_suite() {
+  local suite_name="$1"
+  shift
+  if [[ "${#cargo_args[@]}" -gt 0 ]]; then
+    run_suite "$suite_name" cargo test "$@" "${cargo_args[@]}"
+  else
+    run_suite "$suite_name" cargo test "$@"
+  fi
+}
+
+run_cargo_suite mitm_core -p mitm-core
+run_cargo_suite mitm_tls -p mitm-tls
+run_cargo_suite mitm_sidecar_lib -p mitm-sidecar --lib
+run_cargo_suite phase_a_fixture -p mitm-sidecar --test phase_a
+run_cargo_suite http1_mitm_fixture -p mitm-sidecar --test http1_mitm
+run_cargo_suite tls_learning_guardrails_fixture -p mitm-sidecar --test tls_learning_guardrails
+run_cargo_suite mitmproxy_tls_adapter_fixture -p mitm-sidecar --test mitmproxy_tls_adapter
 
 if [[ "${#failures[@]}" -gt 0 ]]; then
   {
