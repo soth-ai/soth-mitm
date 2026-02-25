@@ -39,10 +39,10 @@ printf 'check\tstatus\tdetail\n' >"$status_tsv"
 
 ac_run_case "$status_tsv" shutdown_noop_when_handle_missing \
   cargo test -p soth-mitm shutdown_noop_when_handle_already_consumed -q
-ac_run_case "$status_tsv" shutdown_abort_active_task \
-  cargo test -p soth-mitm shutdown_aborts_active_run_handle_within_timeout -q
-ac_run_case "$status_tsv" shutdown_timeout_guard_for_blocking_task \
-  cargo test -p soth-mitm shutdown_returns_timeout_when_abort_cannot_preempt_blocking_task -q
+ac_run_case "$status_tsv" shutdown_drains_active_flows \
+  cargo test -p soth-mitm shutdown_drains_active_flows_before_joining_runtime -q
+ac_run_case "$status_tsv" shutdown_timeout_when_flows_stuck \
+  cargo test -p soth-mitm shutdown_returns_timeout_when_active_flows_do_not_drain -q
 ac_run_case "$status_tsv" stream_close_once_lifecycle_contract \
   cargo test -p soth-mitm stream_end_invokes_connection_close_once -q
 

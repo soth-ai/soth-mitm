@@ -2,8 +2,8 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV
 use std::path::PathBuf;
 
 use mitm_observe::FlowContext;
-use uuid::Uuid;
 
+use crate::runtime::connection_id::connection_id_for_flow_id;
 use crate::types::{ConnectionInfo, ConnectionMeta, ProcessInfo, SocketFamily};
 
 pub(crate) fn connection_meta_from_accept_context(
@@ -11,7 +11,7 @@ pub(crate) fn connection_meta_from_accept_context(
     process_info: Option<ProcessInfo>,
 ) -> ConnectionMeta {
     ConnectionMeta {
-        connection_id: Uuid::from_u128(context.flow_id as u128),
+        connection_id: connection_id_for_flow_id(context.flow_id),
         socket_family: socket_family_from_flow_context(context),
         process_info,
         tls_info: None,
@@ -67,7 +67,7 @@ pub(crate) fn lookup_connection_info_from_flow_context(context: &FlowContext) ->
         SocketFamily::UnixDomain { .. } => (IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0),
     };
     ConnectionInfo {
-        connection_id: Uuid::from_u128(context.flow_id as u128),
+        connection_id: connection_id_for_flow_id(context.flow_id),
         source_ip,
         source_port,
         destination_host: context.server_host.clone(),

@@ -14,8 +14,12 @@ use crate::metrics::{MetricsEventConsumer, ProxyMetricsStore};
 
 #[path = "runtime/connection_meta.rs"]
 mod connection_meta;
+#[path = "runtime/connection_id.rs"]
+mod connection_id;
 #[path = "runtime/flow_hooks.rs"]
 mod flow_hooks;
+#[path = "runtime/flow_dispatch.rs"]
+mod flow_dispatch;
 #[path = "runtime/handler_guard.rs"]
 mod handler_guard;
 

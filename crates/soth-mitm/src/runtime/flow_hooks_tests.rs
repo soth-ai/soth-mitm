@@ -240,6 +240,40 @@ async fn stream_end_invokes_connection_close_once() {
 }
 
 #[tokio::test]
+async fn duplicate_stream_end_callbacks_are_deduplicated() {
+    let stream_end_count = Arc::new(AtomicUsize::new(0));
+    let close_count = Arc::new(AtomicUsize::new(0));
+    let handler = Arc::new(StreamLifecycleHandler {
+        stream_end_count: Arc::clone(&stream_end_count),
+        close_count: Arc::clone(&close_count),
+    });
+    let metrics_store = Arc::new(ProxyMetricsStore::default());
+    let hooks = build_hooks(
+        handler,
+        metrics_store,
+        Duration::from_millis(100),
+        Duration::from_millis(100),
+        true,
+    );
+    let context = sample_context(206);
+    register_connection(&hooks, context.clone()).await;
+
+    hooks.on_stream_end(context.clone()).await;
+    hooks.on_stream_end(context).await;
+
+    assert_eq!(
+        stream_end_count.load(Ordering::Relaxed),
+        1,
+        "stream end callback must fire once per flow"
+    );
+    assert_eq!(
+        close_count.load(Ordering::Relaxed),
+        1,
+        "connection close callback must fire once per flow"
+    );
+}
+
+#[tokio::test]
 async fn should_intercept_tls_receives_process_info_from_connect_path() {
     let observed_pid = Arc::new(AtomicU32::new(0));
     let handler = Arc::new(ProcessAwareTlsHandler {
