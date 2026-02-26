@@ -24,5 +24,14 @@ if [[ ! -f "$seed_file" ]]; then
   printf '{"seed":"decoder-layering"}\n' >"$seed_file"
 fi
 
+# cargo-fuzz style executables are not reliable on Windows/MSVC in CI.
+# Use deterministic decoder-chain regression tests there instead.
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*)
+    cargo test -p mitm-http --test decoder_chain -q
+    exit 0
+    ;;
+esac
+
 cargo run --manifest-path "$repo_root/fuzz/Cargo.toml" --bin decoder_layering_interactions -- \
   -runs="$runs" "$corpus_dir"
