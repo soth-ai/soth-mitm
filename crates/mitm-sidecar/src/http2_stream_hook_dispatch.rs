@@ -44,10 +44,14 @@ async fn capture_h2_body(
         }
     }
 
-    let trailers = source
-        .trailers()
-        .await
-        .map_err(|error| h2_error_to_io("reading HTTP/2 trailers failed", error))?;
+    let trailers = if source.is_end_stream() {
+        None
+    } else {
+        source
+            .trailers()
+            .await
+            .map_err(|error| h2_error_to_io("reading HTTP/2 trailers failed", error))?
+    };
 
     Ok(H2CapturedBody {
         bytes: bytes::Bytes::from(body),
