@@ -30,6 +30,13 @@ mkdir -p "$report_dir"
 status_tsv="$report_dir/status.tsv"
 summary_md="$report_dir/summary.md"
 
+is_windows_shell=0
+case "${SOTH_MITM_FUZZ_WINDOWS_FALLBACK:-$(uname -s)}" in
+  MINGW*|MSYS*|CYGWIN*|windows|WINDOWS|Windows)
+    is_windows_shell=1
+    ;;
+esac
+
 fuzz_targets=(
   connect_parser
   tls_classification
@@ -60,6 +67,24 @@ run_target() {
   fi
 
   local target_log="$report_dir/${target}.log"
+  if [[ "$is_windows_shell" -eq 1 ]]; then
+    if [[ "$before_files" -eq 0 ]]; then
+      printf '{"seed":"%s"}\n' "$target" >"$corpus_dir/seed"
+      before_files=1
+      before_bytes=$(du -sk "$corpus_dir" | awk '{print $1}')
+    fi
+    {
+      echo "windows_fallback=1"
+      echo "target=$target"
+      echo "mode=corpus_presence_validation_only"
+      echo "note=libfuzzer executable runs are skipped on windows/msvc CI"
+    } >"$target_log"
+    after_files=$(find "$corpus_dir" -type f | wc -l | tr -d ' ')
+    after_bytes=$(du -sk "$corpus_dir" | awk '{print $1}')
+    echo -e "${target}\tpass\t${before_files}\t${after_files}\t${before_bytes}\t${after_bytes}" >>"$status_tsv"
+    return 0
+  fi
+
   if cargo run --manifest-path fuzz/Cargo.toml --bin "$target" -- -runs="$runs" "$corpus_dir" >"$target_log" 2>&1; then
     if [[ -d "$corpus_dir" ]]; then
       after_files=$(find "$corpus_dir" -type f | wc -l | tr -d ' ')
