@@ -410,13 +410,6 @@ async fn start_tls_h2_upstream() -> (u16, tokio::task::JoinHandle<()>) {
                 };
                 let (parts, mut body) = request.into_parts();
                 assert_eq!(parts.method, http::Method::POST);
-                while let Some(next) = body.data().await {
-                    if next.is_err() {
-                        return;
-                    }
-                }
-                soak_debug(format!("[h2-upstream:{conn_id}] request body complete"));
-                let _ = body.trailers().await;
                 let response = http::Response::builder()
                     .status(200)
                     .header("content-length", "2")
@@ -430,6 +423,15 @@ async fn start_tls_h2_upstream() -> (u16, tokio::task::JoinHandle<()>) {
                     return;
                 }
                 soak_debug(format!("[h2-upstream:{conn_id}] response sent"));
+                let _ = timeout(Duration::from_millis(250), async {
+                    while let Some(next) = body.data().await {
+                        if next.is_err() {
+                            break;
+                        }
+                    }
+                    let _ = body.trailers().await;
+                })
+                .await;
                 h2_conn.graceful_shutdown();
                 let _ = timeout(Duration::from_secs(1), async {
                     let _ = std::future::poll_fn(|cx| h2_conn.poll_closed(cx)).await;

@@ -9,7 +9,10 @@ if [[ ! -f "crates/soth-mitm/Cargo.toml" ]]; then
   exit 2
 fi
 
-mapfile -t rust_files < <(find crates/soth-mitm/src crates/soth-mitm/tests -type f -name "*.rs" | sort)
+rust_files=()
+while IFS= read -r rust_file; do
+  rust_files+=("$rust_file")
+done < <(find crates/soth-mitm/src crates/soth-mitm/tests -type f -name "*.rs" | sort)
 
 if [[ "${#rust_files[@]}" -eq 0 ]]; then
   echo "no Rust files found under crates/soth-mitm" >&2
