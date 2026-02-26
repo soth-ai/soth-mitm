@@ -132,12 +132,12 @@ if [[ "$strict_gate" -eq 1 ]]; then
     echo -e "strict_gate_no_skip\tfail" >>"$status_tsv"
     echo -e "strict_gate_test_result\tfail" >>"$status_tsv"
   else
-    if rg -n "skipping mixed_traffic_soak_respects_runtime_budget_envelope" "$run_log" >/dev/null 2>&1; then
+    if grep -n -E "skipping mixed_traffic_soak_respects_runtime_budget_envelope" "$run_log" >/dev/null 2>&1; then
       echo -e "strict_gate_no_skip\tfail" >>"$status_tsv"
     else
       echo -e "strict_gate_no_skip\tpass" >>"$status_tsv"
     fi
-    if rg -n "test result: ok\\." "$run_log" >/dev/null 2>&1; then
+    if grep -n -E "test result: ok\\." "$run_log" >/dev/null 2>&1; then
       echo -e "strict_gate_test_result\tpass" >>"$status_tsv"
     else
       echo -e "strict_gate_test_result\tfail" >>"$status_tsv"

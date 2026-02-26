@@ -52,7 +52,13 @@ else
   ac_run_case "$status_tsv" macos_lsof_pid_parser_contract \
     cargo test -p soth-mitm parses_pid_from_lsof_machine_output -q || true
 
-  if rg -n "bundle_id:\s*None" crates/soth-mitm/src/process/macos.rs >/dev/null; then
+  if command -v rg >/dev/null 2>&1; then
+    bundle_capture_cmd=(rg -n "bundle_id:[[:space:]]*None" crates/soth-mitm/src/process/macos.rs)
+  else
+    bundle_capture_cmd=(grep -n -E "bundle_id:[[:space:]]*None" crates/soth-mitm/src/process/macos.rs)
+  fi
+
+  if "${bundle_capture_cmd[@]}" >/dev/null 2>&1; then
     if [[ "$strict_tools" -eq 1 ]]; then
       ac_record_status "$status_tsv" chrome_bundle_id_capture fail bundle_id_capture_not_implemented
     else

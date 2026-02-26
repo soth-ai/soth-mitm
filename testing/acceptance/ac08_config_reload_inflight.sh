@@ -35,7 +35,13 @@ summary_md="$report_dir/summary.md"
 outcome_tsv="$report_dir/outcome.tsv"
 printf 'check\tstatus\tdetail\n' >"$status_tsv"
 
-if rg -n "fn reload\s*\(" crates/soth-mitm/src >/dev/null; then
+if command -v rg >/dev/null 2>&1; then
+  reload_search_cmd=(rg -n "fn[[:space:]]+reload[[:space:]]*\\(" crates/soth-mitm/src)
+else
+  reload_search_cmd=(grep -R -n -E "fn[[:space:]]+reload[[:space:]]*\\(" crates/soth-mitm/src)
+fi
+
+if "${reload_search_cmd[@]}" >/dev/null 2>&1; then
   ac_record_status "$status_tsv" reload_api_surface pass present
   if cargo test -p soth-mitm config_reload_inflight_requests_contract -q; then
     ac_record_status "$status_tsv" reload_inflight_contract pass ok

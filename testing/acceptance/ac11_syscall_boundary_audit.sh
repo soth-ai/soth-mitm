@@ -84,7 +84,7 @@ if [[ -n "$audit_report" ]]; then
 fi
 
 if [[ -n "$audit_report_to_validate" ]]; then
-  if rg -n '^audit_status=pass$' "$audit_report_to_validate" >/dev/null 2>&1; then
+  if grep -n -E '^audit_status=pass$' "$audit_report_to_validate" >/dev/null 2>&1; then
     ac_record_status "$status_tsv" syscall_audit_evidence pass supplied_report_pass
   else
     ac_record_status "$status_tsv" syscall_audit_evidence fail supplied_report_not_pass

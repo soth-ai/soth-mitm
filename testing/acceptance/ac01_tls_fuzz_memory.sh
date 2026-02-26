@@ -45,13 +45,18 @@ summary_md="$report_dir/summary.md"
 outcome_tsv="$report_dir/outcome.tsv"
 printf 'check\tstatus\tdetail\n' >"$status_tsv"
 
-ac_run_case "$status_tsv" fuzz_harness_build \
-  cargo check --manifest-path fuzz/Cargo.toml --offline || true
+if cargo check --manifest-path fuzz/Cargo.toml --offline; then
+  ac_record_status "$status_tsv" fuzz_harness_build pass offline_ok
+elif cargo check --manifest-path fuzz/Cargo.toml; then
+  ac_record_status "$status_tsv" fuzz_harness_build pass online_fallback
+else
+  ac_record_status "$status_tsv" fuzz_harness_build fail command_failed
+fi
 ac_run_case "$status_tsv" decoder_layering_regression \
   ./scripts/fuzz_decoder_layering_regression.sh --runs "$decoder_runs" || true
 
 if command -v cargo-fuzz >/dev/null 2>&1; then
-  if command -v rustup >/dev/null 2>&1 && rustup toolchain list | awk '{print $1}' | rg '^nightly' >/dev/null 2>&1; then
+  if command -v rustup >/dev/null 2>&1 && rustup toolchain list | awk '{print $1}' | grep -E '^nightly' >/dev/null 2>&1; then
     ac_run_case "$status_tsv" tls_classification_fuzz_runs \
       cargo +nightly fuzz run tls_classification -- "-runs=${fuzz_runs}" || true
     ac_run_case "$status_tsv" websocket_framing_fuzz_runs \

@@ -23,26 +23,45 @@ mkdir -p "$(dirname "$report_file")"
 
 status="pass"
 details=()
+has_rg=0
+if command -v rg >/dev/null 2>&1; then
+  has_rg=1
+fi
 
-if rg -n '\bunsafe\b' crates/soth-mitm/src crates/mitm-core/src crates/mitm-http/src \
+search_sources() {
+  local pattern="$1"
+  shift
+  if [[ "$has_rg" -eq 1 ]]; then
+    rg -n "$pattern" "$@"
+  else
+    grep -R -n -E "$pattern" "$@"
+  fi
+}
+
+unsafe_pattern='(^|[^[:alnum:]_])unsafe([^[:alnum:]_]|$)'
+if [[ "$has_rg" -eq 1 ]]; then
+  unsafe_pattern='\bunsafe\b'
+fi
+
+if search_sources "$unsafe_pattern" crates/soth-mitm/src crates/mitm-core/src crates/mitm-http/src \
   crates/mitm-policy/src crates/mitm-sidecar/src crates/mitm-tls/src crates/mitm-observe/src \
   >/dev/null 2>&1; then
   status="fail"
   details+=("unsafe_usage_detected")
 fi
 
-if rg -n 'libc::|nix::sys::|std::os::unix::io::FromRawFd|std::os::fd::FromRawFd' \
+if search_sources 'libc::|nix::sys::|std::os::unix::io::FromRawFd|std::os::fd::FromRawFd' \
   crates/soth-mitm/src >/dev/null 2>&1; then
   status="fail"
   details+=("raw_syscall_boundary_violation")
 fi
 
 unauthorized_commands="$(
-  rg -n 'tokio::process::Command|std::process::Command' crates/soth-mitm/src -S | \
+  search_sources 'tokio::process::Command|std::process::Command' crates/soth-mitm/src | \
     awk -F: '
       !($1 ~ /crates\/soth-mitm\/src\/process\/(linux|macos|windows)\.rs$/) &&
       !($1 ~ /crates\/soth-mitm\/src\/ca_trust\/backend_common\.rs$/) {print}
-    '
+    ' || true
 )"
 if [[ -n "$unauthorized_commands" ]]; then
   status="fail"

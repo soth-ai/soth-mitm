@@ -29,15 +29,23 @@ record_status() {
 
 : >"$status_tsv"
 
-if rg -n \
-  "control_plane|management_endpoint|admin_endpoint|control_listener|bind_control|host_allowlist|origin_allowlist|anti_rebinding" \
-  crates/mitm-sidecar/src crates/mitm-core/src -g '*.rs' >"$report_dir/unexpected-surface.txt"; then
+if command -v rg >/dev/null 2>&1; then
+  control_surface_cmd=(rg -n \
+    "control_plane|management_endpoint|admin_endpoint|control_listener|bind_control|host_allowlist|origin_allowlist|anti_rebinding" \
+    crates/mitm-sidecar/src crates/mitm-core/src -g '*.rs')
+else
+  control_surface_cmd=(grep -R -n -E --include='*.rs' \
+    "control_plane|management_endpoint|admin_endpoint|control_listener|bind_control|host_allowlist|origin_allowlist|anti_rebinding" \
+    crates/mitm-sidecar/src crates/mitm-core/src)
+fi
+
+if "${control_surface_cmd[@]}" >"$report_dir/unexpected-surface.txt"; then
   record_status control_plane_surface "fail" "unexpected_control_surface_tokens"
 else
   record_status control_plane_surface "pass" "no_control_plane_endpoints_exposed"
 fi
 
-if rg -n "bind_listener_with_socket_hardening" crates/mitm-sidecar/src/socket_hardening.rs -q; then
+if grep -n -E "bind_listener_with_socket_hardening" crates/mitm-sidecar/src/socket_hardening.rs >/dev/null 2>&1; then
   record_status explicit_single_listener_guard "pass" "single_data_plane_listener_path"
 else
   record_status explicit_single_listener_guard "fail" "listener_guard_missing"

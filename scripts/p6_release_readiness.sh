@@ -51,7 +51,7 @@ set -e
 if [[ "$publish_exit" -eq 0 ]]; then
   printf '%s\tpass\n' publish_dry_run >>"$status_tsv"
 else
-  if rg -n -i \
+  if grep -n -E -i \
     "could not resolve host|couldn't connect to server|download of config.json failed|failed to download|no matching package named .*mitm-core.* found|failed to get .*mitm-core.* as a dependency|failed to prepare local package for uploading" \
     "$publish_log" >/dev/null 2>&1; then
     if "${publish_fallback_cmd[@]}" >/dev/null 2>&1; then
@@ -112,7 +112,7 @@ SMOKE
 run_case integration_smoke_only_soth_mitm_dependency \
   cargo check --manifest-path "$smoke_dir/Cargo.toml" --offline || true
 
-if rg -n "^Status: GREEN$" docs/migration/soth-proxy-integration.md >/dev/null 2>&1; then
+if grep -n -E "^Status: GREEN$" docs/migration/soth-proxy-integration.md >/dev/null 2>&1; then
   printf '%s\tpass\n' cutover_checklist_green >>"$status_tsv"
 else
   printf '%s\tfail\n' cutover_checklist_green >>"$status_tsv"
