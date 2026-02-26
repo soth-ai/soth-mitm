@@ -8,6 +8,10 @@ source testing/acceptance/common.sh
 
 report_dir="artifacts/p6-acceptance/ac12"
 strict_tools=0
+has_rg=0
+if command -v rg >/dev/null 2>&1; then
+  has_rg=1
+fi
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -52,10 +56,17 @@ duplicates_file="$report_dir/cargo-tree-duplicates.txt"
 if cargo tree -d --prefix none >"$duplicates_file" 2>&1; then
   duplicate_cores=()
   for core_crate in tokio hyper rustls; do
-    version_count="$(
-      rg -o "^${core_crate} v[^ ]+" "$duplicates_file" \
-        || true \
-    )"
+    if [[ "$has_rg" -eq 1 ]]; then
+      version_count="$(
+        rg -o "^${core_crate} v[^ ]+" "$duplicates_file" \
+          || true \
+      )"
+    else
+      version_count="$(
+        grep -o -E "^${core_crate} v[^ ]+" "$duplicates_file" \
+          || true \
+      )"
+    fi
     version_count="$(
       printf '%s\n' "$version_count" \
         | sort -u \

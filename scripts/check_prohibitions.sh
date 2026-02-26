@@ -17,6 +17,10 @@ if [[ "${#rust_files[@]}" -eq 0 ]]; then
 fi
 
 violations=0
+has_rg=0
+if command -v rg >/dev/null 2>&1; then
+  has_rg=1
+fi
 
 report_violation() {
   local title="$1"
@@ -33,18 +37,30 @@ scan_fixed_term() {
   local title="$1"
   local term="$2"
   local matches
-  matches="$(rg -n --color=never -i --fixed-strings "$term" "${rust_files[@]}" || true)"
+  if [[ "$has_rg" -eq 1 ]]; then
+    matches="$(rg -n --color=never -i --fixed-strings "$term" "${rust_files[@]}" || true)"
+  else
+    matches="$(grep -n -i -F -- "$term" "${rust_files[@]}" || true)"
+  fi
   if [[ -n "$matches" ]]; then
     report_violation "$title" "$matches"
   fi
 }
 
-delay_usage_matches="$(rg -n --color=never --pcre2 'Handler(?:Decision|Action)\s*::\s*(Delay|Hold)\b' "${rust_files[@]}" || true)"
+if [[ "$has_rg" -eq 1 ]]; then
+  delay_usage_matches="$(rg -n --color=never --pcre2 'Handler(?:Decision|Action)\s*::\s*(Delay|Hold)\b' "${rust_files[@]}" || true)"
+else
+  delay_usage_matches="$(grep -n -E 'Handler(Decision|Action)[[:space:]]*::[[:space:]]*(Delay|Hold)' "${rust_files[@]}" || true)"
+fi
 if [[ -n "$delay_usage_matches" ]]; then
   report_violation "Delay/Hold action usage is prohibited" "$delay_usage_matches"
 fi
 
-delay_variant_matches="$(rg -n --color=never --pcre2 '^\s*(Delay|Hold)\s*(\{|,|\()' crates/soth-mitm/src/actions.rs || true)"
+if [[ "$has_rg" -eq 1 ]]; then
+  delay_variant_matches="$(rg -n --color=never --pcre2 '^\s*(Delay|Hold)\s*(\{|,|\()' crates/soth-mitm/src/actions.rs || true)"
+else
+  delay_variant_matches="$(grep -n -E '^[[:space:]]*(Delay|Hold)[[:space:]]*(\{|,|\()' crates/soth-mitm/src/actions.rs || true)"
+fi
 if [[ -n "$delay_variant_matches" ]]; then
   report_violation "Delay/Hold action variant is prohibited" "$delay_variant_matches"
 fi
@@ -66,11 +82,19 @@ for term in "${provider_terms[@]}"; do
   scan_fixed_term "AI/provider-specific term '${term}' is prohibited" "$term"
 done
 
-body_logging_matches="$(
-  rg -n -U --color=never --pcre2 \
-    '(?is)(tracing::(?:trace|debug|info|warn|error)|log::(?:trace|debug|info|warn|error)|eprintln|println)!\s*\([^)]{0,512}\b(body|payload|chunk)\b' \
-    "${rust_files[@]}" || true
-)"
+if [[ "$has_rg" -eq 1 ]]; then
+  body_logging_matches="$(
+    rg -n -U --color=never --pcre2 \
+      '(?is)(tracing::(?:trace|debug|info|warn|error)|log::(?:trace|debug|info|warn|error)|eprintln|println)!\s*\([^)]{0,512}\b(body|payload|chunk)\b' \
+      "${rust_files[@]}" || true
+  )"
+else
+  body_logging_matches="$(
+    grep -n -E -i \
+      '(tracing::(trace|debug|info|warn|error)|log::(trace|debug|info|warn|error)|eprintln|println)!.*(body|payload|chunk)' \
+      "${rust_files[@]}" || true
+  )"
+fi
 if [[ -n "$body_logging_matches" ]]; then
   report_violation "request/response body logging is prohibited" "$body_logging_matches"
 fi
@@ -88,7 +112,11 @@ telemetry_deps=(
 )
 
 for dep in "${telemetry_deps[@]}"; do
-  dep_matches="$(rg -n --color=never --pcre2 "^\s*${dep}\s*=" crates/soth-mitm/Cargo.toml || true)"
+  if [[ "$has_rg" -eq 1 ]]; then
+    dep_matches="$(rg -n --color=never --pcre2 "^\s*${dep}\s*=" crates/soth-mitm/Cargo.toml || true)"
+  else
+    dep_matches="$(grep -n -E "^[[:space:]]*${dep}[[:space:]]*=" crates/soth-mitm/Cargo.toml || true)"
+  fi
   if [[ -n "$dep_matches" ]]; then
     report_violation "telemetry dependency '${dep}' is prohibited in soth-mitm crate" "$dep_matches"
   fi
