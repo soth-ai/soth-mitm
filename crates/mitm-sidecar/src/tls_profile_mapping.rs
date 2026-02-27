@@ -14,6 +14,14 @@ fn map_upstream_sni_mode(mode: CoreUpstreamSniMode) -> TlsUpstreamTlsSniMode {
     }
 }
 
+fn map_upstream_client_auth_mode(mode: CoreUpstreamClientAuthMode) -> TlsUpstreamClientAuthMode {
+    match mode {
+        CoreUpstreamClientAuthMode::Never => TlsUpstreamClientAuthMode::Never,
+        CoreUpstreamClientAuthMode::IfRequested => TlsUpstreamClientAuthMode::IfRequested,
+        CoreUpstreamClientAuthMode::Required => TlsUpstreamClientAuthMode::Required,
+    }
+}
+
 fn map_downstream_cert_profile(profile: CoreDownstreamCertProfile) -> TlsDownstreamCertProfile {
     match profile {
         CoreDownstreamCertProfile::Modern => TlsDownstreamCertProfile::Modern,

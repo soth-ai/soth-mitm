@@ -1,16 +1,17 @@
 use mitm_core::{
     parse_connect_request_head_with_mode, ConnectParseError,
     DownstreamCertProfile as CoreDownstreamCertProfile, MitmEngine, TlsProfile as CoreTlsProfile,
-    UpstreamSniMode as CoreUpstreamSniMode,
+    UpstreamClientAuthMode as CoreUpstreamClientAuthMode, UpstreamSniMode as CoreUpstreamSniMode,
 };
 use mitm_http::{negotiated_alpn_label, protocol_from_negotiated_alpn, ApplicationProtocol};
 use mitm_observe::{Event, EventConsumer, EventType, FlowContext};
 use mitm_policy::{FlowAction, PolicyEngine};
 use mitm_tls::{
-    build_http_client_config_with_policy, classify_tls_error, resolve_upstream_server_name,
-    CertificateAuthorityConfig, DownstreamCertProfile as TlsDownstreamCertProfile,
-    MitmCertificateStore, TlsConfigError, UpstreamTlsProfile as TlsUpstreamTlsProfile,
-    UpstreamTlsSniMode as TlsUpstreamTlsSniMode,
+    build_http_client_config_with_policy_and_client_auth, classify_tls_error,
+    parse_upstream_client_auth_material, resolve_upstream_server_name, CertificateAuthorityConfig,
+    DownstreamCertProfile as TlsDownstreamCertProfile, MitmCertificateStore, TlsConfigError,
+    UpstreamClientAuthMaterial, UpstreamClientAuthMode as TlsUpstreamClientAuthMode,
+    UpstreamTlsProfile as TlsUpstreamTlsProfile, UpstreamTlsSniMode as TlsUpstreamTlsSniMode,
 };
 use std::io;
 use std::sync::Arc;

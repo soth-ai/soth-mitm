@@ -147,12 +147,47 @@ where
         http2_enabled_for_flow && downstream_protocol == ApplicationProtocol::Http2;
     let upstream_tls_profile = map_upstream_tls_profile(engine.config.tls_profile);
     let upstream_sni_mode = map_upstream_sni_mode(engine.config.upstream_sni_mode);
-    let client_config = match build_http_client_config_with_policy(
+    let upstream_client_auth_mode =
+        map_upstream_client_auth_mode(engine.config.upstream_client_auth_mode);
+    let upstream_client_auth_material = match load_upstream_client_auth_material(
+        &engine.config.upstream_client_cert_pem_path,
+        &engine.config.upstream_client_key_pem_path,
+    ) {
+        Ok(material) => material,
+        Err(_) if upstream_client_auth_mode == TlsUpstreamClientAuthMode::IfRequested => None,
+        Err(error) => {
+            let detail = format!("upstream TLS client-auth material load failed: {error}");
+            flow_hooks
+                .on_tls_failure(downstream_context.clone(), detail.clone())
+                .await;
+            emit_tls_event_with_detail(
+                &engine,
+                &tls_diagnostics,
+                &tls_learning,
+                EventType::TlsHandshakeFailed,
+                downstream_context.clone(),
+                "upstream",
+                detail.clone(),
+            );
+            emit_stream_closed(
+                &engine,
+                tunnel_context,
+                CloseReasonCode::TlsHandshakeFailed,
+                Some(detail),
+                None,
+                None,
+            );
+            return Ok(());
+        }
+    };
+    let client_config = match build_http_client_config_with_policy_and_client_auth(
         skip_upstream_verify_for_flow,
         should_offer_http2_upstream,
         upstream_tls_profile,
         upstream_sni_mode,
+        upstream_client_auth_mode,
         &handshake_context.server_host,
+        upstream_client_auth_material,
     ) {
         Ok(value) => value,
         Err(error) => {
@@ -323,4 +358,22 @@ where
         policy_override_state.strict_header_mode,
     )
     .await
+}
+
+fn load_upstream_client_auth_material(
+    cert_path: &Option<String>,
+    key_path: &Option<String>,
+) -> Result<Option<UpstreamClientAuthMaterial>, String> {
+    let (Some(cert_path), Some(key_path)) = (cert_path.as_ref(), key_path.as_ref()) else {
+        return Ok(None);
+    };
+
+    let cert_pem = std::fs::read(cert_path)
+        .map_err(|error| format!("read cert path {cert_path} failed: {error}"))?;
+    let key_pem = std::fs::read(key_path)
+        .map_err(|error| format!("read key path {key_path} failed: {error}"))?;
+
+    parse_upstream_client_auth_material(&cert_pem, &key_pem)
+        .map(Some)
+        .map_err(|error| error.to_string())
 }

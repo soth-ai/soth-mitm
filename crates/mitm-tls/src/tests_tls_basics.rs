@@ -9,10 +9,12 @@
 
     use super::{
         build_http1_client_config, build_http1_server_config_for_host,
-        build_http_client_config, build_http_client_config_with_policy, build_http_server_config_for_host,
-        classify_tls_error, resolve_upstream_server_name, CertStoreMetricsSnapshot,
-        CertificateAuthorityConfig, DownstreamCertProfile, LeafCacheStatus, MitmCertificateStore,
-        TlsFailureReason, UpstreamTlsProfile, UpstreamTlsSniMode,
+        build_http_client_config, build_http_client_config_with_policy,
+        build_http_client_config_with_policy_and_client_auth, build_http_server_config_for_host,
+        classify_tls_error, parse_upstream_client_auth_material, resolve_upstream_server_name,
+        CertStoreMetricsSnapshot, CertificateAuthorityConfig, DownstreamCertProfile,
+        LeafCacheStatus, MitmCertificateStore, TlsFailureReason, UpstreamClientAuthMode,
+        UpstreamTlsProfile, UpstreamTlsSniMode,
     };
 
     #[test]
@@ -201,6 +203,77 @@
             error
                 .to_string()
                 .contains("upstream_sni_mode=required does not allow IP targets"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn upstream_client_auth_required_rejects_missing_material() {
+        let error = build_http_client_config_with_policy_and_client_auth(
+            true,
+            false,
+            UpstreamTlsProfile::Default,
+            UpstreamTlsSniMode::Auto,
+            UpstreamClientAuthMode::Required,
+            "example.com",
+            None,
+        )
+        .expect_err("required client auth should fail without material");
+        assert!(
+            error
+                .to_string()
+                .contains("upstream_client_auth_mode=required but no client cert material"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn upstream_client_auth_if_requested_allows_missing_material() {
+        let config = build_http_client_config_with_policy_and_client_auth(
+            true,
+            false,
+            UpstreamTlsProfile::Default,
+            UpstreamTlsSniMode::Auto,
+            UpstreamClientAuthMode::IfRequested,
+            "example.com",
+            None,
+        )
+        .expect("if_requested should fall back to no-client-auth when material is missing");
+        assert_eq!(config.alpn_protocols, vec![b"http/1.1".to_vec()]);
+    }
+
+    #[test]
+    fn upstream_client_auth_material_parses_and_builds() {
+        let store =
+            MitmCertificateStore::new(CertificateAuthorityConfig::default()).expect("cert store");
+        let issued = store
+            .server_config_for_host("upstream-client.example.com")
+            .expect("issue upstream client identity");
+        let material = parse_upstream_client_auth_material(
+            issued.leaf_identity.leaf_cert_pem.as_bytes(),
+            issued.leaf_identity.leaf_key_pem.as_bytes(),
+        )
+        .expect("parse upstream client auth material");
+
+        let config = build_http_client_config_with_policy_and_client_auth(
+            true,
+            false,
+            UpstreamTlsProfile::Default,
+            UpstreamTlsSniMode::Auto,
+            UpstreamClientAuthMode::IfRequested,
+            "example.com",
+            Some(material),
+        )
+        .expect("if_requested with material should build");
+        assert_eq!(config.alpn_protocols, vec![b"http/1.1".to_vec()]);
+    }
+
+    #[test]
+    fn upstream_client_auth_material_rejects_invalid_pem() {
+        let error = parse_upstream_client_auth_material(b"invalid-cert", b"invalid-key")
+            .expect_err("invalid pem should fail");
+        assert!(
+            error.to_string().contains("failed to parse upstream client"),
             "{error}"
         );
     }

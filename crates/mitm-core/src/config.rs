@@ -61,6 +61,20 @@ impl Default for UpstreamSniMode {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+pub enum UpstreamClientAuthMode {
+    Never,
+    IfRequested,
+    Required,
+}
+
+impl Default for UpstreamClientAuthMode {
+    fn default() -> Self {
+        Self::Never
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum DownstreamCertProfile {
     Modern,
     Compat,
@@ -155,6 +169,9 @@ pub struct MitmConfig {
     pub upstream_sni_mode: UpstreamSniMode,
     pub downstream_cert_profile: DownstreamCertProfile,
     pub upstream_tls_insecure_skip_verify: bool,
+    pub upstream_client_auth_mode: UpstreamClientAuthMode,
+    pub upstream_client_cert_pem_path: Option<String>,
+    pub upstream_client_key_pem_path: Option<String>,
     pub max_flow_body_buffer_bytes: usize,
     pub max_flow_decoder_buffer_bytes: usize,
     pub max_flow_event_backlog: usize,
@@ -191,6 +208,9 @@ impl Default for MitmConfig {
             upstream_sni_mode: UpstreamSniMode::Auto,
             downstream_cert_profile: DownstreamCertProfile::Modern,
             upstream_tls_insecure_skip_verify: false,
+            upstream_client_auth_mode: UpstreamClientAuthMode::Never,
+            upstream_client_cert_pem_path: None,
+            upstream_client_key_pem_path: None,
             max_flow_body_buffer_bytes: 8 * 1024 * 1024,
             max_flow_decoder_buffer_bytes: 4 * 1024 * 1024,
             max_flow_event_backlog: 8 * 1024,
@@ -241,6 +261,16 @@ impl MitmConfig {
         }
         if self.ca_cert_pem_path.is_some() != self.ca_key_pem_path.is_some() {
             return Err(MitmConfigError::InvalidCaPathPair);
+        }
+        if self.upstream_client_cert_pem_path.is_some()
+            != self.upstream_client_key_pem_path.is_some()
+        {
+            return Err(MitmConfigError::InvalidUpstreamClientAuthPathPair);
+        }
+        if self.upstream_client_auth_mode == UpstreamClientAuthMode::Required
+            && self.upstream_client_cert_pem_path.is_none()
+        {
+            return Err(MitmConfigError::RequiredUpstreamClientAuthMaterialMissing);
         }
         validate_route_endpoint(self.reverse_upstream.as_ref(), "reverse_upstream")?;
         validate_route_endpoint(self.upstream_http_proxy.as_ref(), "upstream_http_proxy")?;
@@ -306,6 +336,12 @@ pub enum MitmConfigError {
     ZeroValue(&'static str),
     #[error("ca_cert_pem_path and ca_key_pem_path must be provided together")]
     InvalidCaPathPair,
+    #[error(
+        "upstream_client_cert_pem_path and upstream_client_key_pem_path must be provided together"
+    )]
+    InvalidUpstreamClientAuthPathPair,
+    #[error("upstream_client_auth_mode=required requires client cert/key material")]
+    RequiredUpstreamClientAuthMaterialMissing,
     #[error("ca_common_name must not be empty")]
     EmptyCaCommonName,
     #[error("ca_organization must not be empty")]

@@ -1275,7 +1275,7 @@ This checklist turns `LIGHTWEIGHT_PROXY_REPO_IMPLEMENTATION_PLAN.md` into an exe
     - [ ] fingerprint parity classes (`#4575`, open): anti-bot/CDN stacks can classify traffic as non-browser and degrade/block flows.
   - [ ] Deliverables:
     - [x] revocation telemetry contract for TLS events (staple presence/status + deterministic classification fields)
-    - [ ] optional upstream mTLS matrix support (per-target client cert policy + deterministic fallback behavior)
+    - [x] optional upstream mTLS matrix support (per-target client cert policy + deterministic fallback behavior)
     - [ ] upstream TLS fingerprint parity classes with explicit provenance tags (`native` vs `compat_class`)
   - [ ] Execution checklist:
     - [x] `TCH-01` revocation metadata and classification
@@ -1286,13 +1286,13 @@ This checklist turns `LIGHTWEIGHT_PROXY_REPO_IMPLEMENTATION_PLAN.md` into an exe
         - [x] `cargo test -p mitm-sidecar --lib tls_diagnostics::tests:: -q`
       - [x] gate script + lane registration: `scripts/p6_tls_revocation_matrix.sh` (`phase6_tls_revocation_matrix`)
       - [x] CI workflow wiring for dedicated gate job (`.github/workflows/ci.yml`)
-    - [ ] `TCH-02` optional upstream mTLS matrix
-      - [ ] per-target contract modes: `never`, `if_requested`, `required`
-      - [ ] deterministic fallback behavior when cert material is unavailable
+    - [x] `TCH-02` optional upstream mTLS matrix
+      - [x] per-target contract modes: `never`, `if_requested`, `required`
+      - [x] deterministic fallback behavior when cert material is unavailable
       - [ ] acceptance tests:
-        - [ ] `cargo test -p mitm-sidecar --test tls_upstream_mtls_matrix -q`
-        - [ ] `cargo test -p mitm-sidecar --test tls_profile_matrix -q`
-      - [ ] CI gate (planned): `scripts/p6_tls_mtls_matrix.sh` (`phase6_tls_mtls_matrix`)
+        - [x] `cargo test -p mitm-sidecar --test tls_upstream_mtls_matrix -q`
+        - [x] `cargo test -p mitm-sidecar --test tls_profile_matrix -q`
+      - [x] CI gate: `scripts/p6_tls_mtls_matrix.sh` (`phase6_tls_mtls_matrix`)
     - [ ] `TCH-03` fingerprint parity class pack
       - [ ] define compatibility classes (for example `native`, `chrome_like`, `firefox_like`) with explicit scope constraints
       - [ ] event provenance fields: `tls_fingerprint_mode`, `tls_fingerprint_class`
@@ -1306,11 +1306,11 @@ This checklist turns `LIGHTWEIGHT_PROXY_REPO_IMPLEMENTATION_PLAN.md` into an exe
     - [ ] 3) `TCH-03` fingerprint parity third (broadest compatibility surface; tune after prior two are stable)
   - [ ] Acceptance:
     - [x] revocation metadata fixtures pass and emit stable event attributes for present/missing/invalid-staple cases.
-    - [ ] optional mTLS matrix fixtures pass for no-request/requested/required client-cert upstream behaviors.
+    - [x] optional mTLS matrix fixtures pass for no-request/requested/required client-cert upstream behaviors.
     - [ ] fingerprint parity class fixtures pass for selected compatibility classes without regressing strict/default profile behavior.
   - [ ] CI gates (planned):
     - [x] `scripts/p6_tls_revocation_matrix.sh` (`phase6_tls_revocation_matrix`)
-    - [ ] `scripts/p6_tls_mtls_matrix.sh` (`phase6_tls_mtls_matrix`)
+    - [x] `scripts/p6_tls_mtls_matrix.sh` (`phase6_tls_mtls_matrix`)
     - [ ] `scripts/p6_tls_fingerprint_parity.sh` (`phase6_tls_fingerprint_parity`)
     - [ ] aggregate lane: `scripts/p6_tls_compat_pack.sh` (runs all three and emits unified summary)
 

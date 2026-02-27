@@ -37,7 +37,9 @@ Every TLS failed event must include:
 cargo test -p mitm-sidecar --test mitmproxy_tls_adapter
 cargo test -p mitm-sidecar --test tls_learning_guardrails
 cargo test -p mitm-sidecar --test tls_revocation_matrix
+cargo test -p mitm-sidecar --test tls_upstream_mtls_matrix
 ./scripts/p6_tls_revocation_matrix.sh
+./scripts/p6_tls_mtls_matrix.sh
 ```
 
 ## Classification Invariants
