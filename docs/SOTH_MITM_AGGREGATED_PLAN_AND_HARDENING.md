@@ -343,7 +343,7 @@ Do now:
 - Build with explicit layer boundaries and deterministic event contracts.
 - Keep TLS attribution metadata (`provider`, `source_confidence`) in all TLS failure events.
 - Make protocol toggles first-class (`http2`, `http3_passthrough`, streaming controls).
-- Implement parser subsystem as pluggable layered decoders (gRPC framing, SSE framing, anti-hijack sanitization) and keep semantic payload parsing in `soth-detect`.
+- Implement parser subsystem as pluggable layered decoders (gRPC framing, SSE framing, anti-hijack sanitization) and keep semantic payload parsing in the external main-SOTH detect repository (outside this workspace).
 - Add fuzz/property tests early for CONNECT/TLS/HTTP2/gRPC framing/SSE parsing.
 
 Avoid now:
@@ -699,7 +699,7 @@ Release is blocked unless all are true:
 | TH-05 | SSE parser suite | incremental-state tests | multi-line and partial-chunk semantics validated |
 | TH-06 | gRPC framing suite | parser + stream tests | envelope boundary correctness validated |
 | TH-07 | anti-hijack suite | sanitizer tests | sanitize flag + output verified |
-| TH-08 | semantic payload boundary suite | transport-vs-semantic boundary tests | no detect-owned payload parser behavior in proxy core |
+| TH-08 | semantic payload boundary suite | transport-vs-semantic boundary tests | no downstream semantic payload parser behavior in proxy core |
 | TH-09 | layered decoder suite | ordering tests | stage order invariant enforced |
 | TH-10 | HTTP/2 conformance lane | `h2spec` job | pass threshold accepted |
 | TH-11 | HTTP/2 load lane | `h2load` scenarios | no uncontrolled memory growth |
@@ -729,7 +729,7 @@ Release is blocked unless all are true:
 | TH-05 | SSE parser should run incrementally and preserve `event/id/retry/data` semantics without full-body buffering, including partial-line chunk boundaries. | [MDN SSE](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events) |
 | TH-06 | gRPC framing tests must validate 5-byte envelope handling across chunk splits and malformed-length conditions for unary and streaming flows. | [gRPC over HTTP/2 protocol](https://grpc.github.io/grpc/core/md_doc__p_r_o_t_o_c_o_l-_h_t_t_p2.html), [RFC 9113](https://www.rfc-editor.org/rfc/rfc9113) |
 | TH-07 | Anti-hijack stage should strip configured JSON guard prefixes with explicit provenance metadata and no false positives on clean payloads. | [OWASP JSON Hijacking](https://owasp.org/www-community/attacks/JSON_Hijacking) |
-| TH-08 | Proxy must remain transport-only for payload semantics: gRPC/SSE framing and anti-hijack sanitization are allowed, but semantic payload decoding belongs to `soth-detect`. | `../soth/soth-detect-definitive.md` |
+| TH-08 | Proxy must remain transport-only for payload semantics: gRPC/SSE framing and anti-hijack sanitization are allowed, but semantic payload decoding belongs to the external main-SOTH detect repository. | Main SOTH detect docs (external repository) |
 | TH-09 | Layered decoder invariants should enforce deterministic order: transfer/content decode before protocol framing and payload parsing. | [RFC 9112](https://www.rfc-editor.org/rfc/rfc9112), [RFC 9110](https://www.rfc-editor.org/rfc/rfc9110) |
 | TH-10 | Conformance lane should execute `h2spec` scenarios and track accepted exceptions explicitly instead of silently ignoring failures. | [h2spec](https://github.com/summerwind/h2spec), [RFC 9113](https://www.rfc-editor.org/rfc/rfc9113) |
 | TH-11 | H2 load lane should stress multiplexing/flow-control with stream-count and header-size ramps and validate memory stability. | [h2load docs](https://nghttp2.org/documentation/h2load-howto.html), [nghttp2](https://github.com/nghttp2/nghttp2) |
@@ -987,7 +987,7 @@ This checklist turns `LIGHTWEIGHT_PROXY_REPO_IMPLEMENTATION_PLAN.md` into an exe
   - [x] Deliverables: sanitizer module + `sanitized=true/false` metadata field.
   - [x] Acceptance: anti-hijack fixture payloads parse successfully with provenance flag set.
 - [x] `P2-11` Detect-boundary payload cleanup.
-  - [x] Scope: keep proxy payload handling transport-only; remove detect-owned semantic payload decoding from proxy core.
+  - [x] Scope: keep proxy payload handling transport-only; remove downstream semantic payload decoding from proxy core.
   - [x] Deliverables: remove msgpack decode surface and align protocol/fuzz lanes with transport-only ownership.
   - [x] Acceptance: no msgpack parser surface remains in `soth-mitm` protocol gates or exported APIs.
 - [x] `P2-12` Phase-2 protocol test gate.
