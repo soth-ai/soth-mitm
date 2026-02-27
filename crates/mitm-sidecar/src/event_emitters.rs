@@ -187,6 +187,7 @@ fn emit_tls_event_with_detail<P, S>(
         event
             .attributes
             .insert("raw_provider_error".to_string(), detail.clone());
+        insert_tls_revocation_metadata(&mut event.attributes, &detail, peer);
         event.attributes.insert(
             "provider_identity".to_string(),
             event

@@ -24,6 +24,7 @@ include!("http_head_parser.rs");
 include!("http_head_parser_smuggling.rs");
 include!("http_head_parser_api.rs");
 include!("http_body_relay.rs");
+include!("tls_revocation_metadata.rs");
 include!("event_emitters.rs");
 include!("event_emitters_protocol.rs");
 include!("sse_stream_observer.rs");

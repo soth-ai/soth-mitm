@@ -19,6 +19,7 @@ This repository enforces protocol and reliability gates through GitHub Actions.
 13. `phase5_reliability_contract`
 14. `phase5_event_log_contract`
 15. `phase5_runtime_soak`
+16. `phase6_tls_revocation_matrix`
 
 ## Phase-2 Gate Contract
 
@@ -49,3 +50,4 @@ The triage output artifact is uploaded as `p2-protocol-triage` and contains:
 - Local phase-5 reliability contract report: `artifacts/p5-reliability-contract`
 - Local phase-5 event log contract report: `artifacts/p5-event-log-contract`
 - Local phase-5 runtime soak report: `artifacts/p5-runtime-soak`
+- Local phase-6 TLS revocation matrix report: `artifacts/p6-tls-revocation-matrix`

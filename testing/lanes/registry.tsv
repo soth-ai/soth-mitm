@@ -17,6 +17,7 @@ phase5_socket_net_hardening	stress	./scripts/p5_socket_net_hardening.sh	0	0	0	IP
 phase5_control_plane_boundary	stress	./scripts/p5_control_plane_boundary.sh	0	1	0	Conditional control-plane boundary guard lane asserting no exposed management/control endpoint surface.
 phase5_runtime_soak	soak	./scripts/p5_runtime_soak.sh	0	0	0	Long-running mixed-traffic soak gate for runtime budget envelope.
 phase6_reliability_integration	stress	./scripts/p6_reliability_integration.sh	1	0	0	Integrated reliability gate carrying forward Phase-5 contract, HTTP/2 resilience, runtime soak, and deterministic mixed-traffic close semantics.
+phase6_tls_revocation_matrix	stress	./scripts/p6_tls_revocation_matrix.sh	0	0	0	TLS revocation metadata matrix and diagnostics stability checks.
 phase6_performance_gates	benchmark	./scripts/p6_perf_gate.sh	0	0	0	Phase-6 perf harness for forwarding latency, TLS handshake overhead, SSE first-chunk delta, and 1k connection-scale baseline.
 phase6_acceptance_matrix	stress	./scripts/p6_acceptance_matrix.sh	1	0	0	Phase-6 acceptance criteria matrix (AC-01..AC-17) with per-AC artifacts and strict-mode gating.
 phase6_release_readiness	stress	./scripts/p6_release_readiness.sh	1	0	0	Phase-6 publish and cutover readiness checks: publish dry-run, integration compile smoke, and cutover checklist status.

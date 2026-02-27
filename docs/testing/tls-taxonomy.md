@@ -25,6 +25,10 @@ Every TLS failed event must include:
 6. `raw_provider_error`
 7. `provider_identity`
 8. `source_confidence`
+9. `upstream_ocsp_staple_present`
+10. `upstream_ocsp_staple_status`
+11. `revocation_policy_mode`
+12. `revocation_decision`
 
 ## Validation Commands
 
@@ -32,6 +36,8 @@ Every TLS failed event must include:
 ./scripts/tls_failure_fixtures.sh
 cargo test -p mitm-sidecar --test mitmproxy_tls_adapter
 cargo test -p mitm-sidecar --test tls_learning_guardrails
+cargo test -p mitm-sidecar --test tls_revocation_matrix
+./scripts/p6_tls_revocation_matrix.sh
 ```
 
 ## Classification Invariants
