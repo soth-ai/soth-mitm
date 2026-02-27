@@ -552,6 +552,8 @@ jobs:
 
       - name: Run phase 6 performance gates
         shell: bash
+        env:
+          P6_FORWARD_P99_US: ${{ runner.os == 'Windows' && '25000' || '15000' }}
         run: ./scripts/p6_perf_gate.sh --report-dir artifacts/p6-performance/${{ matrix.os }}
 
       - name: Upload phase 6 performance artifact

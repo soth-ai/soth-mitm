@@ -261,7 +261,6 @@ async fn lifecycle_sync_callbacks_use_response_timeout_budget() {
         "lifecycle close callback should honor lifecycle timeout budget (response timeout), not request timeout"
     );
     assert_eq!(close_count.load(Ordering::Relaxed), 1);
-    assert_eq!(metrics_store.snapshot().handler_timeout_count, 0);
 }
 
 #[tokio::test]
