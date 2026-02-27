@@ -76,6 +76,20 @@ fn is_unspecified_ip(value: IpAddr) -> bool {
     }
 }
 
+fn push_unique_pid(candidates: &mut Vec<u32>, pid: u32) {
+    if !candidates.contains(&pid) {
+        candidates.push(pid);
+    }
+}
+
+fn select_unique_pid(candidates: Vec<u32>) -> Option<u32> {
+    if candidates.len() == 1 {
+        Some(candidates[0])
+    } else {
+        None
+    }
+}
+
 #[cfg(target_os = "linux")]
 #[derive(Debug, Clone, Copy)]
 struct LinuxSocketEntry {
@@ -92,7 +106,7 @@ fn lookup_established_tcp_pid_linux(query: SocketQuery) -> Option<u32> {
     let mut entries = linux_read_tcp_entries("/proc/net/tcp", false);
     entries.extend(linux_read_tcp_entries("/proc/net/tcp6", true));
 
-    let mut fallback_inode = None;
+    let mut fallback_inodes = Vec::new();
 
     for entry in entries {
         if !entry.established || entry.local_port != query.local_port {
@@ -103,15 +117,18 @@ fn lookup_established_tcp_pid_linux(query: SocketQuery) -> Option<u32> {
         }
 
         if entry.remote_port == query.remote_port && ip_matches(entry.remote_ip, query.remote_ip) {
-            return linux_find_pid_by_inode(entry.inode);
+            if let Some(pid) = linux_find_pid_by_inode(entry.inode) {
+                return Some(pid);
+            }
+            continue;
         }
 
-        if fallback_inode.is_none() {
-            fallback_inode = Some(entry.inode);
+        if !fallback_inodes.contains(&entry.inode) {
+            fallback_inodes.push(entry.inode);
         }
     }
 
-    linux_find_pid_by_inode(fallback_inode?)
+    resolve_unique_linux_fallback_pid(fallback_inodes)
 }
 
 #[cfg(target_os = "linux")]
@@ -229,11 +246,24 @@ fn linux_parse_socket_inode(link_text: &str) -> Option<u64> {
         .ok()
 }
 
+#[cfg(target_os = "linux")]
+fn resolve_unique_linux_fallback_pid(inodes: Vec<u64>) -> Option<u32> {
+    let mut fallback_pids = Vec::new();
+    for inode in inodes {
+        let pid = linux_find_pid_by_inode(inode)?;
+        push_unique_pid(&mut fallback_pids, pid);
+        if fallback_pids.len() > 1 {
+            return None;
+        }
+    }
+    select_unique_pid(fallback_pids)
+}
+
 #[cfg(target_os = "macos")]
 fn lookup_established_tcp_pid_macos(query: SocketQuery) -> Option<u32> {
     let self_pid = std::process::id();
     let pids = macos_list_all_pids()?;
-    let mut fallback_pid = None;
+    let mut fallback_pids = Vec::new();
 
     for pid in pids {
         if pid == 0 || pid == self_pid {
@@ -268,13 +298,11 @@ fn lookup_established_tcp_pid_macos(query: SocketQuery) -> Option<u32> {
                 return Some(pid);
             }
 
-            if fallback_pid.is_none() {
-                fallback_pid = Some(pid);
-            }
+            push_unique_pid(&mut fallback_pids, pid);
         }
     }
 
-    fallback_pid
+    select_unique_pid(fallback_pids)
 }
 
 #[cfg(target_os = "macos")]
@@ -653,7 +681,7 @@ mod macos_native {
 
 #[cfg(target_os = "windows")]
 fn lookup_established_tcp_pid_windows(query: SocketQuery) -> Option<u32> {
-    let mut fallback_pid = None;
+    let mut candidate_pids = Vec::new();
 
     for row in windows_query_tcp4_rows().unwrap_or_default() {
         if row.dw_state != windows_native::MIB_TCP_STATE_ESTAB {
@@ -672,14 +700,7 @@ fn lookup_established_tcp_pid_windows(query: SocketQuery) -> Option<u32> {
             if remote_port == query.remote_port && ip_matches(remote_ip, query.remote_ip) {
                 return Some(row.dw_owning_pid);
             }
-            if fallback_pid.is_none() {
-                fallback_pid = Some(row.dw_owning_pid);
-            }
-            continue;
-        }
-
-        if fallback_pid.is_none() && row.dw_local_addr == 0 {
-            fallback_pid = Some(row.dw_owning_pid);
+            push_unique_pid(&mut candidate_pids, row.dw_owning_pid);
         }
     }
 
@@ -700,18 +721,11 @@ fn lookup_established_tcp_pid_windows(query: SocketQuery) -> Option<u32> {
             if remote_port == query.remote_port && ip_matches(remote_ip, query.remote_ip) {
                 return Some(row.dw_owning_pid);
             }
-            if fallback_pid.is_none() {
-                fallback_pid = Some(row.dw_owning_pid);
-            }
-            continue;
-        }
-
-        if fallback_pid.is_none() && row.uc_local_addr.iter().all(|value| *value == 0) {
-            fallback_pid = Some(row.dw_owning_pid);
+            push_unique_pid(&mut candidate_pids, row.dw_owning_pid);
         }
     }
 
-    fallback_pid
+    select_unique_pid(candidate_pids)
 }
 
 #[cfg(target_os = "windows")]
@@ -841,7 +855,7 @@ mod windows_native {
 mod tests {
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
-    use super::ip_matches;
+    use super::{ip_matches, select_unique_pid};
 
     #[test]
     fn ip_match_requires_exact_value_when_expected_is_not_unspecified() {
@@ -871,5 +885,15 @@ mod tests {
     fn ipv4_mapped_ipv6_comparison_is_supported() {
         let mapped = IpAddr::V6(Ipv4Addr::new(127, 0, 0, 1).to_ipv6_mapped());
         assert!(ip_matches(mapped, IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1))));
+    }
+
+    #[test]
+    fn unique_pid_selection_rejects_ambiguous_candidates() {
+        assert_eq!(select_unique_pid(vec![10, 20]), None);
+    }
+
+    #[test]
+    fn unique_pid_selection_accepts_single_candidate() {
+        assert_eq!(select_unique_pid(vec![42]), Some(42));
     }
 }

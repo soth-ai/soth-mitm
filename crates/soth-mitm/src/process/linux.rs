@@ -15,31 +15,49 @@ impl ProcessAttributor for PlatformProcessAttributor {
         &'a self,
         connection: &'a ConnectionInfo,
     ) -> Pin<Box<dyn Future<Output = Option<ProcessInfo>> + Send + 'a>> {
-        Box::pin(async move { lookup_process(connection).await })
+        let connection = connection.clone();
+        Box::pin(async move {
+            tokio::task::spawn_blocking(move || lookup_process(&connection))
+                .await
+                .ok()
+                .flatten()
+        })
     }
 
     fn lookup_identity<'a>(
         &'a self,
         connection: &'a ConnectionInfo,
     ) -> Pin<Box<dyn Future<Output = Option<ProcessIdentity>> + Send + 'a>> {
-        Box::pin(async move { lookup_identity(connection).await })
+        let connection = connection.clone();
+        Box::pin(async move {
+            tokio::task::spawn_blocking(move || lookup_identity(&connection))
+                .await
+                .ok()
+                .flatten()
+        })
     }
 
     fn lookup_by_identity<'a>(
         &'a self,
         identity: &'a ProcessIdentity,
     ) -> Pin<Box<dyn Future<Output = Option<ProcessInfo>> + Send + 'a>> {
-        Box::pin(async move { lookup_process_by_pid(identity.pid) })
+        let pid = identity.pid;
+        Box::pin(async move {
+            tokio::task::spawn_blocking(move || lookup_process_by_pid(pid))
+                .await
+                .ok()
+                .flatten()
+        })
     }
 }
 
-async fn lookup_process(connection: &ConnectionInfo) -> Option<ProcessInfo> {
-    let pid = lookup_pid(connection).await?;
+fn lookup_process(connection: &ConnectionInfo) -> Option<ProcessInfo> {
+    let pid = lookup_pid(connection)?;
     lookup_process_by_pid(pid)
 }
 
-async fn lookup_identity(connection: &ConnectionInfo) -> Option<ProcessIdentity> {
-    let pid = lookup_pid(connection).await?;
+fn lookup_identity(connection: &ConnectionInfo) -> Option<ProcessIdentity> {
+    let pid = lookup_pid(connection)?;
     let start_token = read_process_start_token(pid)?;
     Some(ProcessIdentity { pid, start_token })
 }
@@ -58,7 +76,7 @@ fn lookup_process_by_pid(pid: u32) -> Option<ProcessInfo> {
     })
 }
 
-async fn lookup_pid(connection: &ConnectionInfo) -> Option<u32> {
+fn lookup_pid(connection: &ConnectionInfo) -> Option<u32> {
     lookup_established_tcp_pid(connection)
 }
 
