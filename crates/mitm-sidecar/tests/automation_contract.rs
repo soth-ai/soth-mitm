@@ -1,8 +1,11 @@
 use std::fs;
+use std::io::Read;
 use std::path::PathBuf;
 use std::process::Command;
+use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::thread;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
 
@@ -13,13 +16,18 @@ fn sidecar_emits_machine_readable_exit_contract_for_sink_init_failures() {
     let temp_dir = unique_temp_dir("sidecar_exit_contract");
     fs::create_dir_all(&temp_dir).expect("create temp dir");
     let status_path = temp_dir.join("status.jsonl");
+    let invalid_parent = temp_dir.join("sink_parent_file");
+    fs::write(&invalid_parent, b"not_a_directory").expect("write invalid sink parent file");
+    let invalid_sink_path = invalid_parent.join("events.jsonl");
 
     let mut command = sidecar_command();
-    let output = command
-        .env("SOTH_MITM_EVENT_LOG_V2_PATH", "/dev/null/events.jsonl")
-        .env("SOTH_MITM_AUTOMATION_STATUS_PATH", &status_path)
-        .output()
-        .expect("run sidecar binary");
+    let output = run_command_with_timeout(
+        command
+        // Force event sink init failure portably: parent path is a regular file.
+        .env("SOTH_MITM_EVENT_LOG_V2_PATH", &invalid_sink_path)
+        .env("SOTH_MITM_AUTOMATION_STATUS_PATH", &status_path),
+        Duration::from_secs(180),
+    );
 
     assert_eq!(
         output.status.code(),
@@ -67,7 +75,46 @@ fn sidecar_command() -> Command {
     let mut command = Command::new("cargo");
     command.args(["run", "-p", "mitm-sidecar", "--quiet"]);
     command.current_dir(workspace_root());
+    command.env("CARGO_TARGET_DIR", unique_temp_dir("sidecar_command_target"));
     command
+}
+
+struct CapturedOutput {
+    status: std::process::ExitStatus,
+    stderr: Vec<u8>,
+}
+
+fn run_command_with_timeout(command: &mut Command, timeout: Duration) -> CapturedOutput {
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = command.spawn().expect("spawn sidecar command");
+    let deadline = Instant::now() + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let mut stdout = Vec::new();
+                let mut stderr = Vec::new();
+                if let Some(mut stream) = child.stdout.take() {
+                    stream.read_to_end(&mut stdout).expect("read child stdout");
+                }
+                if let Some(mut stream) = child.stderr.take() {
+                    stream.read_to_end(&mut stderr).expect("read child stderr");
+                }
+                return CapturedOutput {
+                    status,
+                    stderr,
+                };
+            }
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    panic!("sidecar command exceeded timeout of {:?}", timeout);
+                }
+                thread::sleep(Duration::from_millis(50));
+            }
+            Err(error) => panic!("wait for sidecar command: {error}"),
+        }
+    }
 }
 
 fn workspace_root() -> PathBuf {
