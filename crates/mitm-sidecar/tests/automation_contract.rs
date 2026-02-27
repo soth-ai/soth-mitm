@@ -23,9 +23,9 @@ fn sidecar_emits_machine_readable_exit_contract_for_sink_init_failures() {
     let mut command = sidecar_command();
     let output = run_command_with_timeout(
         command
-        // Force event sink init failure portably: parent path is a regular file.
-        .env("SOTH_MITM_EVENT_LOG_V2_PATH", &invalid_sink_path)
-        .env("SOTH_MITM_AUTOMATION_STATUS_PATH", &status_path),
+            // Force event sink init failure portably: parent path is a regular file.
+            .env("SOTH_MITM_EVENT_LOG_V2_PATH", &invalid_sink_path)
+            .env("SOTH_MITM_AUTOMATION_STATUS_PATH", &status_path),
         Duration::from_secs(180),
     );
 
@@ -75,7 +75,10 @@ fn sidecar_command() -> Command {
     let mut command = Command::new("cargo");
     command.args(["run", "-p", "mitm-sidecar", "--quiet"]);
     command.current_dir(workspace_root());
-    command.env("CARGO_TARGET_DIR", unique_temp_dir("sidecar_command_target"));
+    command.env(
+        "CARGO_TARGET_DIR",
+        unique_temp_dir("sidecar_command_target"),
+    );
     command
 }
 
@@ -99,10 +102,7 @@ fn run_command_with_timeout(command: &mut Command, timeout: Duration) -> Capture
                 if let Some(mut stream) = child.stderr.take() {
                     stream.read_to_end(&mut stderr).expect("read child stderr");
                 }
-                return CapturedOutput {
-                    status,
-                    stderr,
-                };
+                return CapturedOutput { status, stderr };
             }
             Ok(None) => {
                 if Instant::now() >= deadline {
