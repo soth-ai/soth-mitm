@@ -46,7 +46,7 @@ where
             }
         };
 
-        let request = match parse_http_request_head(&request_raw) {
+        let request = match parse_http_request_head_with_mode(&request_raw, strict_header_mode) {
             Ok(parsed) => parsed,
             Err(error) => {
                 emit_stream_closed(
@@ -242,7 +242,9 @@ where
             }
         };
 
-        let response = match parse_http_response_head(&response_raw, &request.method) {
+        let response =
+            match parse_http_response_head_with_mode(&response_raw, &request.method, strict_header_mode)
+            {
             Ok(parsed) => parsed,
             Err(error) => {
                 emit_stream_closed(

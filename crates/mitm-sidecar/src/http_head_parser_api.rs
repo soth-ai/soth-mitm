@@ -8,7 +8,10 @@ pub fn parse_http1_response_head_bytes(raw: &[u8], request_method: &str) -> io::
 
 #[cfg(test)]
 mod http_head_parser_api_tests {
-    use super::{parse_http1_request_head_bytes, parse_http1_response_head_bytes};
+    use super::{
+        parse_http1_request_head_bytes, parse_http1_response_head_bytes,
+        parse_http_request_head_with_mode, parse_http_response_head_with_mode,
+    };
 
     #[test]
     fn request_head_api_accepts_basic_head() {
@@ -104,5 +107,28 @@ mod http_head_parser_api_tests {
         let raw = b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\nContent-Length: 8\r\n\r\n";
         let error = parse_http1_response_head_bytes(raw, "GET").expect_err("response should fail");
         assert!(error.to_string().contains("conflicting Content-Length"));
+    }
+
+    #[test]
+    fn strict_header_mode_rejects_http10_request_version() {
+        let raw = b"GET /legacy HTTP/1.0\r\nHost: example.com\r\n\r\n";
+        let error = parse_http_request_head_with_mode(raw, true).expect_err("request should fail");
+        assert!(
+            error
+                .to_string()
+                .contains("strict_header_mode requires HTTP/1.1 request version")
+        );
+    }
+
+    #[test]
+    fn strict_header_mode_rejects_http10_response_version() {
+        let raw = b"HTTP/1.0 200 OK\r\nContent-Length: 0\r\n\r\n";
+        let error =
+            parse_http_response_head_with_mode(raw, "GET", true).expect_err("response should fail");
+        assert!(
+            error
+                .to_string()
+                .contains("strict_header_mode requires HTTP/1.1 response version")
+        );
     }
 }

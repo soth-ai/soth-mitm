@@ -131,6 +131,20 @@ fn parse_http_request_head(raw: &[u8]) -> io::Result<HttpRequestHead> {
     })
 }
 
+fn parse_http_request_head_with_mode(
+    raw: &[u8],
+    strict_header_mode: bool,
+) -> io::Result<HttpRequestHead> {
+    let parsed = parse_http_request_head(raw)?;
+    if strict_header_mode && parsed.version != HttpVersion::Http11 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "strict_header_mode requires HTTP/1.1 request version",
+        ));
+    }
+    Ok(parsed)
+}
+
 fn parse_http_response_head(raw: &[u8], request_method: &str) -> io::Result<HttpResponseHead> {
     let text = std::str::from_utf8(raw).map_err(|_| {
         io::Error::new(
@@ -174,6 +188,21 @@ fn parse_http_response_head(raw: &[u8], request_method: &str) -> io::Result<Http
         body_mode,
         connection_close,
     })
+}
+
+fn parse_http_response_head_with_mode(
+    raw: &[u8],
+    request_method: &str,
+    strict_header_mode: bool,
+) -> io::Result<HttpResponseHead> {
+    let parsed = parse_http_response_head(raw, request_method)?;
+    if strict_header_mode && parsed.version != HttpVersion::Http11 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "strict_header_mode requires HTTP/1.1 response version",
+        ));
+    }
+    Ok(parsed)
 }
 
 fn parse_http_version(text: &str) -> io::Result<HttpVersion> {

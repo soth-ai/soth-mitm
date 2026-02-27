@@ -19,6 +19,7 @@ where
             "[h2-relay:request] request header limit exceeded; resetting stream: {error}"
         ));
         downstream_respond.send_reset(h2::Reason::PROTOCOL_ERROR);
+        flow_hooks.on_stream_end(stream_context).await;
         return Ok(());
     }
 
@@ -50,6 +51,23 @@ where
     byte_counters
         .request_bytes
         .fetch_add(request_captured.bytes_forwarded, Ordering::Relaxed);
+    if request_captured.body_truncated {
+        let body = bytes::Bytes::from_static(b"request body exceeded flow body budget");
+        let mut builder = http::Response::builder().status(413);
+        builder = builder.header("content-type", "text/plain");
+        builder = builder.header("content-length", body.len().to_string());
+        let response = builder
+            .body(())
+            .map_err(|error| io::Error::other(format!("build oversized HTTP/2 response: {error}")))?;
+        let mut stream = downstream_respond
+            .send_response(response, body.is_empty())
+            .map_err(|error| h2_error_to_io("sending oversized HTTP/2 response failed", error))?;
+        if !body.is_empty() {
+            send_h2_data_with_backpressure(&mut stream, &runtime_governor, body, true).await?;
+        }
+        flow_hooks.on_stream_end(stream_context).await;
+        return Ok(());
+    }
 
     let mut handler_request_headers = build_handler_header_map_from_h2(&request_parts.headers);
     ensure_handler_host_header_from_uri(
@@ -115,6 +133,7 @@ where
         Err(error) => {
             if is_h2_nonfatal_stream_error(&error) {
                 downstream_respond.send_reset(h2_reason_for_downstream_reset(&error));
+                flow_hooks.on_stream_end(stream_context).await;
                 return Ok(());
             }
             return Err(h2_error_to_io("upstream HTTP/2 sender not ready", error));
@@ -126,6 +145,7 @@ where
             Err(error) => {
                 if is_h2_nonfatal_stream_error(&error) {
                     downstream_respond.send_reset(h2_reason_for_downstream_reset(&error));
+                    flow_hooks.on_stream_end(stream_context).await;
                     return Ok(());
                 }
                 return Err(h2_error_to_io("forwarding HTTP/2 request failed", error));
@@ -150,6 +170,7 @@ where
         Err(error) => {
             if is_h2_nonfatal_stream_error(&error) {
                 downstream_respond.send_reset(h2_reason_for_downstream_reset(&error));
+                flow_hooks.on_stream_end(stream_context).await;
                 return Ok(());
             }
             return Err(h2_error_to_io(
@@ -162,6 +183,7 @@ where
     if enforce_h2_response_header_limit(&response_parts, max_header_list_size).is_err() {
         h2_relay_debug("[h2-relay:response] response header limit exceeded; resetting stream");
         downstream_respond.send_reset(h2::Reason::PROTOCOL_ERROR);
+        flow_hooks.on_stream_end(stream_context).await;
         return Ok(());
     }
 
@@ -191,6 +213,23 @@ where
     byte_counters
         .response_bytes
         .fetch_add(response_captured.bytes_forwarded, Ordering::Relaxed);
+    if response_captured.body_truncated {
+        let body = bytes::Bytes::from_static(b"upstream response body exceeded flow body budget");
+        let mut builder = http::Response::builder().status(502);
+        builder = builder.header("content-type", "text/plain");
+        builder = builder.header("content-length", body.len().to_string());
+        let response = builder
+            .body(())
+            .map_err(|error| io::Error::other(format!("build oversized HTTP/2 response: {error}")))?;
+        let mut stream = downstream_respond
+            .send_response(response, body.is_empty())
+            .map_err(|error| h2_error_to_io("sending oversized HTTP/2 response failed", error))?;
+        if !body.is_empty() {
+            send_h2_data_with_backpressure(&mut stream, &runtime_governor, body, true).await?;
+        }
+        flow_hooks.on_stream_end(stream_context).await;
+        return Ok(());
+    }
 
     let response_end_stream =
         response_captured.bytes.is_empty() && response_captured.trailers.as_ref().is_none();
@@ -200,6 +239,7 @@ where
             Ok(stream) => stream,
             Err(error) => {
                 if is_h2_nonfatal_stream_error(&error) {
+                    flow_hooks.on_stream_end(stream_context).await;
                     return Ok(());
                 }
                 return Err(h2_error_to_io(
