@@ -1,5 +1,6 @@
 const IDLE_TIMEOUT_ERROR_PREFIX: &str = "idle_watchdog_timeout";
 const STREAM_STAGE_TIMEOUT_ERROR_PREFIX: &str = "stream_stage_timeout";
+const HAPPY_EYEBALLS_STAGGER: std::time::Duration = std::time::Duration::from_millis(200);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct IoTimeoutConfig {
@@ -83,14 +84,169 @@ async fn connect_with_upstream_timeout(
     stage: &'static str,
 ) -> std::io::Result<tokio::net::TcpStream> {
     let timeout = io_timeout_config().upstream_connect_timeout;
-    match tokio::time::timeout(timeout, tokio::net::TcpStream::connect((host, port))).await {
-        Ok(result) => result,
-        Err(_) => {
-            runtime_governor::mark_stream_stage_timeout_global();
-            runtime_governor::mark_stuck_flow_global();
-            Err(timeout_error(STREAM_STAGE_TIMEOUT_ERROR_PREFIX, stage, timeout))
+    let deadline = tokio::time::Instant::now() + timeout;
+
+    let connect_result = connect_with_happy_eyeballs(host, port, deadline).await;
+    if is_connect_timeout_error(&connect_result) {
+        runtime_governor::mark_stream_stage_timeout_global();
+        runtime_governor::mark_stuck_flow_global();
+        return Err(timeout_error(STREAM_STAGE_TIMEOUT_ERROR_PREFIX, stage, timeout));
+    }
+    connect_result
+}
+
+fn is_connect_timeout_error(result: &std::io::Result<tokio::net::TcpStream>) -> bool {
+    matches!(result, Err(error) if error.kind() == std::io::ErrorKind::TimedOut)
+}
+
+async fn connect_with_happy_eyeballs(
+    host: &str,
+    port: u16,
+    deadline: tokio::time::Instant,
+) -> std::io::Result<tokio::net::TcpStream> {
+    let addrs = resolve_upstream_socket_addrs(host, port, deadline).await?;
+    connect_with_happy_eyeballs_addrs(addrs, deadline).await
+}
+
+async fn resolve_upstream_socket_addrs(
+    host: &str,
+    port: u16,
+    deadline: tokio::time::Instant,
+) -> std::io::Result<Vec<std::net::SocketAddr>> {
+    let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+    if remaining.is_zero() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            "upstream address resolution timed out",
+        ));
+    }
+
+    let resolved = tokio::time::timeout(remaining, tokio::net::lookup_host((host, port)))
+        .await
+        .map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "upstream address resolution timed out",
+            )
+        })?
+        .map_err(|error| {
+            std::io::Error::new(
+                error.kind(),
+                format!("upstream address resolution failed: {error}"),
+            )
+        })?;
+
+    let addrs = interleave_happy_eyeballs_addrs(resolved.collect());
+    if addrs.is_empty() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "upstream address resolution returned no socket addresses",
+        ));
+    }
+    Ok(addrs)
+}
+
+fn interleave_happy_eyeballs_addrs(
+    addrs: Vec<std::net::SocketAddr>,
+) -> Vec<std::net::SocketAddr> {
+    let mut ipv4 = std::collections::VecDeque::new();
+    let mut ipv6 = std::collections::VecDeque::new();
+    for addr in addrs {
+        if addr.is_ipv6() {
+            ipv6.push_back(addr);
+        } else {
+            ipv4.push_back(addr);
         }
     }
+
+    let prefer_ipv6 = !ipv6.is_empty();
+    let mut ordered = Vec::with_capacity(ipv4.len() + ipv6.len());
+    while !ipv4.is_empty() || !ipv6.is_empty() {
+        if prefer_ipv6 {
+            if let Some(addr) = ipv6.pop_front() {
+                ordered.push(addr);
+            }
+            if let Some(addr) = ipv4.pop_front() {
+                ordered.push(addr);
+            }
+        } else {
+            if let Some(addr) = ipv4.pop_front() {
+                ordered.push(addr);
+            }
+            if let Some(addr) = ipv6.pop_front() {
+                ordered.push(addr);
+            }
+        }
+    }
+    ordered
+}
+
+async fn connect_with_happy_eyeballs_addrs(
+    addrs: Vec<std::net::SocketAddr>,
+    deadline: tokio::time::Instant,
+) -> std::io::Result<tokio::net::TcpStream> {
+    if addrs.is_empty() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "no upstream addresses provided",
+        ));
+    }
+
+    let mut connect_tasks = tokio::task::JoinSet::new();
+    let mut start_at = tokio::time::Instant::now();
+    for addr in addrs {
+        let attempt_start = start_at;
+        connect_tasks.spawn(async move {
+            if tokio::time::Instant::now() < attempt_start {
+                tokio::time::sleep_until(attempt_start).await;
+            }
+            tokio::net::TcpStream::connect(addr).await
+        });
+        start_at = start_at
+            .checked_add(HAPPY_EYEBALLS_STAGGER)
+            .unwrap_or(start_at);
+    }
+
+    let mut last_error: Option<std::io::Error> = None;
+    while !connect_tasks.is_empty() {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            connect_tasks.abort_all();
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "upstream connect timed out",
+            ));
+        }
+        match tokio::time::timeout(remaining, connect_tasks.join_next()).await {
+            Ok(Some(Ok(Ok(stream)))) => {
+                connect_tasks.abort_all();
+                return Ok(stream);
+            }
+            Ok(Some(Ok(Err(error)))) => {
+                last_error = Some(error);
+            }
+            Ok(Some(Err(join_error))) => {
+                last_error = Some(std::io::Error::other(format!(
+                    "upstream connect attempt join failed: {join_error}"
+                )));
+            }
+            Ok(None) => break,
+            Err(_) => {
+                connect_tasks.abort_all();
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "upstream connect timed out",
+                ));
+            }
+        }
+    }
+
+    Err(last_error.unwrap_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::ConnectionRefused,
+            "all upstream connect attempts failed",
+        )
+    }))
 }
 
 fn is_idle_watchdog_timeout(error: &std::io::Error) -> bool {
@@ -245,5 +401,73 @@ where
             }
         }
 
+    }
+}
+
+#[cfg(test)]
+mod io_timeout_happy_eyeballs_tests {
+    use super::{connect_with_happy_eyeballs_addrs, interleave_happy_eyeballs_addrs};
+    use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
+    use std::time::Duration;
+    use tokio::io::AsyncReadExt;
+    use tokio::net::TcpListener;
+
+    #[test]
+    fn interleave_addrs_alternates_ip_families() {
+        let addrs = vec![
+            SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::LOCALHOST, 443, 0, 0)),
+            SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::LOCALHOST, 444, 0, 0)),
+            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 80)),
+            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 81)),
+        ];
+
+        let ordered = interleave_happy_eyeballs_addrs(addrs);
+        assert_eq!(
+            ordered,
+            vec![
+                SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::LOCALHOST, 443, 0, 0)),
+                SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 80)),
+                SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::LOCALHOST, 444, 0, 0)),
+                SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 81)),
+            ]
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn happy_eyeballs_falls_back_when_first_address_refuses() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("bind v4 listener");
+        let port = listener.local_addr().expect("listener addr").port();
+        let accept_task = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.expect("accept stream");
+            let mut one = [0_u8; 1];
+            let _ = stream.read(&mut one).await;
+        });
+
+        let addrs = vec![
+            SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::LOCALHOST, port, 0, 0)),
+            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, port)),
+        ];
+
+        let stream = connect_with_happy_eyeballs_addrs(
+            addrs,
+            tokio::time::Instant::now() + Duration::from_secs(2),
+        )
+        .await
+        .expect("happy-eyeballs connect should succeed");
+        drop(stream);
+        accept_task.await.expect("accept task join");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn happy_eyeballs_rejects_empty_address_list() {
+        let error = connect_with_happy_eyeballs_addrs(
+            Vec::new(),
+            tokio::time::Instant::now() + Duration::from_secs(1),
+        )
+        .await
+        .expect_err("empty address list must fail");
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
     }
 }
