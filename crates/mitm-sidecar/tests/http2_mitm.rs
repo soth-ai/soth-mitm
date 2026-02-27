@@ -1,12 +1,18 @@
-use std::future::poll_fn;
+use std::future::{poll_fn, Future};
+use std::pin::Pin;
+use std::sync::Arc;
 use std::time::Duration;
 
 use bytes::Bytes;
-use mitm_core::{CompatibilityOverrideConfig, MitmConfig, MitmEngine};
+use mitm_core::{
+    CompatibilityOverrideConfig, MitmConfig, MitmEngine, RouteEndpointConfig, RouteMode,
+};
 use mitm_http::ApplicationProtocol;
-use mitm_observe::{Event, EventType, VecEventConsumer};
+use mitm_observe::{Event, EventType, FlowContext, VecEventConsumer};
 use mitm_policy::DefaultPolicyEngine;
-use mitm_sidecar::{SidecarConfig, SidecarServer};
+use mitm_sidecar::{
+    FlowHooks, RawRequest as HookRawRequest, RequestDecision, SidecarConfig, SidecarServer,
+};
 use mitm_tls::{
     build_http1_server_config_for_host, build_http_client_config, build_http_server_config_for_host,
 };
@@ -48,6 +54,64 @@ async fn start_sidecar_with_sink(
     let addr = listener.local_addr().expect("listener local addr");
     let handle = tokio::spawn(server.run_with_listener(listener));
     (addr, handle, sink)
+}
+
+async fn start_sidecar_with_flow_hooks(
+    sink: VecEventConsumer,
+    config: MitmConfig,
+    flow_hooks: Arc<dyn FlowHooks>,
+) -> (
+    std::net::SocketAddr,
+    tokio::task::JoinHandle<std::io::Result<()>>,
+    VecEventConsumer,
+) {
+    let sidecar_config = SidecarConfig {
+        listen_addr: "127.0.0.1".to_string(),
+        listen_port: 0,
+        max_connect_head_bytes: 64 * 1024,
+        max_http_head_bytes: 64 * 1024,
+        idle_watchdog_timeout: std::time::Duration::from_secs(30),
+        upstream_connect_timeout: std::time::Duration::from_secs(10),
+        stream_stage_timeout: std::time::Duration::from_secs(5),
+        unix_socket_path: None,
+    };
+    let engine = build_engine(config, sink.clone());
+    let server = SidecarServer::new_with_flow_hooks(sidecar_config, engine, flow_hooks)
+        .expect("build sidecar");
+    let listener = server.bind_listener().await.expect("bind sidecar");
+    let addr = listener.local_addr().expect("listener local addr");
+    let handle = tokio::spawn(server.run_with_listener(listener));
+    (addr, handle, sink)
+}
+
+#[derive(Clone, Default)]
+struct RequestHostCaptureHooks {
+    seen_host: Arc<tokio::sync::Mutex<Option<String>>>,
+}
+
+impl RequestHostCaptureHooks {
+    async fn seen_host(&self) -> Option<String> {
+        self.seen_host.lock().await.clone()
+    }
+}
+
+impl FlowHooks for RequestHostCaptureHooks {
+    fn on_request(
+        &self,
+        _context: FlowContext,
+        request: HookRawRequest,
+    ) -> Pin<Box<dyn Future<Output = RequestDecision> + Send>> {
+        let seen_host = Arc::clone(&self.seen_host);
+        Box::pin(async move {
+            let host = request
+                .headers
+                .get(http::header::HOST)
+                .and_then(|value| value.to_str().ok())
+                .map(ToOwned::to_owned);
+            *seen_host.lock().await = host;
+            RequestDecision::Allow
+        })
+    }
 }
 
 async fn read_response_head(stream: &mut TcpStream) -> String {
@@ -245,6 +309,352 @@ async fn intercept_http2_over_tls_relays_and_marks_protocol() {
             && event.attributes.get("reason_code").map(String::as_str)
                 == Some("mitm_http_completed")
     }));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn intercept_http2_request_hooks_receive_host_header_without_client_host_header() {
+    let upstream_listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind upstream listener");
+    let upstream_addr = upstream_listener.local_addr().expect("upstream addr");
+    let upstream_task = tokio::spawn(async move {
+        let server_config =
+            build_http_server_config_for_host("127.0.0.1", true).expect("h2 server config");
+        let acceptor = TlsAcceptor::from(server_config);
+        let (tcp, _) = upstream_listener.accept().await.expect("accept upstream");
+        let tls = acceptor.accept(tcp).await.expect("TLS accept");
+        let mut h2_conn = h2::server::handshake(tls).await.expect("h2 handshake");
+        let Some(stream_result) = h2_conn.accept().await else {
+            panic!("missing h2 request stream");
+        };
+        let (_request, mut respond) = stream_result.expect("accept h2 request");
+        let response = http::Response::builder()
+            .status(200)
+            .header("content-length", "2")
+            .body(())
+            .expect("response");
+        let mut send = respond
+            .send_response(response, false)
+            .expect("send response headers");
+        send.send_data(Bytes::from_static(b"ok"), true)
+            .expect("send response data");
+        h2_conn.graceful_shutdown();
+        let _ = tokio::time::timeout(Duration::from_millis(200), async {
+            let _ = poll_fn(|cx| h2_conn.poll_closed(cx)).await;
+        })
+        .await;
+    });
+
+    let sink = VecEventConsumer::default();
+    let config = MitmConfig {
+        upstream_tls_insecure_skip_verify: true,
+        http2_enabled: true,
+        ..MitmConfig::default()
+    };
+    let hooks = RequestHostCaptureHooks::default();
+    let (proxy_addr, proxy_task, _) =
+        start_sidecar_with_flow_hooks(sink, config, Arc::new(hooks.clone())).await;
+
+    let mut tcp = TcpStream::connect(proxy_addr)
+        .await
+        .expect("connect sidecar");
+    let connect = format!(
+        "CONNECT 127.0.0.1:{} HTTP/1.1\r\nHost: 127.0.0.1:{}\r\n\r\n",
+        upstream_addr.port(),
+        upstream_addr.port()
+    );
+    tcp.write_all(connect.as_bytes())
+        .await
+        .expect("write CONNECT");
+    let connect_response = read_response_head(&mut tcp).await;
+    assert!(
+        connect_response.starts_with("HTTP/1.1 200 Connection Established"),
+        "{connect_response}"
+    );
+
+    let connector = TlsConnector::from(build_http_client_config(true, true));
+    let server_name = ServerName::try_from("127.0.0.1".to_string()).expect("server name");
+    let tls = connector
+        .connect(server_name, tcp)
+        .await
+        .expect("TLS connect to sidecar");
+    assert_eq!(tls.get_ref().1.alpn_protocol(), Some(b"h2".as_slice()));
+
+    let (mut h2_client, h2_connection) = h2::client::handshake(tls)
+        .await
+        .expect("h2 client handshake");
+    let h2_connection_task = tokio::spawn(async move {
+        let _ = h2_connection.await;
+    });
+
+    let request = http::Request::builder()
+        .method("GET")
+        .uri("https://127.0.0.1/host-fallback")
+        .body(())
+        .expect("request");
+    let (response_future, _send_stream) = h2_client
+        .send_request(request, true)
+        .expect("send h2 request");
+    let response = response_future.await.expect("h2 response");
+    assert_eq!(response.status(), http::StatusCode::OK);
+
+    let observed_host = tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            if let Some(value) = hooks.seen_host().await {
+                return value;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("host header captured");
+    assert_eq!(observed_host, "127.0.0.1");
+
+    h2_connection_task.abort();
+    upstream_task.await.expect("upstream task");
+    proxy_task.abort();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn intercept_http2_ai_host_request_hooks_receive_host_header_for_capture() {
+    let upstream_listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind upstream listener");
+    let upstream_addr = upstream_listener.local_addr().expect("upstream addr");
+    let upstream_task = tokio::spawn(async move {
+        let server_config =
+            build_http_server_config_for_host("api.openai.com", true).expect("h2 server config");
+        let acceptor = TlsAcceptor::from(server_config);
+        let (tcp, _) = upstream_listener.accept().await.expect("accept upstream");
+        let tls = acceptor.accept(tcp).await.expect("TLS accept");
+        let mut h2_conn = h2::server::handshake(tls).await.expect("h2 handshake");
+        let Some(stream_result) = h2_conn.accept().await else {
+            panic!("missing h2 request stream");
+        };
+        let (request, mut respond) = stream_result.expect("accept h2 request");
+        assert_eq!(request.uri().path(), "/v1/models");
+        let response = http::Response::builder()
+            .status(200)
+            .header("content-length", "2")
+            .body(())
+            .expect("response");
+        let mut send = respond
+            .send_response(response, false)
+            .expect("send response headers");
+        send.send_data(Bytes::from_static(b"ok"), true)
+            .expect("send response data");
+        h2_conn.graceful_shutdown();
+        let _ = tokio::time::timeout(Duration::from_millis(200), async {
+            let _ = poll_fn(|cx| h2_conn.poll_closed(cx)).await;
+        })
+        .await;
+    });
+
+    let sink = VecEventConsumer::default();
+    let config = MitmConfig {
+        route_mode: RouteMode::Reverse,
+        reverse_upstream: Some(RouteEndpointConfig {
+            host: "127.0.0.1".to_string(),
+            port: upstream_addr.port(),
+        }),
+        upstream_tls_insecure_skip_verify: true,
+        http2_enabled: true,
+        ..MitmConfig::default()
+    };
+    let hooks = RequestHostCaptureHooks::default();
+    let (proxy_addr, proxy_task, sink) =
+        start_sidecar_with_flow_hooks(sink, config, Arc::new(hooks.clone())).await;
+
+    let mut tcp = TcpStream::connect(proxy_addr)
+        .await
+        .expect("connect sidecar");
+    tcp.write_all(b"CONNECT api.openai.com:443 HTTP/1.1\r\nHost: api.openai.com:443\r\n\r\n")
+        .await
+        .expect("write CONNECT");
+    let connect_response = read_response_head(&mut tcp).await;
+    assert!(
+        connect_response.starts_with("HTTP/1.1 200 Connection Established"),
+        "{connect_response}"
+    );
+
+    let connector = TlsConnector::from(build_http_client_config(true, true));
+    let server_name = ServerName::try_from("api.openai.com".to_string()).expect("server name");
+    let tls = connector
+        .connect(server_name, tcp)
+        .await
+        .expect("TLS connect to sidecar");
+    assert_eq!(tls.get_ref().1.alpn_protocol(), Some(b"h2".as_slice()));
+
+    let (mut h2_client, h2_connection) = h2::client::handshake(tls)
+        .await
+        .expect("h2 client handshake");
+    let h2_connection_task = tokio::spawn(async move {
+        let _ = h2_connection.await;
+    });
+
+    let request = http::Request::builder()
+        .method("GET")
+        .uri("https://api.openai.com/v1/models")
+        .body(())
+        .expect("request");
+    let (response_future, _send_stream) = h2_client
+        .send_request(request, true)
+        .expect("send h2 request");
+    let response = response_future.await.expect("h2 response");
+    assert_eq!(response.status(), http::StatusCode::OK);
+
+    let observed_host = tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            if let Some(value) = hooks.seen_host().await {
+                return value;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("request host captured");
+    assert_eq!(observed_host, "api.openai.com");
+
+    drop(h2_client);
+    h2_connection_task.abort();
+    upstream_task.await.expect("upstream task");
+    proxy_task.abort();
+
+    let _events = sink.snapshot();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn ignored_ai_host_h2_tunnel_passthrough_relays_without_mitm_hooks() {
+    let upstream_listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind upstream listener");
+    let upstream_addr = upstream_listener.local_addr().expect("upstream addr");
+    let upstream_task = tokio::spawn(async move {
+        let server_config =
+            build_http_server_config_for_host("api.openai.com", true).expect("h2 server config");
+        let acceptor = TlsAcceptor::from(server_config);
+        let (tcp, _) = upstream_listener.accept().await.expect("accept upstream");
+        let tls = acceptor.accept(tcp).await.expect("TLS accept");
+        assert_eq!(tls.get_ref().1.alpn_protocol(), Some(b"h2".as_slice()));
+        let mut h2_conn = h2::server::handshake(tls).await.expect("h2 handshake");
+        let Some(stream_result) = h2_conn.accept().await else {
+            panic!("missing h2 request stream");
+        };
+        let (request, mut respond) = stream_result.expect("accept h2 request");
+        assert_eq!(request.method(), http::Method::GET);
+        assert_eq!(request.uri().path(), "/passthrough-h2");
+        let response = http::Response::builder()
+            .status(200)
+            .header("content-length", "6")
+            .body(())
+            .expect("response");
+        let mut send = respond
+            .send_response(response, false)
+            .expect("send response headers");
+        send.send_data(Bytes::from_static(b"tunnel"), true)
+            .expect("send response data");
+        h2_conn.graceful_shutdown();
+        let _ = tokio::time::timeout(Duration::from_millis(300), async {
+            let _ = poll_fn(|cx| h2_conn.poll_closed(cx)).await;
+        })
+        .await;
+    });
+
+    let sink = VecEventConsumer::default();
+    let config = MitmConfig {
+        route_mode: RouteMode::Reverse,
+        reverse_upstream: Some(RouteEndpointConfig {
+            host: "127.0.0.1".to_string(),
+            port: upstream_addr.port(),
+        }),
+        ignore_hosts: vec!["api.openai.com".to_string()],
+        http2_enabled: true,
+        ..MitmConfig::default()
+    };
+    let (proxy_addr, proxy_task, sink) = start_sidecar_with_sink(sink, config).await;
+
+    let mut tcp = TcpStream::connect(proxy_addr)
+        .await
+        .expect("connect sidecar");
+    tcp.write_all(b"CONNECT api.openai.com:443 HTTP/1.1\r\nHost: api.openai.com:443\r\n\r\n")
+        .await
+        .expect("write CONNECT");
+    let connect_response = read_response_head(&mut tcp).await;
+    assert!(
+        connect_response.starts_with("HTTP/1.1 200 Connection Established"),
+        "{connect_response}"
+    );
+
+    let connector = TlsConnector::from(build_http_client_config(true, true));
+    let server_name = ServerName::try_from("api.openai.com".to_string()).expect("server name");
+    let tls = connector
+        .connect(server_name, tcp)
+        .await
+        .expect("TLS connect through tunnel");
+    assert_eq!(tls.get_ref().1.alpn_protocol(), Some(b"h2".as_slice()));
+
+    let (mut h2_client, h2_connection) = h2::client::handshake(tls)
+        .await
+        .expect("h2 client handshake");
+    let mut h2_connection_task = tokio::spawn(h2_connection);
+
+    let request = http::Request::builder()
+        .method("GET")
+        .uri("https://api.openai.com/passthrough-h2")
+        .header("host", "api.openai.com")
+        .body(())
+        .expect("request");
+    let (response_future, _send_stream) = h2_client
+        .send_request(request, true)
+        .expect("send h2 request");
+    let response = response_future.await.expect("h2 response");
+    assert_eq!(response.status(), http::StatusCode::OK);
+    let mut body = response.into_body();
+    let mut payload = Vec::new();
+    while let Some(chunk) = body.data().await {
+        payload.extend_from_slice(&chunk.expect("response body chunk"));
+    }
+    assert_eq!(&payload, b"tunnel");
+
+    drop(h2_client);
+    if tokio::time::timeout(Duration::from_secs(1), &mut h2_connection_task)
+        .await
+        .is_err()
+    {
+        h2_connection_task.abort();
+    }
+    upstream_task.await.expect("upstream task");
+    tokio::time::sleep(Duration::from_millis(25)).await;
+    proxy_task.abort();
+
+    let events = sink.snapshot();
+    assert!(events.iter().any(|event| {
+        event.kind == EventType::ConnectDecision
+            && event.attributes.get("reason").map(String::as_str) == Some("ignored_host")
+    }));
+    assert!(
+        !events.iter().any(|event| {
+            matches!(
+                event.kind,
+                EventType::TlsHandshakeStarted
+                    | EventType::TlsHandshakeSucceeded
+                    | EventType::TlsHandshakeFailed
+            )
+        }),
+        "ignored AI host tunnel path must not perform MITM TLS handshakes"
+    );
+    assert!(
+        !events.iter().any(|event| {
+            matches!(
+                event.kind,
+                EventType::RequestHeaders
+                    | EventType::RequestBodyChunk
+                    | EventType::ResponseHeaders
+                    | EventType::ResponseBodyChunk
+            )
+        }),
+        "ignored AI host tunnel path must not emit intercepted HTTP events"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

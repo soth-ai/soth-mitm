@@ -52,6 +52,11 @@ where
         .fetch_add(request_captured.bytes_forwarded, Ordering::Relaxed);
 
     let mut handler_request_headers = build_handler_header_map_from_h2(&request_parts.headers);
+    ensure_handler_host_header_from_uri(
+        &mut handler_request_headers,
+        &stream_context,
+        &request_parts.uri,
+    );
     if request_captured.body_truncated {
         mark_body_truncated(&mut handler_request_headers);
     }

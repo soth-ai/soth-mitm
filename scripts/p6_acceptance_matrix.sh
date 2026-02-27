@@ -60,6 +60,7 @@ lanes=(
   $'AC-15\tac15_metrics_accuracy_contract\ttesting/acceptance/ac15_metrics_accuracy_contract.sh'
   $'AC-16\tac16_body_size_limit_enforcement\ttesting/acceptance/ac16_body_size_limit_enforcement.sh'
   $'AC-17\tac17_transport_normalization_invariants\ttesting/acceptance/ac17_transport_normalization_invariants.sh'
+  $'AC-18\tac18_ai_capture_protocol_parity\ttesting/acceptance/ac18_ai_capture_protocol_parity.sh'
 )
 
 failed_acs=()
@@ -148,7 +149,7 @@ elif [[ "$skipped_count" -gt 0 ]]; then
 fi
 
 {
-  echo "# P6 Acceptance Matrix (AC-01 .. AC-17)"
+  echo "# P6 Acceptance Matrix (AC-01 .. AC-18)"
   echo
   echo "Generated: $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
   echo

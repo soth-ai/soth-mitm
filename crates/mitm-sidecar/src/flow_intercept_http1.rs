@@ -119,6 +119,11 @@ where
         }
 
         let mut handler_request_headers = build_handler_header_map(&request.headers);
+        ensure_handler_host_header_from_target(
+            &mut handler_request_headers,
+            &http_context,
+            &request.target,
+        );
         if request_body_truncated {
             mark_body_truncated(&mut handler_request_headers);
         }

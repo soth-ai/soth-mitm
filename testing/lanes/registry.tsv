@@ -22,5 +22,5 @@ phase6_tls_mtls_matrix	stress	./scripts/p6_tls_mtls_matrix.sh	0	0	0	Optional/req
 phase6_tls_fingerprint_parity	stress	./scripts/p6_tls_fingerprint_parity.sh	0	0	0	TLS fingerprint compatibility class parity checks plus fingerprint-capture contract.
 phase6_tls_compat_pack	stress	./scripts/p6_tls_compat_pack.sh	0	0	0	Aggregate TLS compatibility pack (revocation + mTLS + fingerprint parity) with unified summary.
 phase6_performance_gates	benchmark	./scripts/p6_perf_gate.sh	0	0	0	Phase-6 perf harness for forwarding latency, TLS handshake overhead, SSE first-chunk delta, and 1k connection-scale baseline.
-phase6_acceptance_matrix	stress	./scripts/p6_acceptance_matrix.sh	1	0	0	Phase-6 acceptance criteria matrix (AC-01..AC-17) with per-AC artifacts and strict-mode gating.
+phase6_acceptance_matrix	stress	./scripts/p6_acceptance_matrix.sh	1	0	0	Phase-6 acceptance criteria matrix (AC-01..AC-18) with per-AC artifacts and strict-mode gating.
 phase6_release_readiness	stress	./scripts/p6_release_readiness.sh	1	0	0	Phase-6 publish and cutover readiness checks: publish dry-run, integration compile smoke, and cutover checklist status.
