@@ -1,11 +1,14 @@
+use std::ffi::OsStr;
 use std::future::Future;
 use std::path::PathBuf;
 use std::pin::Pin;
 
-use tokio::process::Command;
+use sysinfo::{Pid, System};
 
-use super::{ConnectionInfo, ProcessAttributor, ProcessIdentity, ProcessInfo};
-use crate::types::SocketFamily;
+use super::{
+    socket_pid::lookup_established_tcp_pid, ConnectionInfo, ProcessAttributor, ProcessIdentity,
+    ProcessInfo,
+};
 
 #[derive(Debug, Default)]
 pub(crate) struct PlatformProcessAttributor;
@@ -29,182 +32,70 @@ impl ProcessAttributor for PlatformProcessAttributor {
         &'a self,
         identity: &'a ProcessIdentity,
     ) -> Pin<Box<dyn Future<Output = Option<ProcessInfo>> + Send + 'a>> {
-        Box::pin(async move { lookup_process_by_pid(identity.pid).await })
+        Box::pin(async move { lookup_process_by_pid(identity.pid) })
     }
 }
 
 async fn lookup_process(connection: &ConnectionInfo) -> Option<ProcessInfo> {
     let pid = lookup_pid(connection).await?;
-    lookup_process_by_pid(pid).await
+    lookup_process_by_pid(pid)
 }
 
 async fn lookup_identity(connection: &ConnectionInfo) -> Option<ProcessIdentity> {
     let pid = lookup_pid(connection).await?;
-    let start_token = process_creation_time(pid).await?;
+    let start_token = process_snapshot(pid)?.start_token;
     Some(ProcessIdentity { pid, start_token })
 }
 
-async fn lookup_process_by_pid(pid: u32) -> Option<ProcessInfo> {
-    let process_name = tasklist_name(pid).await;
-    let process_path = process_path(pid).await.map(PathBuf::from);
+fn lookup_process_by_pid(pid: u32) -> Option<ProcessInfo> {
+    let snapshot = process_snapshot(pid)?;
 
     Some(ProcessInfo {
         pid,
         bundle_id: None,
-        exe_name: process_name,
-        exe_path: process_path,
-        parent_pid: None,
+        exe_name: snapshot.exe_name,
+        exe_path: snapshot.exe_path,
+        parent_pid: snapshot.parent_pid,
     })
 }
 
 async fn lookup_pid(connection: &ConnectionInfo) -> Option<u32> {
-    let source_port = match &connection.socket_family {
-        SocketFamily::TcpV4 { local, .. } => local.port(),
-        SocketFamily::TcpV6 { local, .. } => local.port(),
-        SocketFamily::UnixDomain { .. } => return None,
-    };
-    let output = Command::new("netstat")
-        .args(["-ano", "-p", "tcp"])
-        .output()
-        .await
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    parse_netstat_pid(&output.stdout, source_port)
+    lookup_established_tcp_pid(connection)
 }
 
-async fn tasklist_name(pid: u32) -> Option<String> {
-    let filter = format!("PID eq {pid}");
-    let output = Command::new("tasklist")
-        .args(["/FI", &filter, "/FO", "CSV", "/NH"])
-        .output()
-        .await
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    parse_tasklist_name(&output.stdout)
+#[derive(Debug)]
+struct ProcessSnapshot {
+    exe_name: Option<String>,
+    exe_path: Option<PathBuf>,
+    parent_pid: Option<u32>,
+    start_token: String,
 }
 
-async fn process_path(pid: u32) -> Option<String> {
-    let filter = format!("processid={pid}");
-    let output = Command::new("wmic")
-        .args([
-            "process",
-            "where",
-            &filter,
-            "get",
-            "ExecutablePath",
-            "/value",
-        ])
-        .output()
-        .await
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    parse_wmic_executable_path(&output.stdout)
+fn process_snapshot(pid: u32) -> Option<ProcessSnapshot> {
+    let mut system = System::new_all();
+    system.refresh_all();
+    let process = system.process(Pid::from_u32(pid))?;
+
+    let exe_name = normalize_text(process.name());
+    let exe_path = process
+        .exe()
+        .map(|path| path.to_path_buf())
+        .filter(|path| !path.as_os_str().is_empty());
+    let parent_pid = process.parent().map(|parent| parent.as_u32());
+
+    Some(ProcessSnapshot {
+        exe_name,
+        exe_path,
+        parent_pid,
+        start_token: process.start_time().to_string(),
+    })
 }
 
-async fn process_creation_time(pid: u32) -> Option<String> {
-    let filter = format!("processid={pid}");
-    let output = Command::new("wmic")
-        .args(["process", "where", &filter, "get", "CreationDate", "/value"])
-        .output()
-        .await
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    parse_wmic_creation_date(&output.stdout)
-}
-
-fn parse_netstat_pid(raw: &[u8], source_port: u16) -> Option<u32> {
-    let needle = format!(":{source_port}");
-    let text = String::from_utf8_lossy(raw);
-    for line in text.lines() {
-        if !line.contains("ESTABLISHED") || !line.contains(&needle) {
-            continue;
-        }
-        let pid_token = line.split_whitespace().last()?;
-        if let Ok(pid) = pid_token.parse::<u32>() {
-            return Some(pid);
-        }
-    }
-    None
-}
-
-fn parse_tasklist_name(raw: &[u8]) -> Option<String> {
-    let text = String::from_utf8_lossy(raw);
-    let line = text.lines().next()?.trim();
-    if line.is_empty() || line.starts_with("INFO:") {
-        return None;
-    }
-    let trimmed = line.trim_matches('"');
-    trimmed.split("\",\"").next().map(str::to_string)
-}
-
-fn parse_wmic_executable_path(raw: &[u8]) -> Option<String> {
-    let text = String::from_utf8_lossy(raw);
-    for line in text.lines() {
-        if let Some(value) = line.trim().strip_prefix("ExecutablePath=") {
-            let value = value.trim();
-            if !value.is_empty() {
-                return Some(value.to_string());
-            }
-        }
-    }
-    None
-}
-
-fn parse_wmic_creation_date(raw: &[u8]) -> Option<String> {
-    let text = String::from_utf8_lossy(raw);
-    for line in text.lines() {
-        if let Some(value) = line.trim().strip_prefix("CreationDate=") {
-            let value = value.trim();
-            if !value.is_empty() {
-                return Some(value.to_string());
-            }
-        }
-    }
-    None
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{
-        parse_netstat_pid, parse_tasklist_name, parse_wmic_creation_date,
-        parse_wmic_executable_path,
-    };
-
-    #[test]
-    fn parse_windows_pid_from_netstat() {
-        let sample = b"  TCP    127.0.0.1:58231    127.0.0.1:8080    ESTABLISHED    19420\r\n";
-        assert_eq!(parse_netstat_pid(sample, 58231), Some(19420));
-    }
-
-    #[test]
-    fn parse_windows_tasklist_name() {
-        let sample = br#""chrome.exe","19420","Console","1","123,456 K""#;
-        assert_eq!(parse_tasklist_name(sample), Some("chrome.exe".to_string()));
-    }
-
-    #[test]
-    fn parse_windows_wmic_path() {
-        let sample = b"\r\nExecutablePath=C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe\r\n\r\n";
-        assert_eq!(
-            parse_wmic_executable_path(sample),
-            Some("C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe".to_string())
-        );
-    }
-
-    #[test]
-    fn parse_windows_wmic_creation_date() {
-        let sample = b"\r\nCreationDate=20260225121530.123456+000\r\n\r\n";
-        assert_eq!(
-            parse_wmic_creation_date(sample),
-            Some("20260225121530.123456+000".to_string())
-        );
+fn normalize_text(value: impl AsRef<OsStr>) -> Option<String> {
+    let text = value.as_ref().to_string_lossy().trim().to_string();
+    if text.is_empty() {
+        None
+    } else {
+        Some(text)
     }
 }

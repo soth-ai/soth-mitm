@@ -1,12 +1,16 @@
+use std::ffi::OsStr;
 use std::future::Future;
 use std::path::Component;
 use std::path::PathBuf;
 use std::pin::Pin;
 
-use tokio::process::Command;
+use plist::Value;
+use sysinfo::{Pid, System};
 
-use super::{ConnectionInfo, ProcessAttributor, ProcessIdentity, ProcessInfo};
-use crate::types::SocketFamily;
+use super::{
+    socket_pid::lookup_established_tcp_pid, ConnectionInfo, ProcessAttributor, ProcessIdentity,
+    ProcessInfo,
+};
 
 #[derive(Debug, Default)]
 pub(crate) struct PlatformProcessAttributor;
@@ -30,128 +34,90 @@ impl ProcessAttributor for PlatformProcessAttributor {
         &'a self,
         identity: &'a ProcessIdentity,
     ) -> Pin<Box<dyn Future<Output = Option<ProcessInfo>> + Send + 'a>> {
-        Box::pin(async move { lookup_process_by_pid(identity.pid).await })
+        Box::pin(async move { lookup_process_by_pid(identity.pid) })
     }
 }
 
 async fn lookup_process(connection: &ConnectionInfo) -> Option<ProcessInfo> {
     let pid = lookup_pid(connection).await?;
-    lookup_process_by_pid(pid).await
+    lookup_process_by_pid(pid)
 }
 
 async fn lookup_identity(connection: &ConnectionInfo) -> Option<ProcessIdentity> {
     let pid = lookup_pid(connection).await?;
-    let start_token = process_start_token(pid).await?;
+    let start_token = process_start_token(pid)?;
     Some(ProcessIdentity { pid, start_token })
 }
 
-async fn lookup_process_by_pid(pid: u32) -> Option<ProcessInfo> {
-    let process_command = ps_value(pid, "command").await;
-    let process_name = ps_value(pid, "comm").await;
-    let parent_pid = ps_value(pid, "ppid")
-        .await
-        .and_then(|value| value.parse::<u32>().ok());
-
-    let process_path = process_command
-        .as_deref()
-        .unwrap_or_default()
-        .split_whitespace()
-        .next()
-        .filter(|value| value.starts_with('/'))
-        .map(PathBuf::from)
-        .or_else(|| process_name.as_ref().map(PathBuf::from));
-    let bundle_id = match process_path.as_ref() {
-        Some(path) => lookup_bundle_id(path).await,
-        None => None,
-    };
+fn lookup_process_by_pid(pid: u32) -> Option<ProcessInfo> {
+    let snapshot = process_snapshot(pid)?;
+    let bundle_id = snapshot.exe_path.as_ref().and_then(lookup_bundle_id);
 
     Some(ProcessInfo {
         pid,
-        exe_name: process_name,
-        exe_path: process_path,
+        exe_name: snapshot.exe_name,
+        exe_path: snapshot.exe_path,
         bundle_id,
-        parent_pid,
+        parent_pid: snapshot.parent_pid,
     })
 }
 
-async fn process_start_token(pid: u32) -> Option<String> {
-    ps_value(pid, "lstart").await
-}
-
 async fn lookup_pid(connection: &ConnectionInfo) -> Option<u32> {
-    let socket_filter = match &connection.socket_family {
-        SocketFamily::TcpV4 { local, .. } => format!("{}:{}", local.ip(), local.port()),
-        SocketFamily::TcpV6 { local, .. } => format!("[{}]:{}", local.ip(), local.port()),
-        SocketFamily::UnixDomain { .. } => return None,
-    };
-    let output = Command::new("lsof")
-        .args([
-            "-nP",
-            "-iTCP",
-            &socket_filter,
-            "-sTCP:ESTABLISHED",
-            "-F",
-            "p",
-        ])
-        .output()
-        .await
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    parse_lsof_pid(&output.stdout)
+    lookup_established_tcp_pid(connection)
 }
 
-async fn ps_value(pid: u32, field: &str) -> Option<String> {
-    let pid = pid.to_string();
-    let format = format!("{field}=");
-    let output = Command::new("ps")
-        .args(["-p", &pid, "-o", &format])
-        .output()
-        .await
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let value = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if value.is_empty() {
+fn process_start_token(pid: u32) -> Option<String> {
+    process_snapshot(pid).map(|snapshot| snapshot.start_token)
+}
+
+#[derive(Debug)]
+struct ProcessSnapshot {
+    exe_name: Option<String>,
+    exe_path: Option<PathBuf>,
+    parent_pid: Option<u32>,
+    start_token: String,
+}
+
+fn process_snapshot(pid: u32) -> Option<ProcessSnapshot> {
+    let mut system = System::new_all();
+    system.refresh_all();
+    let process = system.process(Pid::from_u32(pid))?;
+
+    let exe_name = normalize_text(process.name());
+    let exe_path = process
+        .exe()
+        .map(|path| path.to_path_buf())
+        .filter(|path| !path.as_os_str().is_empty());
+    let parent_pid = process.parent().map(|parent| parent.as_u32());
+
+    Some(ProcessSnapshot {
+        exe_name,
+        exe_path,
+        parent_pid,
+        start_token: process.start_time().to_string(),
+    })
+}
+
+fn normalize_text(value: impl AsRef<OsStr>) -> Option<String> {
+    let text = value.as_ref().to_string_lossy().trim().to_string();
+    if text.is_empty() {
         None
     } else {
-        Some(value)
+        Some(text)
     }
 }
 
-fn parse_lsof_pid(raw: &[u8]) -> Option<u32> {
-    let text = String::from_utf8_lossy(raw);
-    for line in text.lines() {
-        if let Some(pid) = line.strip_prefix('p') {
-            if let Ok(value) = pid.trim().parse::<u32>() {
-                return Some(value);
-            }
-        }
-    }
-    None
-}
-
-async fn lookup_bundle_id(process_path: &PathBuf) -> Option<String> {
+fn lookup_bundle_id(process_path: &PathBuf) -> Option<String> {
     let app_bundle_path = app_bundle_path(process_path)?;
-    let info_plist = app_bundle_path.join("Contents/Info.plist");
+    let info_plist = app_bundle_path.join("Contents").join("Info.plist");
 
-    let output = Command::new("defaults")
-        .args(["read"])
-        .arg(info_plist)
-        .arg("CFBundleIdentifier")
-        .output()
-        .await
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let value = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if value.is_empty() {
+    let plist = Value::from_file(info_plist).ok()?;
+    let dict = plist.as_dictionary()?;
+    let bundle_id = dict.get("CFBundleIdentifier")?.as_string()?.trim();
+    if bundle_id.is_empty() {
         None
     } else {
-        Some(value)
+        Some(bundle_id.to_string())
     }
 }
 
@@ -173,13 +139,7 @@ fn app_bundle_path(process_path: &PathBuf) -> Option<PathBuf> {
 mod tests {
     use std::path::PathBuf;
 
-    use super::{app_bundle_path, parse_lsof_pid};
-
-    #[test]
-    fn parses_pid_from_lsof_machine_output() {
-        let raw = b"p4242\np5242\n";
-        assert_eq!(parse_lsof_pid(raw), Some(4242));
-    }
+    use super::app_bundle_path;
 
     #[test]
     fn extracts_app_bundle_path_from_binary_path() {

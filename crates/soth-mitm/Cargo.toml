@@ -41,6 +41,7 @@ bytes = "1"
 dashmap = { workspace = true }
 futures = { workspace = true }
 http = "1"
+libc = "0.2"
 lru = "0.12"
 mitm-core = { path = "../mitm-core", version = "0.1.0" }
 mitm-http = { path = "../mitm-http", version = "0.1.0" }
@@ -48,9 +49,11 @@ mitm-observe = { path = "../mitm-observe", version = "0.1.0" }
 mitm-policy = { path = "../mitm-policy", version = "0.1.0" }
 mitm-sidecar = { path = "../mitm-sidecar", version = "0.1.0" }
 parking_lot = { workspace = true }
+plist = "1"
 rcgen = { workspace = true }
+sysinfo = "0.33"
 thiserror = { workspace = true }
-tokio = { workspace = true, features = ["process", "rt", "sync", "time"] }
+tokio = { workspace = true, features = ["rt", "sync", "time"] }
 tracing = { workspace = true }
 uuid = { workspace = true }
 
