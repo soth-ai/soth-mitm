@@ -675,6 +675,36 @@ jobs:
           path: artifacts/p6-tls-fingerprint-parity/${{ matrix.os }}
           if-no-files-found: error
 
+  phase6_tls_compat_pack:
+    name: phase6_tls_compat_pack (ubuntu-latest)
+    if: >-
+      ${{
+        github.event_name == 'push' ||
+        (github.event_name == 'workflow_dispatch' && github.event.inputs.run_profile == 'full')
+      }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@1.88.0
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run phase 6 TLS compatibility pack
+        shell: bash
+        run: ./scripts/p6_tls_compat_pack.sh --report-dir artifacts/p6-tls-compat-pack/ubuntu-latest
+
+      - name: Upload phase 6 TLS compatibility pack artifact
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: p6-tls-compat-pack-ubuntu-latest
+          path: artifacts/p6-tls-compat-pack/ubuntu-latest
+          if-no-files-found: error
+
   phase6_acceptance_matrix:
     name: phase6_acceptance_matrix (${{ matrix.os }})
     if: >-

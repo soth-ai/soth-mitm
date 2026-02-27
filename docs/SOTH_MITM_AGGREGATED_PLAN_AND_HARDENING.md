@@ -1266,18 +1266,18 @@ This checklist turns `LIGHTWEIGHT_PROXY_REPO_IMPLEMENTATION_PLAN.md` into an exe
     - [x] conditional guard lane added: `scripts/p5_control_plane_boundary.sh` + `testing/lanes/registry.tsv` to fail on introduction of unmanaged control-plane tokens/surfaces.
   - [x] Acceptance: control-plane endpoints are non-bypassable by default.
     - [x] with zero exposed control endpoints, bypass surface is structurally absent and lane-enforced.
-- [ ] `P5-11` TLS compatibility hardening pack (non-H3 gaps from mitmproxy lessons).
-  - [ ] Mitigates: `#3140`, `#472`, `#4575`
-  - [ ] Scope: close TLS compatibility gaps in revocation metadata handling, optional upstream mTLS edge behavior, and browser-fingerprint parity classes.
-  - [ ] Gap impact matrix:
-    - [ ] revocation metadata (`#3140`, open): enterprise PKI + strict validation failures are harder to classify/triage without explicit revocation context.
-    - [ ] optional upstream mTLS edges (`#472`, partial): upstreams that request/require client certs can fail nondeterministically across hosts/routes.
-    - [ ] fingerprint parity classes (`#4575`, open): anti-bot/CDN stacks can classify traffic as non-browser and degrade/block flows.
-  - [ ] Deliverables:
+- [x] `P5-11` TLS compatibility hardening pack (non-H3 gaps from mitmproxy lessons).
+  - [x] Mitigates: `#3140`, `#472`, `#4575`
+  - [x] Scope: close TLS compatibility gaps in revocation metadata handling, optional upstream mTLS edge behavior, and browser-fingerprint parity classes.
+  - [x] Gap impact matrix:
+    - [x] revocation metadata (`#3140`, open): enterprise PKI + strict validation failures are harder to classify/triage without explicit revocation context.
+    - [x] optional upstream mTLS edges (`#472`, partial): upstreams that request/require client certs can fail nondeterministically across hosts/routes.
+    - [x] fingerprint parity classes (`#4575`, open): anti-bot/CDN stacks can classify traffic as non-browser and degrade/block flows.
+  - [x] Deliverables:
     - [x] revocation telemetry contract for TLS events (staple presence/status + deterministic classification fields)
     - [x] optional upstream mTLS matrix support (per-target client cert policy + deterministic fallback behavior)
     - [x] upstream TLS fingerprint parity classes with explicit provenance tags (`native` vs `compat_class`)
-  - [ ] Execution checklist:
+  - [x] Execution checklist:
     - [x] `TCH-01` revocation metadata and classification
       - [x] event fields: `upstream_ocsp_staple_present`, `upstream_ocsp_staple_status`, `revocation_policy_mode`, `revocation_decision`
       - [x] fixture coverage: valid staple, missing staple, malformed/expired staple
@@ -1289,7 +1289,7 @@ This checklist turns `LIGHTWEIGHT_PROXY_REPO_IMPLEMENTATION_PLAN.md` into an exe
     - [x] `TCH-02` optional upstream mTLS matrix
       - [x] per-target contract modes: `never`, `if_requested`, `required`
       - [x] deterministic fallback behavior when cert material is unavailable
-      - [ ] acceptance tests:
+      - [x] acceptance tests:
         - [x] `cargo test -p mitm-sidecar --test tls_upstream_mtls_matrix -q`
         - [x] `cargo test -p mitm-sidecar --test tls_profile_matrix -q`
       - [x] CI gate: `scripts/p6_tls_mtls_matrix.sh` (`phase6_tls_mtls_matrix`)
@@ -1300,15 +1300,15 @@ This checklist turns `LIGHTWEIGHT_PROXY_REPO_IMPLEMENTATION_PLAN.md` into an exe
         - [x] `cargo test -p mitm-sidecar --test tls_fingerprint_parity -q`
         - [x] `cargo test -p soth-mitm --lib fingerprint_capture -q`
       - [x] CI gate: `scripts/p6_tls_fingerprint_parity.sh` (`phase6_tls_fingerprint_parity`)
-  - [ ] Dependency order:
-    - [ ] 1) `TCH-01` revocation telemetry first (observability before behavior changes)
-    - [ ] 2) `TCH-02` optional mTLS second (handshake behavior change depends on `TCH-01` diagnostics)
-    - [ ] 3) `TCH-03` fingerprint parity third (broadest compatibility surface; tune after prior two are stable)
-  - [ ] Acceptance:
+  - [x] Dependency order:
+    - [x] 1) `TCH-01` revocation telemetry first (observability before behavior changes)
+    - [x] 2) `TCH-02` optional mTLS second (handshake behavior change depends on `TCH-01` diagnostics)
+    - [x] 3) `TCH-03` fingerprint parity third (broadest compatibility surface; tune after prior two are stable)
+  - [x] Acceptance:
     - [x] revocation metadata fixtures pass and emit stable event attributes for present/missing/invalid-staple cases.
     - [x] optional mTLS matrix fixtures pass for no-request/requested/required client-cert upstream behaviors.
     - [x] fingerprint parity class fixtures pass for selected compatibility classes without regressing strict/default profile behavior.
-  - [ ] CI gates (planned):
+  - [x] CI gates (planned):
     - [x] `scripts/p6_tls_revocation_matrix.sh` (`phase6_tls_revocation_matrix`)
     - [x] `scripts/p6_tls_mtls_matrix.sh` (`phase6_tls_mtls_matrix`)
     - [x] `scripts/p6_tls_fingerprint_parity.sh` (`phase6_tls_fingerprint_parity`)
