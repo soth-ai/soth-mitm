@@ -145,7 +145,11 @@ where
 
     let should_offer_http2_upstream =
         http2_enabled_for_flow && downstream_protocol == ApplicationProtocol::Http2;
-    let upstream_tls_profile = map_upstream_tls_profile(engine.config.tls_profile);
+    let upstream_tls_profile = resolve_effective_upstream_tls_profile(
+        engine.config.tls_profile,
+        engine.config.tls_fingerprint_mode,
+        engine.config.tls_fingerprint_class,
+    );
     let upstream_sni_mode = map_upstream_sni_mode(engine.config.upstream_sni_mode);
     let upstream_client_auth_mode =
         map_upstream_client_auth_mode(engine.config.upstream_client_auth_mode);

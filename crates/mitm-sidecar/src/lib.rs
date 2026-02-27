@@ -1,7 +1,9 @@
 use mitm_core::{
     parse_connect_request_head_with_mode, ConnectParseError,
-    DownstreamCertProfile as CoreDownstreamCertProfile, MitmEngine, TlsProfile as CoreTlsProfile,
-    UpstreamClientAuthMode as CoreUpstreamClientAuthMode, UpstreamSniMode as CoreUpstreamSniMode,
+    DownstreamCertProfile as CoreDownstreamCertProfile, MitmEngine,
+    TlsFingerprintClass as CoreTlsFingerprintClass, TlsFingerprintMode as CoreTlsFingerprintMode,
+    TlsProfile as CoreTlsProfile, UpstreamClientAuthMode as CoreUpstreamClientAuthMode,
+    UpstreamSniMode as CoreUpstreamSniMode,
 };
 use mitm_http::{negotiated_alpn_label, protocol_from_negotiated_alpn, ApplicationProtocol};
 use mitm_observe::{Event, EventConsumer, EventType, FlowContext};
@@ -248,6 +250,11 @@ where
         callback: MitmproxyTlsCallback,
     ) -> MitmproxyTlsAdapterEvent {
         let mut adapted = adapt_mitmproxy_tls_callback(&callback);
+        insert_tls_fingerprint_provenance(
+            &mut adapted.attributes,
+            self.engine.config.tls_fingerprint_mode,
+            self.engine.config.tls_fingerprint_class,
+        );
 
         if let Some(failure) = adapted.failure.as_ref() {
             let counters = self.tls_diagnostics.record_failure(

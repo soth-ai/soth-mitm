@@ -638,6 +638,43 @@ jobs:
           path: artifacts/p6-tls-mtls-matrix/${{ matrix.os }}
           if-no-files-found: error
 
+  phase6_tls_fingerprint_parity:
+    name: phase6_tls_fingerprint_parity (${{ matrix.os }})
+    if: >-
+      ${{
+        github.event_name == 'push' ||
+        (github.event_name == 'workflow_dispatch' && github.event.inputs.run_profile == 'full')
+      }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@1.88.0
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run phase 6 TLS fingerprint parity
+        shell: bash
+        run: ./scripts/p6_tls_fingerprint_parity.sh --report-dir artifacts/p6-tls-fingerprint-parity/${{ matrix.os }}
+
+      - name: Upload phase 6 TLS fingerprint parity artifact
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: p6-tls-fingerprint-parity-${{ matrix.os }}
+          path: artifacts/p6-tls-fingerprint-parity/${{ matrix.os }}
+          if-no-files-found: error
+
   phase6_acceptance_matrix:
     name: phase6_acceptance_matrix (${{ matrix.os }})
     if: >-

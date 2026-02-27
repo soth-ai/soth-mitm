@@ -1276,7 +1276,7 @@ This checklist turns `LIGHTWEIGHT_PROXY_REPO_IMPLEMENTATION_PLAN.md` into an exe
   - [ ] Deliverables:
     - [x] revocation telemetry contract for TLS events (staple presence/status + deterministic classification fields)
     - [x] optional upstream mTLS matrix support (per-target client cert policy + deterministic fallback behavior)
-    - [ ] upstream TLS fingerprint parity classes with explicit provenance tags (`native` vs `compat_class`)
+    - [x] upstream TLS fingerprint parity classes with explicit provenance tags (`native` vs `compat_class`)
   - [ ] Execution checklist:
     - [x] `TCH-01` revocation metadata and classification
       - [x] event fields: `upstream_ocsp_staple_present`, `upstream_ocsp_staple_status`, `revocation_policy_mode`, `revocation_decision`
@@ -1293,13 +1293,13 @@ This checklist turns `LIGHTWEIGHT_PROXY_REPO_IMPLEMENTATION_PLAN.md` into an exe
         - [x] `cargo test -p mitm-sidecar --test tls_upstream_mtls_matrix -q`
         - [x] `cargo test -p mitm-sidecar --test tls_profile_matrix -q`
       - [x] CI gate: `scripts/p6_tls_mtls_matrix.sh` (`phase6_tls_mtls_matrix`)
-    - [ ] `TCH-03` fingerprint parity class pack
-      - [ ] define compatibility classes (for example `native`, `chrome_like`, `firefox_like`) with explicit scope constraints
-      - [ ] event provenance fields: `tls_fingerprint_mode`, `tls_fingerprint_class`
-      - [ ] acceptance tests:
-        - [ ] `cargo test -p mitm-sidecar --test tls_fingerprint_parity -q`
-        - [ ] `cargo test -p soth-mitm --lib fingerprint_capture -q`
-      - [ ] CI gate (planned): `scripts/p6_tls_fingerprint_parity.sh` (`phase6_tls_fingerprint_parity`)
+    - [x] `TCH-03` fingerprint parity class pack
+      - [x] define compatibility classes (for example `native`, `chrome_like`, `firefox_like`) with explicit scope constraints
+      - [x] event provenance fields: `tls_fingerprint_mode`, `tls_fingerprint_class`
+      - [x] acceptance tests:
+        - [x] `cargo test -p mitm-sidecar --test tls_fingerprint_parity -q`
+        - [x] `cargo test -p soth-mitm --lib fingerprint_capture -q`
+      - [x] CI gate: `scripts/p6_tls_fingerprint_parity.sh` (`phase6_tls_fingerprint_parity`)
   - [ ] Dependency order:
     - [ ] 1) `TCH-01` revocation telemetry first (observability before behavior changes)
     - [ ] 2) `TCH-02` optional mTLS second (handshake behavior change depends on `TCH-01` diagnostics)
@@ -1307,12 +1307,12 @@ This checklist turns `LIGHTWEIGHT_PROXY_REPO_IMPLEMENTATION_PLAN.md` into an exe
   - [ ] Acceptance:
     - [x] revocation metadata fixtures pass and emit stable event attributes for present/missing/invalid-staple cases.
     - [x] optional mTLS matrix fixtures pass for no-request/requested/required client-cert upstream behaviors.
-    - [ ] fingerprint parity class fixtures pass for selected compatibility classes without regressing strict/default profile behavior.
+    - [x] fingerprint parity class fixtures pass for selected compatibility classes without regressing strict/default profile behavior.
   - [ ] CI gates (planned):
     - [x] `scripts/p6_tls_revocation_matrix.sh` (`phase6_tls_revocation_matrix`)
     - [x] `scripts/p6_tls_mtls_matrix.sh` (`phase6_tls_mtls_matrix`)
-    - [ ] `scripts/p6_tls_fingerprint_parity.sh` (`phase6_tls_fingerprint_parity`)
-    - [ ] aggregate lane: `scripts/p6_tls_compat_pack.sh` (runs all three and emits unified summary)
+    - [x] `scripts/p6_tls_fingerprint_parity.sh` (`phase6_tls_fingerprint_parity`)
+    - [x] aggregate lane: `scripts/p6_tls_compat_pack.sh` (runs all three and emits unified summary)
 
 ### Deferred Follow-up (2026-02-25): Cross-OS Proof Debt for `soth-mitm` as `soth-proxy` Dependency
 

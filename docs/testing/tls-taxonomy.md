@@ -29,6 +29,8 @@ Every TLS failed event must include:
 10. `upstream_ocsp_staple_status`
 11. `revocation_policy_mode`
 12. `revocation_decision`
+13. `tls_fingerprint_mode`
+14. `tls_fingerprint_class`
 
 ## Validation Commands
 
@@ -38,8 +40,12 @@ cargo test -p mitm-sidecar --test mitmproxy_tls_adapter
 cargo test -p mitm-sidecar --test tls_learning_guardrails
 cargo test -p mitm-sidecar --test tls_revocation_matrix
 cargo test -p mitm-sidecar --test tls_upstream_mtls_matrix
+cargo test -p mitm-sidecar --test tls_fingerprint_parity
+cargo test -p soth-mitm --lib fingerprint_capture
 ./scripts/p6_tls_revocation_matrix.sh
 ./scripts/p6_tls_mtls_matrix.sh
+./scripts/p6_tls_fingerprint_parity.sh
+./scripts/p6_tls_compat_pack.sh
 ```
 
 ## Classification Invariants
