@@ -2,7 +2,7 @@
 
 [![CI](https://img.shields.io/github/actions/workflow/status/soth-ai/soth-mitm/ci.yml?branch=main&label=ci)](https://github.com/soth-ai/soth-mitm/actions/workflows/ci.yml)
 [![License: MPL-2.0](https://img.shields.io/badge/license-MPL--2.0-orange.svg)](LICENSE)
-[![Rust 1.75+](https://img.shields.io/badge/rust-1.75%2B-blue.svg)](docs/MSRV.md)
+[![Rust 1.88+](https://img.shields.io/badge/rust-1.88%2B-blue.svg)](docs/MSRV.md)
 
 Rust intercepting proxy workspace for SOTH, built for deterministic policy enforcement, transport normalization, and production hardening.
 
@@ -165,7 +165,6 @@ Workspace crates:
 - `crates/mitm-policy`
 - `crates/mitm-observe`
 - `crates/mitm-tls`
-- `crates/soth-detect`
 
 ## Build And Validation
 
