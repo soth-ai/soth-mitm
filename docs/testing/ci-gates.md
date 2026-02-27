@@ -2,27 +2,56 @@
 
 This repository enforces protocol and reliability gates through GitHub Actions.
 
+## Execution Tiers
+
+CI is split into three tiers:
+
+1. Pull request (`pull_request`): baseline quality and correctness gates.
+2. Main branch (`push` to `main`): baseline plus protocol matrix/triage.
+3. Release tag (`push` tag `v*`): full hardening and release-grade gates.
+
+Manual runs (`workflow_dispatch`) support:
+
+1. `run_profile=fast`: baseline only.
+2. `run_profile=full`: full release-grade gate set.
+
 ## Gate Jobs
+
+### Baseline (PR/Main/Tag/Fast)
 
 1. `fmt_clippy`
 2. `test`
 3. `phase_a_smoke`
 4. `p1_reliability`
-5. `phase2_protocol_matrix`
-6. `phase2_protocol_triage`
-7. `phase4_performance_gates`
-8. `phase4_failure_injection`
-9. `phase4_differential_validation`
-10. `phase4_tool_lanes`
-11. `phase4_chaos_network_faults`
-12. `phase4_chaos_adversarial`
-13. `phase5_reliability_contract`
-14. `phase5_event_log_contract`
-15. `phase5_runtime_soak`
-16. `phase6_tls_revocation_matrix`
-17. `phase6_tls_mtls_matrix`
-18. `phase6_tls_fingerprint_parity`
-19. `phase6_tls_compat_pack`
+5. `feature_matrix`
+6. `compliance`
+7. `tls_failure_fixtures`
+
+### Main + Release (`push main`, `push v*`, `workflow_dispatch full`)
+
+1. `phase2_protocol_matrix`
+2. `phase2_protocol_triage`
+
+### Release Only (`push v*`, `workflow_dispatch full`)
+
+1. `phase4_performance_gates`
+2. `phase4_failure_injection`
+3. `phase4_differential_validation`
+4. `phase4_tool_lanes`
+5. `phase4_chaos_network_faults`
+6. `phase4_chaos_adversarial`
+7. `phase6_performance_gates`
+8. `phase6_tls_revocation_matrix`
+9. `phase6_tls_mtls_matrix`
+10. `phase6_tls_fingerprint_parity`
+11. `phase6_tls_compat_pack`
+12. `phase6_acceptance_matrix`
+
+### Historical/Planned (Not currently wired in `ci.yml`)
+
+1. `phase5_reliability_contract`
+2. `phase5_event_log_contract`
+3. `phase5_runtime_soak`
 
 ## Phase-2 Gate Contract
 
