@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use mitm_core::{MitmConfig, MitmEngine};
+use mitm_core::{MitmConfig, MitmEngine, RouteEndpointConfig, RouteMode};
 use mitm_observe::{EventType, VecEventConsumer};
 use mitm_policy::DefaultPolicyEngine;
 use mitm_sidecar::{SidecarConfig, SidecarServer, TlsDiagnostics, TlsLearningGuardrails};
