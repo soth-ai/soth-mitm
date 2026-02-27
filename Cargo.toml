@@ -97,12 +97,6 @@ rustls-pemfile = "2"
 x509-parser = "0.18.1"
 webpki-roots = "0.26"
 
-# Storage
-rusqlite = { version = "0.38.0", features = ["bundled"] }
-
-# CLI
-clap = { version = "4.5.60", features = ["derive"] }
-
 # Utilities
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1.21.0", features = ["v4", "serde"] }
