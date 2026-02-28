@@ -1,7 +1,7 @@
 use std::net::SocketAddr;
 use std::path::PathBuf;
 
-use crate::destination::normalize_destination_key;
+use crate::destination::parse_destination_rule;
 use crate::MitmError;
 use crate::TlsVersion;
 
@@ -163,7 +163,7 @@ impl MitmConfig {
             ));
         }
         for destination in &self.interception.destinations {
-            normalize_destination_key(destination)?;
+            parse_destination_rule(destination)?;
         }
         if self.process_attribution.enabled && self.process_attribution.lookup_timeout_ms == 0 {
             return Err(MitmError::InvalidConfig(

@@ -16,7 +16,7 @@ cargo check --workspace
 cargo test --workspace
 ```
 
-`install_git_hooks.sh` configures repository-managed hooks so pushes run `./scripts/check_max_file_lines.sh` locally before reaching CI.
+`install_git_hooks.sh` configures repository-managed hooks so pushes run `./scripts/check_max_file_lines.sh` and `./scripts/check_prohibitions.sh` locally before reaching CI.
 
 ## Required Checks Before PR
 
