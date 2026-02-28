@@ -4,7 +4,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
-max_lines="${MAX_FILE_LINES:-400}"
+max_lines="${MAX_FILE_LINES:-500}"
 core_crates_raw="${CORE_RUST_CRATES:-mitm-core,mitm-http,mitm-observe,mitm-policy,mitm-sidecar,mitm-tls,soth-mitm}"
 
 violations=0

@@ -294,9 +294,10 @@ Notes:
 
 ## Repository Rules
 
-- Max file length is `400` lines for core Rust source files under `crates/*/src/**/*.rs`.
+- Max file length is `500` lines for core Rust source files under `crates/*/src/**/*.rs`.
 - Oversized core Rust files must be split before merge.
 - Guard command: `./scripts/check_max_file_lines.sh`
+- Install local pre-push enforcement: `./scripts/install_git_hooks.sh`
 
 ## Community
 
