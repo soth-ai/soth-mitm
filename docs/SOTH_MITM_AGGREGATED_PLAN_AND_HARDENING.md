@@ -1266,6 +1266,53 @@ This checklist turns `LIGHTWEIGHT_PROXY_REPO_IMPLEMENTATION_PLAN.md` into an exe
     - [x] conditional guard lane added: `scripts/p5_control_plane_boundary.sh` + `testing/lanes/registry.tsv` to fail on introduction of unmanaged control-plane tokens/surfaces.
   - [x] Acceptance: control-plane endpoints are non-bypassable by default.
     - [x] with zero exposed control endpoints, bypass surface is structurally absent and lane-enforced.
+- [x] `P5-11` TLS compatibility hardening pack (non-H3 gaps from mitmproxy lessons).
+  - [x] Mitigates: `#3140`, `#472`, `#4575`
+  - [x] Scope: close TLS compatibility gaps in revocation metadata handling, optional upstream mTLS edge behavior, and browser-fingerprint parity classes.
+  - [x] Gap impact matrix:
+    - [x] revocation metadata (`#3140`, open): enterprise PKI + strict validation failures are harder to classify/triage without explicit revocation context.
+    - [x] optional upstream mTLS edges (`#472`, partial): upstreams that request/require client certs can fail nondeterministically across hosts/routes.
+    - [x] fingerprint parity classes (`#4575`, open): anti-bot/CDN stacks can classify traffic as non-browser and degrade/block flows.
+  - [x] Deliverables:
+    - [x] revocation telemetry contract for TLS events (staple presence/status + deterministic classification fields)
+    - [x] optional upstream mTLS matrix support (per-target client cert policy + deterministic fallback behavior)
+    - [x] upstream TLS fingerprint parity classes with explicit provenance tags (`native` vs `compat_class`)
+  - [x] Execution checklist:
+    - [x] `TCH-01` revocation metadata and classification
+      - [x] event fields: `upstream_ocsp_staple_present`, `upstream_ocsp_staple_status`, `revocation_policy_mode`, `revocation_decision`
+      - [x] fixture coverage: valid staple, missing staple, malformed/expired staple
+      - [x] acceptance tests:
+        - [x] `cargo test -p mitm-sidecar --test tls_revocation_matrix -q`
+        - [x] `cargo test -p mitm-sidecar --lib tls_diagnostics::tests:: -q`
+      - [x] gate script + lane registration: `scripts/p6_tls_revocation_matrix.sh` (`phase6_tls_revocation_matrix`)
+      - [x] CI workflow wiring for dedicated gate job (`.github/workflows/ci.yml`)
+    - [x] `TCH-02` optional upstream mTLS matrix
+      - [x] per-target contract modes: `never`, `if_requested`, `required`
+      - [x] deterministic fallback behavior when cert material is unavailable
+      - [x] acceptance tests:
+        - [x] `cargo test -p mitm-sidecar --test tls_upstream_mtls_matrix -q`
+        - [x] `cargo test -p mitm-sidecar --test tls_profile_matrix -q`
+      - [x] CI gate: `scripts/p6_tls_mtls_matrix.sh` (`phase6_tls_mtls_matrix`)
+    - [x] `TCH-03` fingerprint parity class pack
+      - [x] define compatibility classes (for example `native`, `chrome_like`, `firefox_like`) with explicit scope constraints
+      - [x] event provenance fields: `tls_fingerprint_mode`, `tls_fingerprint_class`
+      - [x] acceptance tests:
+        - [x] `cargo test -p mitm-sidecar --test tls_fingerprint_parity -q`
+        - [x] `cargo test -p soth-mitm --lib fingerprint_capture -q`
+      - [x] CI gate: `scripts/p6_tls_fingerprint_parity.sh` (`phase6_tls_fingerprint_parity`)
+  - [x] Dependency order:
+    - [x] 1) `TCH-01` revocation telemetry first (observability before behavior changes)
+    - [x] 2) `TCH-02` optional mTLS second (handshake behavior change depends on `TCH-01` diagnostics)
+    - [x] 3) `TCH-03` fingerprint parity third (broadest compatibility surface; tune after prior two are stable)
+  - [x] Acceptance:
+    - [x] revocation metadata fixtures pass and emit stable event attributes for present/missing/invalid-staple cases.
+    - [x] optional mTLS matrix fixtures pass for no-request/requested/required client-cert upstream behaviors.
+    - [x] fingerprint parity class fixtures pass for selected compatibility classes without regressing strict/default profile behavior.
+  - [x] CI gates (planned):
+    - [x] `scripts/p6_tls_revocation_matrix.sh` (`phase6_tls_revocation_matrix`)
+    - [x] `scripts/p6_tls_mtls_matrix.sh` (`phase6_tls_mtls_matrix`)
+    - [x] `scripts/p6_tls_fingerprint_parity.sh` (`phase6_tls_fingerprint_parity`)
+    - [x] aggregate lane: `scripts/p6_tls_compat_pack.sh` (runs all three and emits unified summary)
 
 ### Deferred Follow-up (2026-02-25): Cross-OS Proof Debt for `soth-mitm` as `soth-proxy` Dependency
 
@@ -1300,6 +1347,12 @@ Status: deferred; keep current implementation, close these before claiming "full
     - no critical fallback/skip statuses in strict mode for OS-specific gates.
 
 ## 13) Phase 7: Local Capture and Transparent Mode
+
+### Phase 7 Execution Status (2026-02-27)
+
+- [x] Deferred from immediate release-critical scope.
+- [x] Retained as tracked backlog so readiness work is not lost.
+- [ ] Re-promote after active TLS compatibility hardening and current cross-OS CI stabilization complete.
 
 - [ ] Scope constraints (explicit):
   - [x] Mobile interception/pinning bypass is out of scope for `soth-mitm` core.
@@ -1376,11 +1429,11 @@ Status: deferred; keep current implementation, close these before claiming "full
     - [ ] `docs/testing/network-shaping.md`
   - [ ] Acceptance: harness can inject deterministic bandwidth/latency limits without affecting proxy correctness.
 
-### Phase 7 Priorities
+### Phase 7 Priorities (When Re-Promoted)
 
 1. `P7-01`..`P7-04`: critical path for usable local capture (`#2597`, `#6531`, `#4063`, `#2528`).
 2. `P7-05`..`P7-07`: self-traffic and macOS reliability layers (`#1261`, `#7419`, `#4835`).
-3. `P7-08`..`P7-09`: release-blocking validation and soak gates.
+3. `P7-08`..`P7-09`: local-capture GA-blocking validation and soak gates.
 4. `P7-10`: nice-to-have test utility; non-blocking for core local-capture GA.
 
 Reference:

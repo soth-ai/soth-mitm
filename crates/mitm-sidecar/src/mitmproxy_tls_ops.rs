@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+use crate::insert_tls_revocation_metadata;
 use mitm_http::ApplicationProtocol;
 use mitm_observe::{EventType, FlowContext};
 use mitm_tls::classify_tls_error;
@@ -126,6 +127,7 @@ pub fn adapt_mitmproxy_tls_callback(callback: &MitmproxyTlsCallback) -> Mitmprox
         attributes.insert("tls_failure_source".to_string(), source.clone());
         attributes.insert("normalized_reason".to_string(), reason.clone());
         attributes.insert("raw_provider_error".to_string(), detail.clone());
+        insert_tls_revocation_metadata(&mut attributes, &detail, callback.hook.peer());
         attributes.insert(
             "provider_identity".to_string(),
             MITMPROXY_PROVIDER.to_string(),

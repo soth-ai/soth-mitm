@@ -52,37 +52,51 @@ where
         protocol: ApplicationProtocol::Http1,
         ..tunnel_context.clone()
     };
-
+    let upstream_tls_profile = resolve_effective_upstream_tls_profile(
+        engine.config.tls_profile,
+        engine.config.tls_fingerprint_mode,
+        engine.config.tls_fingerprint_class,
+    );
+    let upstream_sni_mode = map_upstream_sni_mode(engine.config.upstream_sni_mode);
+    let upstream_client_auth_mode =
+        map_upstream_client_auth_mode(engine.config.upstream_client_auth_mode);
+    let server_name = match resolve_upstream_server_name(
+        &handshake_context.server_host,
+        upstream_sni_mode,
+    ) {
+        Ok(value) => value,
+        Err(error) => {
+            let detail = format!("invalid server name for upstream TLS: {error}");
+            return fail_tls_and_close(
+                &engine,
+                &flow_hooks,
+                &tls_diagnostics,
+                &tls_learning,
+                handshake_context.clone(),
+                tunnel_context,
+                "upstream",
+                detail,
+            )
+            .await;
+        }
+    };
     let issued_server_config = match cert_store.server_config_for_host_with_http2(
         &handshake_context.server_host,
         http2_enabled_for_flow,
     ) {
         Ok(config) => config,
         Err(error) => {
-            flow_hooks
-                .on_tls_failure(
-                    handshake_context.clone(),
-                    format!("downstream leaf issuance error: {error}"),
-                )
-                .await;
-            emit_tls_event_with_detail(
+            return fail_tls_and_close(
                 &engine,
+                &flow_hooks,
                 &tls_diagnostics,
                 &tls_learning,
-                EventType::TlsHandshakeFailed,
                 handshake_context.clone(),
-                "downstream",
-                error.to_string(),
-            );
-            emit_stream_closed(
-                &engine,
                 tunnel_context,
-                CloseReasonCode::TlsHandshakeFailed,
-                Some(format!("downstream leaf issuance error: {error}")),
-                None,
-                None,
-            );
-            return Ok(());
+                "downstream",
+                format!("downstream leaf issuance error: {error}"),
+            )
+            .await;
         }
     };
     emit_tls_event_with_cache(
@@ -102,30 +116,17 @@ where
     {
         Ok(stream) => stream,
         Err(error) => {
-            flow_hooks
-                .on_tls_failure(
-                    handshake_context.clone(),
-                    format!("downstream handshake failed: {error}"),
-                )
-                .await;
-            emit_tls_event_with_detail(
+            return fail_tls_and_close(
                 &engine,
+                &flow_hooks,
                 &tls_diagnostics,
                 &tls_learning,
-                EventType::TlsHandshakeFailed,
                 handshake_context.clone(),
-                "downstream",
-                error.to_string(),
-            );
-            emit_stream_closed(
-                &engine,
                 tunnel_context,
-                CloseReasonCode::TlsHandshakeFailed,
-                Some(format!("downstream handshake failed: {error}")),
-                None,
-                None,
-            );
-            return Ok(());
+                "downstream",
+                format!("downstream handshake failed: {error}"),
+            )
+            .await;
         }
     };
     let downstream_alpn = downstream_tls.negotiated_alpn();
@@ -145,69 +146,50 @@ where
 
     let should_offer_http2_upstream =
         http2_enabled_for_flow && downstream_protocol == ApplicationProtocol::Http2;
-    let upstream_tls_profile = map_upstream_tls_profile(engine.config.tls_profile);
-    let upstream_sni_mode = map_upstream_sni_mode(engine.config.upstream_sni_mode);
-    let client_config = match build_http_client_config_with_policy(
+    let upstream_client_auth_material = match load_upstream_client_auth_material(
+        &engine.config.upstream_client_cert_pem_path,
+        &engine.config.upstream_client_key_pem_path,
+    ) {
+        Ok(material) => material,
+        Err(_) if upstream_client_auth_mode == TlsUpstreamClientAuthMode::IfRequested => None,
+        Err(error) => {
+            let detail = format!("upstream TLS client-auth material load failed: {error}");
+            return fail_tls_and_close(
+                &engine,
+                &flow_hooks,
+                &tls_diagnostics,
+                &tls_learning,
+                downstream_context.clone(),
+                tunnel_context,
+                "upstream",
+                detail,
+            )
+            .await;
+        }
+    };
+    let client_config = match build_http_client_config_with_policy_and_client_auth(
         skip_upstream_verify_for_flow,
         should_offer_http2_upstream,
         upstream_tls_profile,
         upstream_sni_mode,
+        upstream_client_auth_mode,
         &handshake_context.server_host,
+        upstream_client_auth_material,
     ) {
         Ok(value) => value,
         Err(error) => {
             let detail = format!("upstream TLS policy build failed: {error}");
-            flow_hooks
-                .on_tls_failure(downstream_context.clone(), detail.clone())
-                .await;
-            emit_tls_event_with_detail(
+            return fail_tls_and_close(
                 &engine,
+                &flow_hooks,
                 &tls_diagnostics,
                 &tls_learning,
-                EventType::TlsHandshakeFailed,
                 downstream_context.clone(),
-                "upstream",
-                detail.clone(),
-            );
-            emit_stream_closed(
-                &engine,
                 tunnel_context,
-                CloseReasonCode::TlsHandshakeFailed,
-                Some(detail),
-                None,
-                None,
-            );
-            return Ok(());
-        }
-    };
-    let server_name = match resolve_upstream_server_name(
-        &handshake_context.server_host,
-        upstream_sni_mode,
-    ) {
-        Ok(value) => value,
-        Err(error) => {
-            let detail = format!("invalid server name for upstream TLS: {error}");
-            flow_hooks
-                .on_tls_failure(downstream_context.clone(), detail.clone())
-                .await;
-            emit_tls_event_with_detail(
-                &engine,
-                &tls_diagnostics,
-                &tls_learning,
-                EventType::TlsHandshakeFailed,
-                downstream_context.clone(),
                 "upstream",
-                detail.clone(),
-            );
-            emit_stream_closed(
-                &engine,
-                tunnel_context,
-                CloseReasonCode::TlsHandshakeFailed,
-                Some(detail),
-                None,
-                None,
-            );
-            return Ok(());
+                detail,
+            )
+            .await;
         }
     };
     let connector = TlsConnector::from(client_config);
@@ -225,33 +207,20 @@ where
         upstream_start_context,
         "upstream",
     );
-    let upstream_tls = match connector.connect(server_name, upstream_tcp).await {
+    let upstream_tls = match connector.connect(server_name.clone(), upstream_tcp).await {
         Ok(stream) => stream,
         Err(error) => {
-            flow_hooks
-                .on_tls_failure(
-                    downstream_context.clone(),
-                    format!("upstream handshake failed: {error}"),
-                )
-                .await;
-            emit_tls_event_with_detail(
+            return fail_tls_and_close(
                 &engine,
+                &flow_hooks,
                 &tls_diagnostics,
                 &tls_learning,
-                EventType::TlsHandshakeFailed,
                 downstream_context.clone(),
-                "upstream",
-                error.to_string(),
-            );
-            emit_stream_closed(
-                &engine,
                 tunnel_context,
-                CloseReasonCode::TlsHandshakeFailed,
-                Some(format!("upstream handshake failed: {error}")),
-                None,
-                None,
-            );
-            return Ok(());
+                "upstream",
+                format!("upstream handshake failed: {error}"),
+            )
+            .await;
         }
     };
     let upstream_alpn = upstream_tls
@@ -274,39 +243,37 @@ where
     );
 
     if downstream_protocol == ApplicationProtocol::Http2 {
-        let http2_context = FlowContext {
-            protocol: ApplicationProtocol::Http2,
-            ..tunnel_context.clone()
-        };
-        if upstream_protocol != ApplicationProtocol::Http2 {
-            let downstream_alpn_label =
-                negotiated_alpn_label(downstream_alpn.as_deref()).unwrap_or("none");
-            let upstream_alpn_label =
-                negotiated_alpn_label(upstream_alpn.as_deref()).unwrap_or("none");
-            emit_stream_closed(
-                &engine,
-                http2_context,
-                CloseReasonCode::MitmHttpError,
-                Some(format!(
-                    "downstream negotiated HTTP/2 ({downstream_alpn_label}) but upstream did not ({upstream_alpn_label})"
-                )),
-                None,
-                None,
-            );
-            return Ok(());
-        }
         let max_header_list_size = engine.config.http2_max_header_list_size;
-        return relay_http2_connection(
-            engine,
-            Arc::clone(&runtime_governor),
-            flow_hooks,
-            tunnel_context,
-            process_info,
-            downstream_tls,
-            upstream_tls,
-            max_header_list_size,
-        )
-        .await;
+        return if upstream_protocol == ApplicationProtocol::Http2 {
+            relay_http2_connection(
+                engine,
+                Arc::clone(&runtime_governor),
+                flow_hooks,
+                tunnel_context,
+                process_info,
+                downstream_tls,
+                upstream_tls,
+                max_header_list_size,
+            )
+            .await
+        } else {
+            relay_http2_downstream_to_http1_upstream(
+                engine,
+                Arc::clone(&runtime_governor),
+                flow_hooks,
+                tunnel_context,
+                process_info,
+                downstream_tls,
+                upstream_tls,
+                route,
+                connector,
+                server_name,
+                max_http_head_bytes,
+                max_header_list_size,
+                policy_override_state.strict_header_mode,
+            )
+            .await
+        };
     }
 
     let downstream_conn = BufferedConn::new(downstream_tls);
@@ -323,4 +290,22 @@ where
         policy_override_state.strict_header_mode,
     )
     .await
+}
+
+fn load_upstream_client_auth_material(
+    cert_path: &Option<String>,
+    key_path: &Option<String>,
+) -> Result<Option<UpstreamClientAuthMaterial>, String> {
+    let (Some(cert_path), Some(key_path)) = (cert_path.as_ref(), key_path.as_ref()) else {
+        return Ok(None);
+    };
+
+    let cert_pem = std::fs::read(cert_path)
+        .map_err(|error| format!("read cert path {cert_path} failed: {error}"))?;
+    let key_pem = std::fs::read(key_path)
+        .map_err(|error| format!("read key path {key_path} failed: {error}"))?;
+
+    parse_upstream_client_auth_material(&cert_pem, &key_pem)
+        .map(Some)
+        .map_err(|error| error.to_string())
 }

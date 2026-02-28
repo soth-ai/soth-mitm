@@ -114,10 +114,11 @@ where
                     stream_flow_hooks
                         .on_connection_open(stream_context.clone(), stream_process_info)
                         .await;
-                    relay_http2_stream(
+                    let stream_end_context = stream_context.clone();
+                    let result = relay_http2_stream(
                         stream_engine,
                         stream_runtime_governor,
-                        stream_flow_hooks,
+                        Arc::clone(&stream_flow_hooks),
                         stream_context,
                         stream_upstream_sender,
                         request,
@@ -125,7 +126,11 @@ where
                         max_header_list_size,
                         stream_byte_counters,
                     )
-                    .await
+                    .await;
+                    if result.is_err() {
+                        stream_flow_hooks.on_stream_end(stream_end_context).await;
+                    }
+                    result
                 });
             }
             Err(error) => {

@@ -20,6 +20,11 @@ fn serde_round_trip_preserves_core_flags() {
           },
           "tls_profile": "compat",
           "upstream_sni_mode": "disabled",
+          "upstream_client_auth_mode": "if_requested",
+          "upstream_client_cert_pem_path": "/tmp/client.crt",
+          "upstream_client_key_pem_path": "/tmp/client.key",
+          "tls_fingerprint_mode": "compat_class",
+          "tls_fingerprint_class": "firefox_like",
           "downstream_cert_profile": "compat",
           "ignore_hosts": ["example.internal"],
           "event_sink": {
@@ -47,6 +52,26 @@ fn serde_round_trip_preserves_core_flags() {
     );
     assert_eq!(parsed.tls_profile, super::TlsProfile::Compat);
     assert_eq!(parsed.upstream_sni_mode, super::UpstreamSniMode::Disabled);
+    assert_eq!(
+        parsed.upstream_client_auth_mode,
+        super::UpstreamClientAuthMode::IfRequested
+    );
+    assert_eq!(
+        parsed.upstream_client_cert_pem_path.as_deref(),
+        Some("/tmp/client.crt")
+    );
+    assert_eq!(
+        parsed.upstream_client_key_pem_path.as_deref(),
+        Some("/tmp/client.key")
+    );
+    assert_eq!(
+        parsed.tls_fingerprint_mode,
+        super::TlsFingerprintMode::CompatClass
+    );
+    assert_eq!(
+        parsed.tls_fingerprint_class,
+        super::TlsFingerprintClass::FirefoxLike
+    );
     assert_eq!(
         parsed.downstream_cert_profile,
         super::DownstreamCertProfile::Compat
@@ -80,6 +105,75 @@ fn validation_rejects_partial_ca_path_pair() {
     };
     let err = config.validate().expect_err("partial CA pair should fail");
     assert_eq!(err, super::MitmConfigError::InvalidCaPathPair);
+}
+
+#[test]
+fn validation_rejects_partial_upstream_client_auth_path_pair() {
+    let config = super::MitmConfig {
+        upstream_client_auth_mode: super::UpstreamClientAuthMode::IfRequested,
+        upstream_client_cert_pem_path: Some("/tmp/upstream-client.crt".to_string()),
+        upstream_client_key_pem_path: None,
+        ..super::MitmConfig::default()
+    };
+    let err = config
+        .validate()
+        .expect_err("partial upstream client-auth pair should fail");
+    assert_eq!(err, super::MitmConfigError::InvalidUpstreamClientAuthPathPair);
+}
+
+#[test]
+fn required_upstream_client_auth_requires_material() {
+    let config = super::MitmConfig {
+        upstream_client_auth_mode: super::UpstreamClientAuthMode::Required,
+        upstream_client_cert_pem_path: None,
+        upstream_client_key_pem_path: None,
+        ..super::MitmConfig::default()
+    };
+    let err = config
+        .validate()
+        .expect_err("required upstream client-auth must fail without material");
+    assert_eq!(
+        err,
+        super::MitmConfigError::RequiredUpstreamClientAuthMaterialMissing
+    );
+}
+
+#[test]
+fn validation_rejects_native_mode_with_non_native_class() {
+    let config = super::MitmConfig {
+        tls_fingerprint_mode: super::TlsFingerprintMode::Native,
+        tls_fingerprint_class: super::TlsFingerprintClass::ChromeLike,
+        ..super::MitmConfig::default()
+    };
+    let err = config
+        .validate()
+        .expect_err("native fingerprint mode must reject non-native class");
+    assert_eq!(
+        err,
+        super::MitmConfigError::InvalidTlsFingerprintModeClassPair {
+            mode: "native",
+            class: "chrome_like",
+        }
+    );
+}
+
+#[test]
+fn validation_rejects_compat_mode_with_native_class() {
+    let config = super::MitmConfig {
+        tls_fingerprint_mode: super::TlsFingerprintMode::CompatClass,
+        tls_fingerprint_class: super::TlsFingerprintClass::Native,
+        ..super::MitmConfig::default()
+    };
+    let err = config
+        .validate()
+        .expect_err("compat_class fingerprint mode must reject native class");
+    assert_eq!(
+        err,
+        super::MitmConfigError::InvalidTlsFingerprintModeClassPair {
+            mode: "compat_class",
+            class: "native",
+        }
+    );
 }
 
 #[test]

@@ -31,27 +31,30 @@ async fn wait_for_h2_capacity(
     sink: &mut h2::SendStream<bytes::Bytes>,
     desired: usize,
 ) -> io::Result<usize> {
-    runtime_governor::mark_backpressure_activation_global();
-    sink.reserve_capacity(desired);
-    loop {
-        match std::future::poll_fn(|cx| sink.poll_capacity(cx)).await {
-            Some(Ok(capacity)) if capacity > 0 => return Ok(capacity),
-            Some(Ok(_)) => {
-                runtime_governor::mark_backpressure_activation_global();
-                continue;
-            }
-            Some(Err(error)) => {
-                return Err(h2_error_to_io(
-                    "polling HTTP/2 send capacity failed",
-                    error,
-                ));
-            }
-            None => {
-                return Err(io::Error::new(
-                    io::ErrorKind::BrokenPipe,
-                    "HTTP/2 send stream closed before capacity became available",
-                ));
+    with_stream_stage_timeout("http2_send_capacity_wait", async {
+        runtime_governor::mark_backpressure_activation_global();
+        sink.reserve_capacity(desired);
+        loop {
+            match std::future::poll_fn(|cx| sink.poll_capacity(cx)).await {
+                Some(Ok(capacity)) if capacity > 0 => return Ok(capacity),
+                Some(Ok(_)) => {
+                    runtime_governor::mark_backpressure_activation_global();
+                    continue;
+                }
+                Some(Err(error)) => {
+                    return Err(h2_error_to_io(
+                        "polling HTTP/2 send capacity failed",
+                        error,
+                    ));
+                }
+                None => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::BrokenPipe,
+                        "HTTP/2 send stream closed before capacity became available",
+                    ));
+                }
             }
         }
-    }
+    })
+    .await
 }

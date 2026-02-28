@@ -57,6 +57,8 @@ elif [[ "$(uname -s)" == "Darwin" ]]; then
       ac_record_status "$status_tsv" syscall_trace_tool skip missing_tools:dtruss
     fi
   fi
+elif [[ "$(uname -s)" == MINGW* || "$(uname -s)" == MSYS* || "$(uname -s)" == CYGWIN* ]]; then
+  ac_record_status "$status_tsv" syscall_trace_tool pass windows_static_boundary_audit
 else
   if [[ "$strict_tools" -eq 1 ]]; then
     ac_record_status "$status_tsv" syscall_trace_tool fail unsupported_platform

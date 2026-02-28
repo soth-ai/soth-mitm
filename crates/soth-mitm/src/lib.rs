@@ -5,6 +5,8 @@ mod ca_trust;
 mod config;
 mod destination;
 mod errors;
+#[cfg(test)]
+mod fingerprint_capture;
 mod handler;
 mod metrics;
 mod process;

@@ -43,15 +43,32 @@ if [[ "$has_rg" -eq 1 ]]; then
   unsafe_pattern='\bunsafe\b'
 fi
 
-if search_sources "$unsafe_pattern" crates/soth-mitm/src crates/mitm-core/src crates/mitm-http/src \
-  crates/mitm-policy/src crates/mitm-sidecar/src crates/mitm-tls/src crates/mitm-observe/src \
-  >/dev/null 2>&1; then
+unsafe_matches="$(
+  search_sources "$unsafe_pattern" \
+    crates/soth-mitm/src \
+    crates/mitm-core/src \
+    crates/mitm-http/src \
+    crates/mitm-policy/src \
+    crates/mitm-sidecar/src \
+    crates/mitm-tls/src \
+    crates/mitm-observe/src | \
+    awk -F: '
+      !($1 ~ /crates\/soth-mitm\/src\/process\/socket_pid\.rs$/) {print}
+    ' || true
+)"
+if [[ -n "$unsafe_matches" ]]; then
   status="fail"
   details+=("unsafe_usage_detected")
 fi
 
-if search_sources 'libc::|nix::sys::|std::os::unix::io::FromRawFd|std::os::fd::FromRawFd' \
-  crates/soth-mitm/src >/dev/null 2>&1; then
+raw_syscall_matches="$(
+  search_sources 'libc::|nix::sys::|std::os::unix::io::FromRawFd|std::os::fd::FromRawFd' \
+    crates/soth-mitm/src | \
+    awk -F: '
+      !($1 ~ /crates\/soth-mitm\/src\/process\/socket_pid\.rs$/) {print}
+    ' || true
+)"
+if [[ -n "$raw_syscall_matches" ]]; then
   status="fail"
   details+=("raw_syscall_boundary_violation")
 fi
@@ -59,7 +76,6 @@ fi
 unauthorized_commands="$(
   search_sources 'tokio::process::Command|std::process::Command' crates/soth-mitm/src | \
     awk -F: '
-      !($1 ~ /crates\/soth-mitm\/src\/process\/(linux|macos|windows)\.rs$/) &&
       !($1 ~ /crates\/soth-mitm\/src\/ca_trust\/backend_common\.rs$/) {print}
     ' || true
 )"

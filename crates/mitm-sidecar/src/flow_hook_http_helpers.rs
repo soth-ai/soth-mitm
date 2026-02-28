@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 use std::io::Read;
+use std::net::Ipv6Addr;
 
 use bytes::Bytes;
 use http::{header::HeaderName, HeaderMap};
@@ -151,6 +152,81 @@ fn normalize_h2_path_for_handler(uri: &http::Uri) -> String {
     uri.path_and_query()
         .map(|value| value.as_str().to_string())
         .unwrap_or_else(|| "/".to_string())
+}
+
+fn ensure_handler_host_header_from_target(
+    headers: &mut HeaderMap,
+    context: &FlowContext,
+    target: &str,
+) {
+    let authority_hint = target
+        .parse::<http::Uri>()
+        .ok()
+        .and_then(|uri| authority_from_uri(&uri));
+    ensure_handler_host_header(headers, context, authority_hint.as_deref());
+}
+
+fn ensure_handler_host_header_from_uri(
+    headers: &mut HeaderMap,
+    context: &FlowContext,
+    uri: &http::Uri,
+) {
+    let authority_hint = authority_from_uri(uri);
+    ensure_handler_host_header(headers, context, authority_hint.as_deref());
+}
+
+fn ensure_handler_host_header(
+    headers: &mut HeaderMap,
+    context: &FlowContext,
+    authority_hint: Option<&str>,
+) {
+    if headers.contains_key(http::header::HOST) {
+        return;
+    }
+
+    let host_value = authority_hint
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .or_else(|| authority_from_context(context));
+    let Some(host_value) = host_value else {
+        return;
+    };
+    let Ok(host_header) = http::HeaderValue::from_str(&host_value) else {
+        return;
+    };
+    headers.insert(http::header::HOST, host_header);
+}
+
+fn authority_from_uri(uri: &http::Uri) -> Option<String> {
+    let host = uri.host()?;
+    let port = uri.port_u16();
+    Some(format_authority(host, port))
+}
+
+fn authority_from_context(context: &FlowContext) -> Option<String> {
+    let host = context.server_host.trim();
+    if host.is_empty() || host == "<unknown>" {
+        return None;
+    }
+    Some(format_authority(host, Some(context.server_port)))
+}
+
+fn format_authority(host: &str, port: Option<u16>) -> String {
+    let trimmed = host.trim();
+    let unbracketed = trimmed
+        .strip_prefix('[')
+        .and_then(|value| value.strip_suffix(']'))
+        .unwrap_or(trimmed);
+    let host_text = if unbracketed.parse::<Ipv6Addr>().is_ok() && !trimmed.starts_with('[') {
+        format!("[{unbracketed}]")
+    } else {
+        trimmed.to_string()
+    };
+    match port {
+        Some(port) if port != 80 && port != 443 => format!("{host_text}:{port}"),
+        _ => host_text,
+    }
 }
 
 fn build_handler_header_map_from_h2(headers: &http::HeaderMap) -> HeaderMap {
@@ -314,4 +390,94 @@ fn decompress_zstd(input: &[u8]) -> Result<Vec<u8>, String> {
         .read_to_end(&mut out)
         .map_err(|error| format!("zstd decode failed: {error}"))?;
     Ok(out)
+}
+
+#[cfg(test)]
+mod flow_hook_http_helpers_tests {
+    use super::*;
+    use mitm_http::ApplicationProtocol;
+
+    fn context(server_host: &str, server_port: u16) -> FlowContext {
+        FlowContext {
+            flow_id: 1,
+            client_addr: "127.0.0.1:55000".to_string(),
+            server_host: server_host.to_string(),
+            server_port,
+            protocol: ApplicationProtocol::Http2,
+        }
+    }
+
+    #[test]
+    fn ensure_host_from_h2_uri_authority() {
+        let mut headers = HeaderMap::new();
+        let uri: http::Uri = "https://api.example.com:8443/v1/models"
+            .parse()
+            .expect("uri");
+        ensure_handler_host_header_from_uri(&mut headers, &context("fallback.example", 443), &uri);
+        assert_eq!(
+            headers
+                .get(http::header::HOST)
+                .and_then(|value| value.to_str().ok()),
+            Some("api.example.com:8443")
+        );
+    }
+
+    #[test]
+    fn ensure_host_from_context_when_h2_uri_has_no_authority() {
+        let mut headers = HeaderMap::new();
+        let uri: http::Uri = "/v1/models".parse().expect("uri");
+        ensure_handler_host_header_from_uri(&mut headers, &context("api.openai.com", 443), &uri);
+        assert_eq!(
+            headers
+                .get(http::header::HOST)
+                .and_then(|value| value.to_str().ok()),
+            Some("api.openai.com")
+        );
+    }
+
+    #[test]
+    fn ensure_host_keeps_existing_header() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            http::header::HOST,
+            http::HeaderValue::from_static("existing.example"),
+        );
+        let uri: http::Uri = "/v1/models".parse().expect("uri");
+        ensure_handler_host_header_from_uri(&mut headers, &context("api.openai.com", 443), &uri);
+        assert_eq!(
+            headers
+                .get(http::header::HOST)
+                .and_then(|value| value.to_str().ok()),
+            Some("existing.example")
+        );
+    }
+
+    #[test]
+    fn ensure_host_formats_ipv6_context_authority() {
+        let mut headers = HeaderMap::new();
+        let uri: http::Uri = "/v1/models".parse().expect("uri");
+        ensure_handler_host_header_from_uri(&mut headers, &context("::1", 8443), &uri);
+        assert_eq!(
+            headers
+                .get(http::header::HOST)
+                .and_then(|value| value.to_str().ok()),
+            Some("[::1]:8443")
+        );
+    }
+
+    #[test]
+    fn ensure_host_from_http1_absolute_target() {
+        let mut headers = HeaderMap::new();
+        ensure_handler_host_header_from_target(
+            &mut headers,
+            &context("fallback.example", 443),
+            "https://anthropic.com/v1/messages",
+        );
+        assert_eq!(
+            headers
+                .get(http::header::HOST)
+                .and_then(|value| value.to_str().ok()),
+            Some("anthropic.com")
+        );
+    }
 }

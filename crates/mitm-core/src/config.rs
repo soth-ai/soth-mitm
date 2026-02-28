@@ -61,6 +61,66 @@ impl Default for UpstreamSniMode {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+pub enum UpstreamClientAuthMode {
+    Never,
+    IfRequested,
+    Required,
+}
+
+impl Default for UpstreamClientAuthMode {
+    fn default() -> Self {
+        Self::Never
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TlsFingerprintMode {
+    Native,
+    CompatClass,
+}
+
+impl TlsFingerprintMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Native => "native",
+            Self::CompatClass => "compat_class",
+        }
+    }
+}
+
+impl Default for TlsFingerprintMode {
+    fn default() -> Self {
+        Self::Native
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TlsFingerprintClass {
+    Native,
+    ChromeLike,
+    FirefoxLike,
+}
+
+impl TlsFingerprintClass {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Native => "native",
+            Self::ChromeLike => "chrome_like",
+            Self::FirefoxLike => "firefox_like",
+        }
+    }
+}
+
+impl Default for TlsFingerprintClass {
+    fn default() -> Self {
+        Self::Native
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum DownstreamCertProfile {
     Modern,
     Compat,
@@ -155,6 +215,11 @@ pub struct MitmConfig {
     pub upstream_sni_mode: UpstreamSniMode,
     pub downstream_cert_profile: DownstreamCertProfile,
     pub upstream_tls_insecure_skip_verify: bool,
+    pub upstream_client_auth_mode: UpstreamClientAuthMode,
+    pub upstream_client_cert_pem_path: Option<String>,
+    pub upstream_client_key_pem_path: Option<String>,
+    pub tls_fingerprint_mode: TlsFingerprintMode,
+    pub tls_fingerprint_class: TlsFingerprintClass,
     pub max_flow_body_buffer_bytes: usize,
     pub max_flow_decoder_buffer_bytes: usize,
     pub max_flow_event_backlog: usize,
@@ -191,6 +256,11 @@ impl Default for MitmConfig {
             upstream_sni_mode: UpstreamSniMode::Auto,
             downstream_cert_profile: DownstreamCertProfile::Modern,
             upstream_tls_insecure_skip_verify: false,
+            upstream_client_auth_mode: UpstreamClientAuthMode::Never,
+            upstream_client_cert_pem_path: None,
+            upstream_client_key_pem_path: None,
+            tls_fingerprint_mode: TlsFingerprintMode::Native,
+            tls_fingerprint_class: TlsFingerprintClass::Native,
             max_flow_body_buffer_bytes: 8 * 1024 * 1024,
             max_flow_decoder_buffer_bytes: 4 * 1024 * 1024,
             max_flow_event_backlog: 8 * 1024,
@@ -241,6 +311,32 @@ impl MitmConfig {
         }
         if self.ca_cert_pem_path.is_some() != self.ca_key_pem_path.is_some() {
             return Err(MitmConfigError::InvalidCaPathPair);
+        }
+        if self.upstream_client_cert_pem_path.is_some()
+            != self.upstream_client_key_pem_path.is_some()
+        {
+            return Err(MitmConfigError::InvalidUpstreamClientAuthPathPair);
+        }
+        if self.upstream_client_auth_mode == UpstreamClientAuthMode::Required
+            && self.upstream_client_cert_pem_path.is_none()
+        {
+            return Err(MitmConfigError::RequiredUpstreamClientAuthMaterialMissing);
+        }
+        match (self.tls_fingerprint_mode, self.tls_fingerprint_class) {
+            (TlsFingerprintMode::Native, TlsFingerprintClass::Native) => {}
+            (TlsFingerprintMode::Native, _) => {
+                return Err(MitmConfigError::InvalidTlsFingerprintModeClassPair {
+                    mode: self.tls_fingerprint_mode.as_str(),
+                    class: self.tls_fingerprint_class.as_str(),
+                });
+            }
+            (TlsFingerprintMode::CompatClass, TlsFingerprintClass::Native) => {
+                return Err(MitmConfigError::InvalidTlsFingerprintModeClassPair {
+                    mode: self.tls_fingerprint_mode.as_str(),
+                    class: self.tls_fingerprint_class.as_str(),
+                });
+            }
+            (TlsFingerprintMode::CompatClass, _) => {}
         }
         validate_route_endpoint(self.reverse_upstream.as_ref(), "reverse_upstream")?;
         validate_route_endpoint(self.upstream_http_proxy.as_ref(), "upstream_http_proxy")?;
@@ -306,6 +402,17 @@ pub enum MitmConfigError {
     ZeroValue(&'static str),
     #[error("ca_cert_pem_path and ca_key_pem_path must be provided together")]
     InvalidCaPathPair,
+    #[error(
+        "upstream_client_cert_pem_path and upstream_client_key_pem_path must be provided together"
+    )]
+    InvalidUpstreamClientAuthPathPair,
+    #[error("upstream_client_auth_mode=required requires client cert/key material")]
+    RequiredUpstreamClientAuthMaterialMissing,
+    #[error("invalid tls fingerprint config: tls_fingerprint_mode={mode} with tls_fingerprint_class={class}")]
+    InvalidTlsFingerprintModeClassPair {
+        mode: &'static str,
+        class: &'static str,
+    },
     #[error("ca_common_name must not be empty")]
     EmptyCaCommonName,
     #[error("ca_organization must not be empty")]

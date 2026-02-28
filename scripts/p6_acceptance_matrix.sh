@@ -52,7 +52,7 @@ lanes=(
   $'AC-07\tac07_concurrency_latency_memory\ttesting/acceptance/ac07_concurrency_latency_memory.sh'
   $'AC-08\tac08_config_reload_inflight\ttesting/acceptance/ac08_config_reload_inflight.sh'
   $'AC-09\tac09_connection_close_once\ttesting/acceptance/ac09_connection_close_once.sh'
-  $'AC-10\tac10_macos_process_attribution\ttesting/acceptance/ac10_macos_process_attribution.sh'
+  $'AC-10\tac10_process_attribution_cross_os\ttesting/acceptance/ac10_macos_process_attribution.sh'
   $'AC-11\tac11_syscall_boundary_audit\ttesting/acceptance/ac11_syscall_boundary_audit.sh'
   $'AC-12\tac12_dependency_policy\ttesting/acceptance/ac12_dependency_policy.sh'
   $'AC-13\tac13_async_handler_runtime_safety\ttesting/acceptance/ac13_async_handler_runtime_safety.sh'
@@ -60,6 +60,7 @@ lanes=(
   $'AC-15\tac15_metrics_accuracy_contract\ttesting/acceptance/ac15_metrics_accuracy_contract.sh'
   $'AC-16\tac16_body_size_limit_enforcement\ttesting/acceptance/ac16_body_size_limit_enforcement.sh'
   $'AC-17\tac17_transport_normalization_invariants\ttesting/acceptance/ac17_transport_normalization_invariants.sh'
+  $'AC-18\tac18_ai_capture_protocol_parity\ttesting/acceptance/ac18_ai_capture_protocol_parity.sh'
 )
 
 failed_acs=()
@@ -148,7 +149,7 @@ elif [[ "$skipped_count" -gt 0 ]]; then
 fi
 
 {
-  echo "# P6 Acceptance Matrix (AC-01 .. AC-17)"
+  echo "# P6 Acceptance Matrix (AC-01 .. AC-18)"
   echo
   echo "Generated: $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
   echo

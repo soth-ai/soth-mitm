@@ -33,6 +33,29 @@ impl UpstreamTlsSniMode {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UpstreamClientAuthMode {
+    Never,
+    IfRequested,
+    Required,
+}
+
+impl UpstreamClientAuthMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Never => "never",
+            Self::IfRequested => "if_requested",
+            Self::Required => "required",
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct UpstreamClientAuthMaterial {
+    pub cert_chain: Vec<CertificateDer<'static>>,
+    pub private_key: PrivateKeyDer<'static>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DownstreamCertProfile {
     Modern,
     Compat,
@@ -85,6 +108,26 @@ pub fn build_http_client_config_with_policy(
     sni_mode: UpstreamTlsSniMode,
     target_host: &str,
 ) -> Result<Arc<ClientConfig>, TlsConfigError> {
+    build_http_client_config_with_policy_and_client_auth(
+        insecure_skip_verify,
+        http2_enabled,
+        profile,
+        sni_mode,
+        UpstreamClientAuthMode::Never,
+        target_host,
+        None,
+    )
+}
+
+pub fn build_http_client_config_with_policy_and_client_auth(
+    insecure_skip_verify: bool,
+    http2_enabled: bool,
+    profile: UpstreamTlsProfile,
+    sni_mode: UpstreamTlsSniMode,
+    client_auth_mode: UpstreamClientAuthMode,
+    target_host: &str,
+    client_auth_material: Option<UpstreamClientAuthMaterial>,
+) -> Result<Arc<ClientConfig>, TlsConfigError> {
     let enable_sni = should_enable_sni_for_target(target_host, sni_mode)?;
     let mut provider = default_crypto_provider();
     provider.cipher_suites = select_cipher_suites(&provider.cipher_suites, profile);
@@ -99,19 +142,61 @@ pub fn build_http_client_config_with_policy(
         .map_err(TlsConfigError::ConfigBuild)?;
 
     let mut config = if insecure_skip_verify {
-        builder
+        let dangerous_builder = builder
             .dangerous()
-            .with_custom_certificate_verifier(Arc::new(InsecureSkipVerifyServerCertVerifier))
-            .with_no_client_auth()
+            .with_custom_certificate_verifier(Arc::new(InsecureSkipVerifyServerCertVerifier));
+        apply_upstream_client_auth_config(
+            dangerous_builder,
+            client_auth_mode,
+            client_auth_material,
+        )?
     } else {
         let root_store = RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-        builder
-            .with_root_certificates(root_store)
-            .with_no_client_auth()
+        let secure_builder = builder.with_root_certificates(root_store);
+        apply_upstream_client_auth_config(secure_builder, client_auth_mode, client_auth_material)?
     };
     config.enable_sni = enable_sni;
     config.alpn_protocols = configured_http_alpn_protocols(http2_enabled);
     Ok(Arc::new(config))
+}
+
+pub fn parse_upstream_client_auth_material(
+    cert_pem: &[u8],
+    key_pem: &[u8],
+) -> Result<UpstreamClientAuthMaterial, TlsConfigError> {
+    let cert = CertificateDer::from_pem_slice(cert_pem).map_err(|error| {
+        TlsConfigError::InvalidConfiguration(format!(
+            "failed to parse upstream client certificate PEM: {error}"
+        ))
+    })?;
+    let private_key = PrivateKeyDer::from_pem_slice(key_pem).map_err(|error| {
+        TlsConfigError::InvalidConfiguration(format!(
+            "failed to parse upstream client key PEM: {error}"
+        ))
+    })?;
+    Ok(UpstreamClientAuthMaterial {
+        cert_chain: vec![cert],
+        private_key,
+    })
+}
+
+fn apply_upstream_client_auth_config(
+    builder: rustls::ConfigBuilder<ClientConfig, rustls::client::WantsClientCert>,
+    client_auth_mode: UpstreamClientAuthMode,
+    client_auth_material: Option<UpstreamClientAuthMaterial>,
+) -> Result<ClientConfig, TlsConfigError> {
+    match (client_auth_mode, client_auth_material) {
+        (UpstreamClientAuthMode::Never, _) => Ok(builder.with_no_client_auth()),
+        (UpstreamClientAuthMode::IfRequested, Some(material))
+        | (UpstreamClientAuthMode::Required, Some(material)) => builder
+            .with_client_auth_cert(material.cert_chain, material.private_key)
+            .map_err(TlsConfigError::ConfigBuild),
+        (UpstreamClientAuthMode::IfRequested, None) => Ok(builder.with_no_client_auth()),
+        (UpstreamClientAuthMode::Required, None) => Err(TlsConfigError::InvalidConfiguration(
+            "upstream_client_auth_mode=required but no client cert material is configured"
+                .to_string(),
+        )),
+    }
 }
 
 fn protocol_versions_for_profile(

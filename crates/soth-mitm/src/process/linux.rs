@@ -2,10 +2,10 @@ use std::future::Future;
 use std::path::PathBuf;
 use std::pin::Pin;
 
-use tokio::process::Command;
-
-use super::{ConnectionInfo, ProcessAttributor, ProcessIdentity, ProcessInfo};
-use crate::types::SocketFamily;
+use super::{
+    socket_pid::lookup_established_tcp_pid, ConnectionInfo, ProcessAttributor, ProcessIdentity,
+    ProcessInfo,
+};
 
 #[derive(Debug, Default)]
 pub(crate) struct PlatformProcessAttributor;
@@ -15,31 +15,49 @@ impl ProcessAttributor for PlatformProcessAttributor {
         &'a self,
         connection: &'a ConnectionInfo,
     ) -> Pin<Box<dyn Future<Output = Option<ProcessInfo>> + Send + 'a>> {
-        Box::pin(async move { lookup_process(connection).await })
+        let connection = connection.clone();
+        Box::pin(async move {
+            tokio::task::spawn_blocking(move || lookup_process(&connection))
+                .await
+                .ok()
+                .flatten()
+        })
     }
 
     fn lookup_identity<'a>(
         &'a self,
         connection: &'a ConnectionInfo,
     ) -> Pin<Box<dyn Future<Output = Option<ProcessIdentity>> + Send + 'a>> {
-        Box::pin(async move { lookup_identity(connection).await })
+        let connection = connection.clone();
+        Box::pin(async move {
+            tokio::task::spawn_blocking(move || lookup_identity(&connection))
+                .await
+                .ok()
+                .flatten()
+        })
     }
 
     fn lookup_by_identity<'a>(
         &'a self,
         identity: &'a ProcessIdentity,
     ) -> Pin<Box<dyn Future<Output = Option<ProcessInfo>> + Send + 'a>> {
-        Box::pin(async move { lookup_process_by_pid(identity.pid) })
+        let pid = identity.pid;
+        Box::pin(async move {
+            tokio::task::spawn_blocking(move || lookup_process_by_pid(pid))
+                .await
+                .ok()
+                .flatten()
+        })
     }
 }
 
-async fn lookup_process(connection: &ConnectionInfo) -> Option<ProcessInfo> {
-    let pid = lookup_pid(connection).await?;
+fn lookup_process(connection: &ConnectionInfo) -> Option<ProcessInfo> {
+    let pid = lookup_pid(connection)?;
     lookup_process_by_pid(pid)
 }
 
-async fn lookup_identity(connection: &ConnectionInfo) -> Option<ProcessIdentity> {
-    let pid = lookup_pid(connection).await?;
+fn lookup_identity(connection: &ConnectionInfo) -> Option<ProcessIdentity> {
+    let pid = lookup_pid(connection)?;
     let start_token = read_process_start_token(pid)?;
     Some(ProcessIdentity { pid, start_token })
 }
@@ -58,28 +76,8 @@ fn lookup_process_by_pid(pid: u32) -> Option<ProcessInfo> {
     })
 }
 
-async fn lookup_pid(connection: &ConnectionInfo) -> Option<u32> {
-    let socket_filter = match &connection.socket_family {
-        SocketFamily::TcpV4 { local, .. } => format!("{}:{}", local.ip(), local.port()),
-        SocketFamily::TcpV6 { local, .. } => format!("[{}]:{}", local.ip(), local.port()),
-        SocketFamily::UnixDomain { .. } => return None,
-    };
-    let output = Command::new("lsof")
-        .args([
-            "-nP",
-            "-iTCP",
-            &socket_filter,
-            "-sTCP:ESTABLISHED",
-            "-F",
-            "p",
-        ])
-        .output()
-        .await
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    parse_lsof_pid(&output.stdout)
+fn lookup_pid(connection: &ConnectionInfo) -> Option<u32> {
+    lookup_established_tcp_pid(connection)
 }
 
 fn read_process_name(pid: u32) -> Option<String> {
@@ -118,27 +116,9 @@ fn parse_proc_start_time(stat: &str) -> Option<u64> {
     rest.split_whitespace().nth(19)?.parse::<u64>().ok()
 }
 
-fn parse_lsof_pid(raw: &[u8]) -> Option<u32> {
-    let text = String::from_utf8_lossy(raw);
-    for line in text.lines() {
-        if let Some(pid) = line.strip_prefix('p') {
-            if let Ok(value) = pid.trim().parse::<u32>() {
-                return Some(value);
-            }
-        }
-    }
-    None
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{parse_lsof_pid, parse_proc_start_time};
-
-    #[test]
-    fn parses_pid_from_lsof_machine_output() {
-        let raw = b"p111\nf42\n";
-        assert_eq!(parse_lsof_pid(raw), Some(111));
-    }
+    use super::parse_proc_start_time;
 
     #[test]
     fn parses_linux_proc_start_time_field() {

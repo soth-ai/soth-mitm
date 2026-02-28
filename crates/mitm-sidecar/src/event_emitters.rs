@@ -80,6 +80,11 @@ fn emit_tls_event<P, S>(
     event
         .attributes
         .insert("peer".to_string(), peer.to_string());
+    insert_tls_fingerprint_provenance(
+        &mut event.attributes,
+        engine.config.tls_fingerprint_mode,
+        engine.config.tls_fingerprint_class,
+    );
     engine.emit_event(event);
 }
 
@@ -97,6 +102,11 @@ fn emit_tls_event_with_negotiated_alpn<P, S>(
     event
         .attributes
         .insert("peer".to_string(), peer.to_string());
+    insert_tls_fingerprint_provenance(
+        &mut event.attributes,
+        engine.config.tls_fingerprint_mode,
+        engine.config.tls_fingerprint_class,
+    );
     if let Some(label) = negotiated_alpn_label(negotiated_alpn) {
         event
             .attributes
@@ -119,6 +129,11 @@ fn emit_tls_event_with_cache<P, S>(
     event
         .attributes
         .insert("peer".to_string(), peer.to_string());
+    insert_tls_fingerprint_provenance(
+        &mut event.attributes,
+        engine.config.tls_fingerprint_mode,
+        engine.config.tls_fingerprint_class,
+    );
     event.attributes.insert(
         "cert_cache_status".to_string(),
         cert_cache_status.to_string(),
@@ -165,6 +180,11 @@ fn emit_tls_event_with_detail<P, S>(
     event
         .attributes
         .insert("peer".to_string(), peer.to_string());
+    insert_tls_fingerprint_provenance(
+        &mut event.attributes,
+        engine.config.tls_fingerprint_mode,
+        engine.config.tls_fingerprint_class,
+    );
     event.attributes.insert("detail".to_string(), detail.clone());
     if let Some((reason, source, provider, counters, learning_outcome)) = failure_metadata {
         event
@@ -187,6 +207,7 @@ fn emit_tls_event_with_detail<P, S>(
         event
             .attributes
             .insert("raw_provider_error".to_string(), detail.clone());
+        insert_tls_revocation_metadata(&mut event.attributes, &detail, peer);
         event.attributes.insert(
             "provider_identity".to_string(),
             event

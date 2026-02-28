@@ -11,7 +11,15 @@ permissions:
 
 jobs:
   release_readiness:
-    runs-on: ubuntu-latest
+    name: release_readiness (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -23,23 +31,28 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Install cargo-deny
+        if: runner.os != 'Windows'
         uses: taiki-e/install-action@cargo-deny
 
       - name: Enforce dependency policy
+        if: runner.os != 'Windows'
+        shell: bash
         run: cargo deny check bans licenses sources
 
       - name: Enforce prohibition policy
+        shell: bash
         run: ./scripts/check_prohibitions.sh
 
       - name: Run P6 release readiness gate
+        shell: bash
         env:
           P6_PUBLISH_ALLOW_DIRTY: "0"
-        run: ./scripts/p6_release_readiness.sh --report-dir artifacts/p6-release-readiness
+        run: ./scripts/p6_release_readiness.sh --report-dir artifacts/p6-release-readiness/${{ matrix.os }}
 
       - name: Upload release readiness artifact
         if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: p6-release-readiness
-          path: artifacts/p6-release-readiness
+          name: p6-release-readiness-${{ matrix.os }}
+          path: artifacts/p6-release-readiness/${{ matrix.os }}
           if-no-files-found: error

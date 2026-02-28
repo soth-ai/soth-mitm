@@ -70,4 +70,23 @@ mod tests {
         );
         assert!(captured.is_none());
     }
+
+    #[test]
+    fn fingerprint_capture_contract_round_trip() {
+        let captured = maybe_capture_fingerprint(
+            true,
+            Some(RawTlsFingerprint {
+                ja3: "771,4865-4866,0-11,29-23,0",
+                ja4: "t13d1516h2_test",
+                tls_version: TlsVersion::Tls13,
+                cipher_suites: &[4865, 4866],
+                extensions: &[0, 11],
+                elliptic_curves: &[29, 23],
+            }),
+        );
+        let fingerprint = captured.expect("fingerprint should be captured");
+        assert_eq!(fingerprint.ja4, "t13d1516h2_test");
+        assert_eq!(fingerprint.ja3, "771,4865-4866,0-11,29-23,0");
+        assert_eq!(fingerprint.tls_version, TlsVersion::Tls13);
+    }
 }

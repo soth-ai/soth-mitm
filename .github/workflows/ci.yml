@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - main
+    tags:
+      - "v*"
   pull_request:
   workflow_dispatch:
     inputs:
@@ -230,7 +232,7 @@ jobs:
     name: phase2_protocol_matrix (${{ matrix.os }} / ${{ matrix.lane }})
     if: >-
       ${{
-        github.event_name == 'push' ||
+        (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))) ||
         (github.event_name == 'workflow_dispatch' && github.event.inputs.run_profile == 'full')
       }}
     runs-on: ${{ matrix.os }}
@@ -273,7 +275,7 @@ jobs:
     name: phase2_protocol_triage
     if: >-
       ${{
-        github.event_name == 'push' ||
+        (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))) ||
         (github.event_name == 'workflow_dispatch' && github.event.inputs.run_profile == 'full')
       }}
     runs-on: ubuntu-latest
@@ -307,7 +309,7 @@ jobs:
     name: phase4_differential_validation (${{ matrix.os }})
     if: >-
       ${{
-        github.event_name == 'push' ||
+        (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) ||
         (github.event_name == 'workflow_dispatch' && github.event.inputs.run_profile == 'full')
       }}
     runs-on: ${{ matrix.os }}
@@ -344,7 +346,7 @@ jobs:
     name: phase4_performance_gates (${{ matrix.os }})
     if: >-
       ${{
-        github.event_name == 'push' ||
+        (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) ||
         (github.event_name == 'workflow_dispatch' && github.event.inputs.run_profile == 'full')
       }}
     runs-on: ${{ matrix.os }}
@@ -381,7 +383,7 @@ jobs:
     name: phase4_failure_injection (${{ matrix.os }})
     if: >-
       ${{
-        github.event_name == 'push' ||
+        (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) ||
         (github.event_name == 'workflow_dispatch' && github.event.inputs.run_profile == 'full')
       }}
     runs-on: ${{ matrix.os }}
@@ -418,7 +420,7 @@ jobs:
     name: phase4_tool_lanes (${{ matrix.os }})
     if: >-
       ${{
-        github.event_name == 'push' ||
+        (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) ||
         (github.event_name == 'workflow_dispatch' && github.event.inputs.run_profile == 'full')
       }}
     runs-on: ${{ matrix.os }}
@@ -455,7 +457,7 @@ jobs:
     name: phase4_chaos_network_faults (${{ matrix.os }})
     if: >-
       ${{
-        github.event_name == 'push' ||
+        (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) ||
         (github.event_name == 'workflow_dispatch' && github.event.inputs.run_profile == 'full')
       }}
     runs-on: ${{ matrix.os }}
@@ -492,7 +494,7 @@ jobs:
     name: phase4_chaos_adversarial (${{ matrix.os }})
     if: >-
       ${{
-        github.event_name == 'push' ||
+        (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) ||
         (github.event_name == 'workflow_dispatch' && github.event.inputs.run_profile == 'full')
       }}
     runs-on: ${{ matrix.os }}
@@ -529,7 +531,7 @@ jobs:
     name: phase6_performance_gates (${{ matrix.os }})
     if: >-
       ${{
-        github.event_name == 'push' ||
+        (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) ||
         (github.event_name == 'workflow_dispatch' && github.event.inputs.run_profile == 'full')
       }}
     runs-on: ${{ matrix.os }}
@@ -564,11 +566,152 @@ jobs:
           path: artifacts/p6-performance/${{ matrix.os }}
           if-no-files-found: error
 
+  phase6_tls_revocation_matrix:
+    name: phase6_tls_revocation_matrix (${{ matrix.os }})
+    if: >-
+      ${{
+        (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) ||
+        (github.event_name == 'workflow_dispatch' && github.event.inputs.run_profile == 'full')
+      }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@1.88.0
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run phase 6 TLS revocation matrix
+        shell: bash
+        run: ./scripts/p6_tls_revocation_matrix.sh --report-dir artifacts/p6-tls-revocation-matrix/${{ matrix.os }}
+
+      - name: Upload phase 6 TLS revocation artifact
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: p6-tls-revocation-matrix-${{ matrix.os }}
+          path: artifacts/p6-tls-revocation-matrix/${{ matrix.os }}
+          if-no-files-found: error
+
+  phase6_tls_mtls_matrix:
+    name: phase6_tls_mtls_matrix (${{ matrix.os }})
+    if: >-
+      ${{
+        (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) ||
+        (github.event_name == 'workflow_dispatch' && github.event.inputs.run_profile == 'full')
+      }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@1.88.0
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run phase 6 TLS mTLS matrix
+        shell: bash
+        run: ./scripts/p6_tls_mtls_matrix.sh --report-dir artifacts/p6-tls-mtls-matrix/${{ matrix.os }}
+
+      - name: Upload phase 6 TLS mTLS artifact
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: p6-tls-mtls-matrix-${{ matrix.os }}
+          path: artifacts/p6-tls-mtls-matrix/${{ matrix.os }}
+          if-no-files-found: error
+
+  phase6_tls_fingerprint_parity:
+    name: phase6_tls_fingerprint_parity (${{ matrix.os }})
+    if: >-
+      ${{
+        (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) ||
+        (github.event_name == 'workflow_dispatch' && github.event.inputs.run_profile == 'full')
+      }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@1.88.0
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run phase 6 TLS fingerprint parity
+        shell: bash
+        run: ./scripts/p6_tls_fingerprint_parity.sh --report-dir artifacts/p6-tls-fingerprint-parity/${{ matrix.os }}
+
+      - name: Upload phase 6 TLS fingerprint parity artifact
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: p6-tls-fingerprint-parity-${{ matrix.os }}
+          path: artifacts/p6-tls-fingerprint-parity/${{ matrix.os }}
+          if-no-files-found: error
+
+  phase6_tls_compat_pack:
+    name: phase6_tls_compat_pack (ubuntu-latest)
+    if: >-
+      ${{
+        (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) ||
+        (github.event_name == 'workflow_dispatch' && github.event.inputs.run_profile == 'full')
+      }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@1.88.0
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run phase 6 TLS compatibility pack
+        shell: bash
+        run: ./scripts/p6_tls_compat_pack.sh --report-dir artifacts/p6-tls-compat-pack/ubuntu-latest
+
+      - name: Upload phase 6 TLS compatibility pack artifact
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: p6-tls-compat-pack-ubuntu-latest
+          path: artifacts/p6-tls-compat-pack/ubuntu-latest
+          if-no-files-found: error
+
   phase6_acceptance_matrix:
     name: phase6_acceptance_matrix (${{ matrix.os }})
     if: >-
       ${{
-        github.event_name == 'push' ||
+        (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) ||
         (github.event_name == 'workflow_dispatch' && github.event.inputs.run_profile == 'full')
       }}
     runs-on: ${{ matrix.os }}
