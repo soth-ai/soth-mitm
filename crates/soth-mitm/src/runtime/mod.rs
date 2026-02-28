@@ -291,13 +291,13 @@ mod tests {
     }
 
     #[test]
-    fn destination_scope_wildcard_intercept_for_bedrock_like_hosts() {
+    fn destination_scope_wildcard_intercept_for_runtime_like_hosts() {
         let engine = policy(InterceptionScope {
-            destinations: vec!["bedrock-runtime*.amazonaws.com:443".to_string()],
+            destinations: vec!["runtime-gateway*.example.net:443".to_string()],
             passthrough_unlisted: true,
         });
         let intercept = engine.decide(&PolicyInput {
-            server_host: "bedrock-runtime.us-east-1.amazonaws.com".to_string(),
+            server_host: "runtime-gateway.us-east-1.example.net".to_string(),
             server_port: 443,
             path: None,
             process_info: None,
@@ -309,11 +309,11 @@ mod tests {
     #[test]
     fn destination_scope_wildcard_match_requires_same_port() {
         let engine = policy(InterceptionScope {
-            destinations: vec!["bedrock*.amazonaws.com:443".to_string()],
+            destinations: vec!["gateway*.example.net:443".to_string()],
             passthrough_unlisted: false,
         });
         let blocked = engine.decide(&PolicyInput {
-            server_host: "bedrock.us-east-1.amazonaws.com".to_string(),
+            server_host: "gateway.us-east-1.example.net".to_string(),
             server_port: 8443,
             path: None,
             process_info: None,
@@ -326,13 +326,13 @@ mod tests {
     fn destination_scope_exact_and_wildcard_both_intercept() {
         let engine = policy(InterceptionScope {
             destinations: vec![
-                "bedrock*.amazonaws.com:443".to_string(),
-                "bedrock.us-east-1.amazonaws.com:443".to_string(),
+                "gateway*.example.net:443".to_string(),
+                "gateway.us-east-1.example.net:443".to_string(),
             ],
             passthrough_unlisted: false,
         });
         let decision = engine.decide(&PolicyInput {
-            server_host: "bedrock.us-east-1.amazonaws.com".to_string(),
+            server_host: "gateway.us-east-1.example.net".to_string(),
             server_port: 443,
             path: None,
             process_info: None,

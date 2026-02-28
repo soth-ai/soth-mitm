@@ -48,7 +48,7 @@ fn accept_wildcard_destination_configuration() {
     config
         .interception
         .destinations
-        .push("bedrock*.amazonaws.com:443".to_string());
+        .push("gateway*.example.net:443".to_string());
 
     config
         .validate()

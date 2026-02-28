@@ -6,3 +6,6 @@ cd "$repo_root"
 
 echo "[pre-push] running max core Rust file line guard"
 ./scripts/check_max_file_lines.sh
+
+echo "[pre-push] running prohibition policy guard"
+./scripts/check_prohibitions.sh

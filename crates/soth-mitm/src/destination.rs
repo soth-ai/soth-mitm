@@ -201,12 +201,12 @@ mod tests {
 
     #[test]
     fn parses_wildcard_destination_rule() {
-        let rule = parse_destination_rule("Bedrock-runtime*.amazonaws.com:443")
+        let rule = parse_destination_rule("runtime-gateway*.example.net:443")
             .expect("wildcard rule must parse");
         assert_eq!(
             rule,
             DestinationRule::Wildcard(super::WildcardDestinationRule {
-                host_pattern: "bedrock-runtime*.amazonaws.com".to_string(),
+                host_pattern: "runtime-gateway*.example.net".to_string(),
                 port: 443,
             })
         );
@@ -215,21 +215,21 @@ mod tests {
     #[test]
     fn wildcard_rule_matches_host_and_port() {
         let rule =
-            parse_destination_rule("bedrock*.amazonaws.com:443").expect("wildcard rule must parse");
+            parse_destination_rule("gateway*.example.net:443").expect("wildcard rule must parse");
         let DestinationRule::Wildcard(rule) = rule else {
             panic!("expected wildcard rule");
         };
-        assert!(rule.matches_host_port("bedrock.us-east-1.amazonaws.com", 443));
-        assert!(!rule.matches_host_port("bedrock.us-east-1.amazonaws.com", 8443));
+        assert!(rule.matches_host_port("gateway.us-east-1.example.net", 443));
+        assert!(!rule.matches_host_port("gateway.us-east-1.example.net", 8443));
         assert!(!rule.matches_host_port("api.example.com", 443));
     }
 
     #[test]
     fn wildcard_rule_is_case_insensitive() {
-        let rule = parse_destination_rule("AB.ChatGPT*.com:443").expect("wildcard rule must parse");
+        let rule = parse_destination_rule("AB.CLIENT*.com:443").expect("wildcard rule must parse");
         let DestinationRule::Wildcard(rule) = rule else {
             panic!("expected wildcard rule");
         };
-        assert!(rule.matches_host_port("ab.chatgpt.com", 443));
+        assert!(rule.matches_host_port("ab.client.com", 443));
     }
 }
