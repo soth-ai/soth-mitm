@@ -43,6 +43,19 @@ fn accept_minimal_valid_configuration() {
 }
 
 #[test]
+fn accept_wildcard_destination_configuration() {
+    let mut config = MitmConfig::default();
+    config
+        .interception
+        .destinations
+        .push("bedrock*.amazonaws.com:443".to_string());
+
+    config
+        .validate()
+        .expect("wildcard destination config should validate");
+}
+
+#[test]
 fn reject_zero_body_size_limit() {
     let mut config = MitmConfig::default();
     config
