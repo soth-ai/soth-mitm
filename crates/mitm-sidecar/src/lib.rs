@@ -45,6 +45,7 @@ pub use tls_learning::{
 const IO_CHUNK_SIZE: usize = 8 * 1024;
 const CHUNK_LINE_LIMIT: usize = 8 * 1024;
 const TLS_OPS_PROVIDER: &str = "rustls";
+const DEFAULT_LISTENER_ACCEPT_RETRY_BACKOFF_MS: u64 = 100;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SidecarConfig {
@@ -52,6 +53,7 @@ pub struct SidecarConfig {
     pub listen_port: u16,
     pub max_connect_head_bytes: usize,
     pub max_http_head_bytes: usize,
+    pub accept_retry_backoff_ms: u64,
     pub idle_watchdog_timeout: Duration,
     pub upstream_connect_timeout: Duration,
     pub stream_stage_timeout: Duration,
@@ -64,6 +66,7 @@ impl Default for SidecarConfig {
             listen_port: 8080,
             max_connect_head_bytes: 64 * 1024,
             max_http_head_bytes: 64 * 1024,
+            accept_retry_backoff_ms: DEFAULT_LISTENER_ACCEPT_RETRY_BACKOFF_MS,
             idle_watchdog_timeout: Duration::from_secs(30),
             upstream_connect_timeout: Duration::from_secs(10),
             stream_stage_timeout: Duration::from_secs(15),
@@ -345,8 +348,22 @@ where
     }
 
     pub async fn run_with_listener(self, listener: TcpListener) -> io::Result<()> {
+        let accept_retry_backoff_ms = self.config.accept_retry_backoff_ms.max(1);
         loop {
-            let (mut stream, client_addr) = listener.accept().await?;
+            let (mut stream, client_addr) = match listener.accept().await {
+                Ok(parts) => parts,
+                Err(error) if is_transient_listener_accept_error(&error) => {
+                    tracing::warn!(
+                        error = %error,
+                        kind = ?error.kind(),
+                        backoff_ms = accept_retry_backoff_ms,
+                        "transient listener accept error; retrying"
+                    );
+                    tokio::time::sleep(Duration::from_millis(accept_retry_backoff_ms)).await;
+                    continue;
+                }
+                Err(error) => return Err(error),
+            };
             apply_per_connection_socket_hardening(&stream);
             let Some(flow_permit) = self.runtime_governor.try_acquire_flow_permit() else {
                 self.runtime_governor.mark_budget_denial();
@@ -400,6 +417,48 @@ where
                 }
             });
         }
+    }
+}
+
+fn is_transient_listener_accept_error(error: &io::Error) -> bool {
+    match error.kind() {
+        io::ErrorKind::Interrupted
+        | io::ErrorKind::WouldBlock
+        | io::ErrorKind::ConnectionAborted => true,
+        _ => {
+            #[cfg(unix)]
+            {
+                match error.raw_os_error() {
+                    // EMFILE (per-process fd cap) and ENFILE (system-wide fd cap)
+                    // are transient under burst load; retry accept instead of exiting.
+                    Some(24) | Some(23) => true,
+                    _ => false,
+                }
+            }
+            #[cfg(not(unix))]
+            {
+                false
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod listener_accept_error_tests {
+    use super::is_transient_listener_accept_error;
+    use std::io;
+
+    #[test]
+    fn interrupted_accept_error_is_transient() {
+        let err = io::Error::new(io::ErrorKind::Interrupted, "interrupted");
+        assert!(is_transient_listener_accept_error(&err));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn emfile_accept_error_is_transient() {
+        let err = io::Error::from_raw_os_error(24);
+        assert!(is_transient_listener_accept_error(&err));
     }
 }
 

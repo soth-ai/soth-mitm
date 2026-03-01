@@ -4,7 +4,7 @@ use std::hash::Hash;
 use std::num::NonZeroUsize;
 use std::pin::Pin;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use lru::LruCache;
 use parking_lot::Mutex as FastMutex;
@@ -12,7 +12,6 @@ use tokio::sync::{Mutex, Notify};
 use uuid::Uuid;
 
 use crate::types::{ConnectionInfo, ProcessInfo};
-
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "macos")]
@@ -94,13 +93,29 @@ struct UncachedLookupOutcome {
     cache_evictions: u32,
 }
 
+#[derive(Debug, Clone)]
+struct CacheEntry<V> {
+    value: V,
+    cached_at: Instant,
+}
+
+impl<V> CacheEntry<V> {
+    fn new(value: V) -> Self {
+        Self {
+            value,
+            cached_at: Instant::now(),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct ProcessLookupService<A: ProcessAttributor> {
     attributor: Arc<A>,
     timeout: Duration,
-    connection_cache: Mutex<LruCache<Uuid, CachedLookupResult>>,
-    identity_cache: Mutex<LruCache<ProcessIdentity, ProcessInfo>>,
-    pid_start_tokens: Mutex<LruCache<u32, String>>,
+    cache_ttl: Option<Duration>,
+    connection_cache: Mutex<LruCache<Uuid, CacheEntry<CachedLookupResult>>>,
+    identity_cache: Mutex<LruCache<ProcessIdentity, CacheEntry<ProcessInfo>>>,
+    pid_start_tokens: Mutex<LruCache<u32, CacheEntry<String>>>,
     in_flight: Arc<FastMutex<HashMap<Uuid, Arc<Notify>>>>,
 }
 
@@ -139,11 +154,18 @@ impl Drop for InFlightLeaderGuard {
 }
 
 impl<A: ProcessAttributor> ProcessLookupService<A> {
-    pub(crate) fn new(attributor: Arc<A>, timeout: Duration) -> Self {
-        let capacity = NonZeroUsize::new(4096).expect("process cache capacity must be non-zero");
+    pub(crate) fn new_with_cache(
+        attributor: Arc<A>,
+        timeout: Duration,
+        cache_capacity: usize,
+        cache_ttl: Option<Duration>,
+    ) -> Self {
+        let capacity = NonZeroUsize::new(cache_capacity.max(1))
+            .expect("process cache capacity must be non-zero");
         Self {
             attributor,
             timeout,
+            cache_ttl,
             connection_cache: Mutex::new(LruCache::new(capacity)),
             identity_cache: Mutex::new(LruCache::new(capacity)),
             pid_start_tokens: Mutex::new(LruCache::new(capacity)),
@@ -189,7 +211,7 @@ impl<A: ProcessAttributor> ProcessLookupService<A> {
 
     async fn cached_connection_result(&self, connection_id: Uuid) -> Option<CachedLookupResult> {
         let mut cache = self.connection_cache.lock().await;
-        cache.get(&connection_id).cloned()
+        cache_get_if_fresh(&mut cache, &connection_id, self.cache_ttl).map(|entry| entry.value)
     }
 
     fn result_from_cached_connection(cached: CachedLookupResult) -> ProcessLookupResult {
@@ -258,7 +280,7 @@ impl<A: ProcessAttributor> ProcessLookupService<A> {
 
             let identity_cached = {
                 let mut cache = self.identity_cache.lock().await;
-                cache.get(&identity).cloned()
+                cache_get_if_fresh(&mut cache, &identity, self.cache_ttl).map(|entry| entry.value)
             };
             if let Some(process_info) = identity_cached {
                 return UncachedLookupOutcome {
@@ -301,7 +323,12 @@ impl<A: ProcessAttributor> ProcessLookupService<A> {
         connection_id: Uuid,
         result: CachedLookupResult,
     ) -> u32 {
-        cache_push_count_eviction(&self.connection_cache, connection_id, result).await
+        cache_push_count_eviction(
+            &self.connection_cache,
+            connection_id,
+            CacheEntry::new(result),
+        )
+        .await
     }
 
     async fn cache_identity_result(
@@ -309,17 +336,21 @@ impl<A: ProcessAttributor> ProcessLookupService<A> {
         identity: ProcessIdentity,
         process_info: ProcessInfo,
     ) -> u32 {
-        cache_push_count_eviction(&self.identity_cache, identity, process_info).await
+        cache_push_count_eviction(
+            &self.identity_cache,
+            identity,
+            CacheEntry::new(process_info),
+        )
+        .await
     }
 
     async fn register_pid_start_token(&self, identity: &ProcessIdentity) -> (bool, u32) {
         let mut cache = self.pid_start_tokens.lock().await;
-        let pid_reuse_detected = cache
-            .get(&identity.pid)
-            .map(|cached| cached != &identity.start_token)
+        let pid_reuse_detected = cache_get_if_fresh(&mut cache, &identity.pid, self.cache_ttl)
+            .map(|entry| entry.value != identity.start_token)
             .unwrap_or(false);
         let evicted = if cache
-            .push(identity.pid, identity.start_token.clone())
+            .push(identity.pid, CacheEntry::new(identity.start_token.clone()))
             .is_some()
         {
             1
@@ -347,5 +378,25 @@ where
     }
 }
 
+fn cache_get_if_fresh<K, V>(
+    cache: &mut LruCache<K, CacheEntry<V>>,
+    key: &K,
+    cache_ttl: Option<Duration>,
+) -> Option<CacheEntry<V>>
+where
+    K: Eq + Hash,
+    V: Clone,
+{
+    let entry = cache.get(key).cloned()?;
+    if cache_ttl
+        .map(|ttl| entry.cached_at.elapsed() >= ttl)
+        .unwrap_or(false)
+    {
+        let _ = cache.pop(key);
+        None
+    } else {
+        Some(entry)
+    }
+}
 #[cfg(test)]
 mod tests;

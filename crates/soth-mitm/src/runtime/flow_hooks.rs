@@ -27,10 +27,8 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
-
 mod translate;
 use self::translate::{connection_meta_for_context, map_stream_frame_kind};
-
 #[derive(Debug)]
 struct HandlerFlowHooks<H: InterceptHandler> {
     flow_state: Arc<FlowStateContext<H>>,
@@ -39,7 +37,6 @@ struct HandlerFlowHooks<H: InterceptHandler> {
     stale_reap_max_batch: usize,
     last_stale_reap_at: Arc<Mutex<Instant>>,
 }
-
 impl<H: InterceptHandler> HandlerFlowHooks<H> {
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -91,7 +88,6 @@ impl<H: InterceptHandler> HandlerFlowHooks<H> {
         }
     }
 }
-
 impl<H: InterceptHandler> FlowHooks for HandlerFlowHooks<H> {
     fn resolve_process_info(
         &self,
@@ -152,7 +148,6 @@ impl<H: InterceptHandler> FlowHooks for HandlerFlowHooks<H> {
             }
             flow_state.closed_flow_live.remove(&context.flow_id);
             flow_state.tls_intercepted_flow_ids.remove(&context.flow_id);
-
             let connection_meta = connection_meta_from_accept_context(
                 &context,
                 process_info.map(runtime_process_info_from_policy),
@@ -164,7 +159,6 @@ impl<H: InterceptHandler> FlowHooks for HandlerFlowHooks<H> {
             flow_state
                 .flow_last_touched
                 .insert(context.flow_id, Instant::now());
-
             schedule_stale_flow_reap(
                 Arc::clone(&flow_state),
                 stale_flow_ttl,
@@ -173,7 +167,6 @@ impl<H: InterceptHandler> FlowHooks for HandlerFlowHooks<H> {
                 Arc::clone(&last_stale_reap_at),
             )
             .await;
-
             let handler = Arc::clone(&flow_state.handler);
             flow_state
                 .callback_guard
@@ -181,7 +174,6 @@ impl<H: InterceptHandler> FlowHooks for HandlerFlowHooks<H> {
                 .await;
         })
     }
-
     fn should_intercept_tls(
         &self,
         context: FlowContext,
@@ -207,7 +199,6 @@ impl<H: InterceptHandler> FlowHooks for HandlerFlowHooks<H> {
             should_intercept
         })
     }
-
     fn on_tls_failure(
         &self,
         context: FlowContext,
@@ -224,7 +215,6 @@ impl<H: InterceptHandler> FlowHooks for HandlerFlowHooks<H> {
                 .await
         })
     }
-
     fn on_request(
         &self,
         context: FlowContext,
@@ -268,7 +258,6 @@ impl<H: InterceptHandler> FlowHooks for HandlerFlowHooks<H> {
             }
         })
     }
-
     fn on_response(
         &self,
         context: FlowContext,
@@ -301,7 +290,6 @@ impl<H: InterceptHandler> FlowHooks for HandlerFlowHooks<H> {
                 .await;
         })
     }
-
     fn on_stream_chunk(
         &self,
         context: FlowContext,
@@ -336,7 +324,6 @@ impl<H: InterceptHandler> FlowHooks for HandlerFlowHooks<H> {
                 .await;
         })
     }
-
     fn on_stream_end(&self, context: FlowContext) -> Pin<Box<dyn Future<Output = ()> + Send>> {
         let flow_state = Arc::clone(&self.flow_state);
         Box::pin(async move {
@@ -344,7 +331,6 @@ impl<H: InterceptHandler> FlowHooks for HandlerFlowHooks<H> {
         })
     }
 }
-
 pub(crate) fn build_handler_flow_hooks<H: InterceptHandler>(
     config: &MitmConfig,
     handler: Arc<H>,
@@ -352,18 +338,37 @@ pub(crate) fn build_handler_flow_hooks<H: InterceptHandler>(
 ) -> Arc<dyn FlowHooks> {
     let expected_live_flows = (config.connection_pool.max_connections_per_host as usize)
         .saturating_mul(config.interception.destinations.len().max(1));
-    let flow_dispatch_queue_capacity = expected_live_flows.clamp(128, 1024);
-    let closed_flow_lru_capacity = expected_live_flows.saturating_mul(8).clamp(4096, 65_536);
+    let flow_runtime = &config.flow_runtime;
+    let flow_dispatch_queue_capacity = flow_runtime
+        .dispatch_queue_capacity
+        .unwrap_or_else(|| expected_live_flows.clamp(128, 1024));
+    let closed_flow_lru_capacity = flow_runtime
+        .closed_flow_lru_capacity
+        .unwrap_or_else(|| expected_live_flows.saturating_mul(8).clamp(4096, 65_536));
     let stale_flow_ttl = Duration::from_millis(
-        config
-            .connection_pool
-            .idle_timeout_ms
-            .saturating_mul(3)
-            .max(30_000),
+        flow_runtime.stale_flow_ttl_ms.unwrap_or(
+            config
+                .connection_pool
+                .idle_timeout_ms
+                .saturating_mul(3)
+                .max(30_000),
+        ),
     );
-    let stale_reap_max_batch = expected_live_flows.clamp(16, 256);
+    let stale_reap_max_batch = flow_runtime
+        .stale_reap_max_batch
+        .unwrap_or_else(|| expected_live_flows.clamp(16, 256));
     let request_timeout = Duration::from_millis(config.handler.request_timeout_ms.max(1));
     let response_timeout = Duration::from_millis(config.handler.response_timeout_ms.max(1));
+    let dispatch_queue_send_timeout = Duration::from_millis(
+        flow_runtime
+            .dispatch_queue_send_timeout_ms
+            .unwrap_or(config.handler.response_timeout_ms.max(1)),
+    );
+    let dispatch_close_join_timeout = Duration::from_millis(
+        flow_runtime
+            .dispatch_close_join_timeout_ms
+            .unwrap_or(config.handler.response_timeout_ms.saturating_mul(2).max(1)),
+    );
     let callback_guard = Arc::new(HandlerCallbackGuard::new(
         request_timeout,
         response_timeout,
@@ -371,9 +376,14 @@ pub(crate) fn build_handler_flow_hooks<H: InterceptHandler>(
         Arc::clone(&metrics_store),
     ));
     let process_lookup = if config.process_attribution.enabled {
-        Some(Arc::new(ProcessLookupService::new(
+        Some(Arc::new(ProcessLookupService::new_with_cache(
             Arc::new(PlatformProcessAttributor),
             Duration::from_millis(config.process_attribution.lookup_timeout_ms.max(1)),
+            config.process_attribution.cache_capacity,
+            config
+                .process_attribution
+                .cache_ttl_ms
+                .map(|ttl_ms| Duration::from_millis(ttl_ms.max(1))),
         )))
     } else {
         None
@@ -387,10 +397,9 @@ pub(crate) fn build_handler_flow_hooks<H: InterceptHandler>(
         closed_flow_lru_capacity,
         stale_flow_ttl,
         stale_reap_max_batch,
-        response_timeout,
-        response_timeout.saturating_mul(2),
+        dispatch_queue_send_timeout,
+        dispatch_close_join_timeout,
     ))
 }
-
 #[cfg(test)]
 mod tests;

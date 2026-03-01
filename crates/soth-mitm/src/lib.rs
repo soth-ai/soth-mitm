@@ -21,8 +21,8 @@ pub use ca::{
     uninstall_ca_system_trust, CertificateAuthority,
 };
 pub use config::{
-    BodyConfig, ConnectionPoolConfig, HandlerConfig, InterceptionScope, MitmConfig,
-    ProcessAttributionConfig, TlsConfig, UpstreamConfig,
+    BodyConfig, ConnectionPoolConfig, FlowRuntimeConfig, HandlerConfig, InterceptionScope,
+    MitmConfig, ProcessAttributionConfig, TlsConfig, UpstreamConfig,
 };
 pub use errors::{CaError, MitmError};
 pub use handler::InterceptHandler;

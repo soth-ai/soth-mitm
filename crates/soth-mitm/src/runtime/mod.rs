@@ -43,6 +43,7 @@ pub(crate) fn build_runtime_server<H: InterceptHandler>(
         listen_port: core_config.listen_port,
         max_connect_head_bytes: 64 * 1024,
         max_http_head_bytes: core_config.max_http_head_bytes,
+        accept_retry_backoff_ms: config.accept_retry_backoff_ms.max(1),
         idle_watchdog_timeout: Duration::from_millis(config.connection_pool.idle_timeout_ms.max(1)),
         upstream_connect_timeout: Duration::from_millis(config.upstream.connect_timeout_ms.max(1)),
         stream_stage_timeout: Duration::from_millis(config.upstream.timeout_ms.max(1)),
@@ -70,11 +71,17 @@ fn map_core_config(config: &MitmConfig) -> CoreMitmConfig {
     core.listen_port = config.bind.port();
     core.ca_cert_pem_path = Some(config.tls.ca_cert_path.to_string_lossy().to_string());
     core.ca_key_pem_path = Some(config.tls.ca_key_path.to_string_lossy().to_string());
-    core.http2_enabled = true;
+    core.max_http_head_bytes = config.max_http_head_bytes.max(1);
+    core.http2_enabled = config.http2_enabled;
+    core.http2_max_header_list_size = config.http2_max_header_list_size.max(1);
+    core.http3_passthrough = config.http3_passthrough;
     core.max_flow_body_buffer_bytes = config.body.max_size_bytes.max(1);
     core.max_flow_decoder_buffer_bytes = core
         .max_flow_decoder_buffer_bytes
         .min(core.max_flow_body_buffer_bytes);
+    core.max_flow_event_backlog = config.max_flow_event_backlog.max(1);
+    core.max_in_flight_bytes = config.max_in_flight_bytes.max(1);
+    core.max_concurrent_flows = config.max_concurrent_flows.max(1);
     core.upstream_tls_insecure_skip_verify = !config.upstream.verify_upstream_tls;
     core
 }
@@ -231,6 +238,30 @@ fn validate_reload_contract(current: &MitmConfig, next: &MitmConfig) -> Result<(
     if current.tls != next.tls {
         changed_fields.push("tls");
     }
+    if current.http2_enabled != next.http2_enabled {
+        changed_fields.push("http2_enabled");
+    }
+    if current.http2_max_header_list_size != next.http2_max_header_list_size {
+        changed_fields.push("http2_max_header_list_size");
+    }
+    if current.http3_passthrough != next.http3_passthrough {
+        changed_fields.push("http3_passthrough");
+    }
+    if current.max_http_head_bytes != next.max_http_head_bytes {
+        changed_fields.push("max_http_head_bytes");
+    }
+    if current.accept_retry_backoff_ms != next.accept_retry_backoff_ms {
+        changed_fields.push("accept_retry_backoff_ms");
+    }
+    if current.max_flow_event_backlog != next.max_flow_event_backlog {
+        changed_fields.push("max_flow_event_backlog");
+    }
+    if current.max_in_flight_bytes != next.max_in_flight_bytes {
+        changed_fields.push("max_in_flight_bytes");
+    }
+    if current.max_concurrent_flows != next.max_concurrent_flows {
+        changed_fields.push("max_concurrent_flows");
+    }
     if current.upstream != next.upstream {
         changed_fields.push("upstream");
     }
@@ -242,6 +273,9 @@ fn validate_reload_contract(current: &MitmConfig, next: &MitmConfig) -> Result<(
     }
     if current.handler != next.handler {
         changed_fields.push("handler");
+    }
+    if current.flow_runtime != next.flow_runtime {
+        changed_fields.push("flow_runtime");
     }
 
     let detail = if changed_fields.is_empty() {
@@ -430,6 +464,26 @@ mod tests {
             core.max_flow_decoder_buffer_bytes <= 256,
             "decoder budget must be bounded by body size limit"
         );
+    }
+
+    #[test]
+    fn core_runtime_tuning_maps_from_config() {
+        let mut config = MitmConfig::default();
+        config.http2_enabled = false;
+        config.http2_max_header_list_size = 32 * 1024;
+        config.http3_passthrough = false;
+        config.max_http_head_bytes = 96 * 1024;
+        config.max_flow_event_backlog = 16 * 1024;
+        config.max_in_flight_bytes = 128 * 1024 * 1024;
+        config.max_concurrent_flows = 4_096;
+        let core = map_core_config(&config);
+        assert!(!core.http2_enabled);
+        assert_eq!(core.http2_max_header_list_size, 32 * 1024);
+        assert!(!core.http3_passthrough);
+        assert_eq!(core.max_http_head_bytes, 96 * 1024);
+        assert_eq!(core.max_flow_event_backlog, 16 * 1024);
+        assert_eq!(core.max_in_flight_bytes, 128 * 1024 * 1024);
+        assert_eq!(core.max_concurrent_flows, 4_096);
     }
 
     #[test]

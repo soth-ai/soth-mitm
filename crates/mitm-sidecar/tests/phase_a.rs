@@ -30,6 +30,7 @@ async fn start_sidecar_with_sink(
         listen_port: 0,
         max_connect_head_bytes: 64 * 1024,
         max_http_head_bytes: 64 * 1024,
+        accept_retry_backoff_ms: 100,
         idle_watchdog_timeout: std::time::Duration::from_secs(30),
         upstream_connect_timeout: std::time::Duration::from_secs(10),
         stream_stage_timeout: std::time::Duration::from_secs(5),
