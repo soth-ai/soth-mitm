@@ -1,11 +1,14 @@
-use std::ffi::OsStr;
+use std::ffi::{c_void, OsStr};
 use std::future::Future;
+use std::mem;
+use std::num::NonZeroU32;
+use std::os::unix::ffi::OsStrExt;
 use std::path::Component;
 use std::path::PathBuf;
 use std::pin::Pin;
 
+use libc::{c_int, gid_t, uid_t, MAXCOMLEN};
 use plist::Value;
-use sysinfo::{Pid, System};
 
 use super::{
     socket_pid::lookup_established_tcp_pid, ConnectionInfo, ProcessAttributor, ProcessIdentity,
@@ -97,17 +100,12 @@ struct ProcessSnapshot {
 }
 
 fn process_snapshot(pid: u32) -> Option<ProcessSnapshot> {
-    let mut system = System::new_all();
-    system.refresh_all();
-    let process = system.process(Pid::from_u32(pid))?;
-
-    let exe_name = normalize_text(process.name());
-    let exe_path = process
-        .exe()
-        .map(|path| path.to_path_buf())
-        .filter(|path| !path.as_os_str().is_empty());
-    let parent_pid = process.parent().map(|parent| parent.as_u32());
-    let start_token = build_start_token(process.start_time(), parent_pid);
+    let bsd_info = read_bsd_info(pid)?;
+    let exe_path = read_process_path(pid);
+    let parent_pid = NonZeroU32::new(bsd_info.pbi_ppid).map(NonZeroU32::get);
+    let exe_name = process_name_from_bsd_info(&bsd_info)
+        .or_else(|| exe_path.as_ref().and_then(process_name_from_path));
+    let start_token = build_start_token(bsd_info.pbi_start_tvsec, parent_pid);
 
     Some(ProcessSnapshot {
         exe_name,
@@ -115,6 +113,52 @@ fn process_snapshot(pid: u32) -> Option<ProcessSnapshot> {
         parent_pid,
         start_token,
     })
+}
+
+fn read_bsd_info(pid: u32) -> Option<ProcBsdInfo> {
+    let mut info = ProcBsdInfo::default();
+    // SAFETY: `info` is a properly aligned writable buffer for `proc_pidinfo`.
+    let written = unsafe {
+        proc_pidinfo(
+            pid as c_int,
+            PROC_PIDTBSDINFO,
+            0,
+            (&mut info as *mut ProcBsdInfo).cast::<c_void>(),
+            mem::size_of::<ProcBsdInfo>() as c_int,
+        )
+    };
+    if written as usize != mem::size_of::<ProcBsdInfo>() {
+        return None;
+    }
+    if info.pbi_pid != pid {
+        return None;
+    }
+    Some(info)
+}
+
+fn read_process_path(pid: u32) -> Option<PathBuf> {
+    let mut raw = [0u8; PROC_PIDPATHINFO_MAXSIZE];
+    // SAFETY: `raw` is a writable byte buffer accepted by `proc_pidpath`.
+    let written = unsafe { proc_pidpath(pid as c_int, raw.as_mut_ptr().cast(), raw.len() as u32) };
+    if written <= 0 {
+        return None;
+    }
+    let written = (written as usize).min(raw.len());
+    let bytes = bytes_before_nul(&raw[..written]);
+    if bytes.is_empty() {
+        return None;
+    }
+    let path = PathBuf::from(OsStr::from_bytes(bytes));
+    if path.as_os_str().is_empty() {
+        None
+    } else {
+        Some(path)
+    }
+}
+
+fn bytes_before_nul(raw: &[u8]) -> &[u8] {
+    let end = raw.iter().position(|byte| *byte == 0).unwrap_or(raw.len());
+    &raw[..end]
 }
 
 fn build_start_token(start_time_secs: u64, parent_pid: Option<u32>) -> String {
@@ -131,6 +175,26 @@ fn normalize_text(value: impl AsRef<OsStr>) -> Option<String> {
     } else {
         Some(text)
     }
+}
+
+fn process_name_from_bsd_info(info: &ProcBsdInfo) -> Option<String> {
+    c_char_array_to_string(&info.pbi_name).or_else(|| c_char_array_to_string(&info.pbi_comm))
+}
+
+fn process_name_from_path(path: &PathBuf) -> Option<String> {
+    path.file_name().and_then(normalize_text)
+}
+
+fn c_char_array_to_string<const N: usize>(raw: &[i8; N]) -> Option<String> {
+    let end = raw.iter().position(|ch| *ch == 0).unwrap_or(N);
+    if end == 0 {
+        return None;
+    }
+    let bytes = raw[..end]
+        .iter()
+        .map(|value| *value as u8)
+        .collect::<Vec<u8>>();
+    normalize_text(OsStr::from_bytes(&bytes))
 }
 
 fn lookup_bundle_id(process_path: &PathBuf) -> Option<String> {
@@ -161,11 +225,85 @@ fn app_bundle_path(process_path: &PathBuf) -> Option<PathBuf> {
     None
 }
 
+const PROC_PIDTBSDINFO: c_int = 3;
+const PROC_PIDPATHINFO_MAXSIZE: usize = 4096;
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct ProcBsdInfo {
+    pbi_flags: u32,
+    pbi_status: u32,
+    pbi_xstatus: u32,
+    pbi_pid: u32,
+    pbi_ppid: u32,
+    pbi_uid: uid_t,
+    pbi_gid: gid_t,
+    pbi_ruid: uid_t,
+    pbi_rgid: gid_t,
+    pbi_svuid: uid_t,
+    pbi_svgid: gid_t,
+    rfu_1: u32,
+    pbi_comm: [i8; MAXCOMLEN as usize],
+    pbi_name: [i8; (2 * MAXCOMLEN) as usize],
+    pbi_nfiles: u32,
+    pbi_pgid: u32,
+    pbi_pjobc: u32,
+    e_tdev: u32,
+    e_tpgid: u32,
+    pbi_nice: i32,
+    pbi_start_tvsec: u64,
+    pbi_start_tvusec: u64,
+}
+
+impl Default for ProcBsdInfo {
+    fn default() -> Self {
+        Self {
+            pbi_flags: 0,
+            pbi_status: 0,
+            pbi_xstatus: 0,
+            pbi_pid: 0,
+            pbi_ppid: 0,
+            pbi_uid: 0,
+            pbi_gid: 0,
+            pbi_ruid: 0,
+            pbi_rgid: 0,
+            pbi_svuid: 0,
+            pbi_svgid: 0,
+            rfu_1: 0,
+            pbi_comm: [0; MAXCOMLEN as usize],
+            pbi_name: [0; (2 * MAXCOMLEN) as usize],
+            pbi_nfiles: 0,
+            pbi_pgid: 0,
+            pbi_pjobc: 0,
+            e_tdev: 0,
+            e_tpgid: 0,
+            pbi_nice: 0,
+            pbi_start_tvsec: 0,
+            pbi_start_tvusec: 0,
+        }
+    }
+}
+
+unsafe extern "C" {
+    fn proc_pidinfo(
+        pid: c_int,
+        flavor: c_int,
+        arg: u64,
+        buffer: *mut c_void,
+        buffersize: c_int,
+    ) -> c_int;
+
+    fn proc_pidpath(pid: c_int, buffer: *mut c_void, buffersize: u32) -> c_int;
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
 
-    use super::app_bundle_path;
+    use super::{
+        app_bundle_path, build_start_token, c_char_array_to_string, process_name_from_bsd_info,
+        process_name_from_path, ProcBsdInfo,
+    };
 
     #[test]
     fn extracts_app_bundle_path_from_binary_path() {
@@ -180,5 +318,39 @@ mod tests {
     fn returns_none_for_non_bundle_path() {
         let path = PathBuf::from("/usr/bin/curl");
         assert!(app_bundle_path(&path).is_none());
+    }
+
+    #[test]
+    fn parses_c_char_array_process_name() {
+        let mut raw = [0i8; 8];
+        raw[0] = b'c' as i8;
+        raw[1] = b'u' as i8;
+        raw[2] = b'r' as i8;
+        raw[3] = b'l' as i8;
+        assert_eq!(c_char_array_to_string(&raw), Some("curl".to_string()));
+    }
+
+    #[test]
+    fn derives_process_name_from_path_filename() {
+        let path = PathBuf::from("/Applications/Example.app/Contents/MacOS/example-bin");
+        assert_eq!(
+            process_name_from_path(&path),
+            Some("example-bin".to_string())
+        );
+    }
+
+    #[test]
+    fn falls_back_to_comm_when_name_missing() {
+        let mut info = ProcBsdInfo::default();
+        info.pbi_comm[0] = b'b' as i8;
+        info.pbi_comm[1] = b'a' as i8;
+        info.pbi_comm[2] = b's' as i8;
+        info.pbi_comm[3] = b'h' as i8;
+        assert_eq!(process_name_from_bsd_info(&info), Some("bash".to_string()));
+    }
+
+    #[test]
+    fn start_token_uses_parent_placeholder_for_missing_parent() {
+        assert_eq!(build_start_token(123, None), "st=123|ppid=-");
     }
 }
