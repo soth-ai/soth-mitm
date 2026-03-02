@@ -301,6 +301,92 @@ async fn intercept_post_emits_request_and_response_body_chunks() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn intercept_chunked_response_without_trailers_relays_complete_terminator() {
+    let upstream_listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind upstream listener");
+    let upstream_addr = upstream_listener.local_addr().expect("upstream addr");
+    let upstream_task = tokio::spawn(async move {
+        let server_config = build_http1_server_config_for_host("127.0.0.1").expect("server config");
+        let acceptor = TlsAcceptor::from(server_config);
+        let (tcp, _) = upstream_listener.accept().await.expect("accept upstream");
+        let mut tls = acceptor.accept(tcp).await.expect("TLS accept");
+
+        let request_head = read_http_head(&mut tls).await;
+        let request_text = String::from_utf8_lossy(&request_head);
+        assert!(request_text.starts_with("GET /chunked HTTP/1.1"), "{request_text}");
+
+        let response = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n5\r\nhello\r\n0\r\n\r\n";
+        tls.write_all(response).await.expect("write response");
+        tls.shutdown().await.expect("shutdown upstream TLS");
+    });
+
+    let sink = VecEventConsumer::default();
+    let config = MitmConfig {
+        upstream_tls_insecure_skip_verify: true,
+        ..MitmConfig::default()
+    };
+    let (proxy_addr, proxy_task, sink, _diagnostics, _learning) =
+        start_sidecar_with_sink(sink, config).await;
+
+    let mut tcp = TcpStream::connect(proxy_addr)
+        .await
+        .expect("connect sidecar");
+    let connect = format!(
+        "CONNECT 127.0.0.1:{} HTTP/1.1\r\nHost: 127.0.0.1:{}\r\n\r\n",
+        upstream_addr.port(),
+        upstream_addr.port()
+    );
+    tcp.write_all(connect.as_bytes())
+        .await
+        .expect("write CONNECT");
+    let connect_response = read_response_head(&mut tcp).await;
+    assert!(
+        connect_response.starts_with("HTTP/1.1 200 Connection Established"),
+        "{connect_response}"
+    );
+
+    let connector = TlsConnector::from(build_http1_client_config(true));
+    let server_name = ServerName::try_from("127.0.0.1".to_string()).expect("server name");
+    let mut tls = connector
+        .connect(server_name, tcp)
+        .await
+        .expect("TLS connect to sidecar");
+    tls.write_all(b"GET /chunked HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+        .await
+        .expect("write request");
+    tls.flush().await.expect("flush request");
+
+    let response = read_to_end_allow_unexpected_eof(&mut tls).await;
+    let response_text = String::from_utf8_lossy(&response);
+    assert!(response_text.starts_with("HTTP/1.1 200 OK"), "{response_text}");
+    assert!(
+        response_text.contains("Transfer-Encoding: chunked")
+            || response_text.contains("transfer-encoding: chunked"),
+        "{response_text}"
+    );
+    assert!(
+        response.ends_with(b"0\r\n\r\n"),
+        "missing terminal chunk: {response_text}"
+    );
+    assert!(response_text.contains("\r\n5\r\nhello\r\n"), "{response_text}");
+
+    upstream_task.await.expect("upstream task");
+    tokio::time::sleep(Duration::from_millis(25)).await;
+    proxy_task.abort();
+
+    let events = sink.snapshot();
+    let stream_closed = events
+        .iter()
+        .find(|e| e.kind == EventType::StreamClosed)
+        .expect("stream closed event");
+    assert_eq!(
+        stream_closed.attributes.get("reason_code").map(String::as_str),
+        Some("mitm_http_completed")
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn forward_http_absolute_form_request_relays_without_connect() {
     let upstream_listener = TcpListener::bind("127.0.0.1:0")
         .await

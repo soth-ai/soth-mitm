@@ -151,19 +151,8 @@ where
         write_all_with_idle_timeout(sink, &line, "http1_chunk_line_write").await?;
         let chunk_len = parse_chunk_len(&line)?;
         if chunk_len == 0 {
-            let trailers = read_until_pattern(
-                source,
-                b"\r\n\r\n",
-                max_http_head_bytes,
-                runtime_governor,
-            )
-                .await?
-                .ok_or_else(|| {
-                    io::Error::new(
-                        io::ErrorKind::UnexpectedEof,
-                        "connection closed before chunked trailers completed",
-                    )
-                })?;
+            let trailers = read_chunked_trailers(source, max_http_head_bytes, runtime_governor)
+                .await?;
             let _in_flight_lease = runtime_governor
                 .reserve_in_flight_or_error(trailers.len(), "http1_chunk_trailers_write")?;
             write_all_with_idle_timeout(sink, &trailers, "http1_chunk_trailers_write").await?;
@@ -269,6 +258,36 @@ async fn read_chunk_line<S: AsyncRead + Unpin>(
             )
         })?;
     Ok(line)
+}
+
+async fn read_chunked_trailers<S: AsyncRead + Unpin>(
+    source: &mut BufferedConn<S>,
+    max_http_head_bytes: usize,
+    runtime_governor: &Arc<runtime_governor::RuntimeGovernor>,
+) -> io::Result<Vec<u8>> {
+    let mut trailers = Vec::new();
+    loop {
+        let line = read_chunk_line(source, runtime_governor).await.map_err(|error| {
+            if error.kind() == io::ErrorKind::UnexpectedEof {
+                io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "connection closed before chunked trailers completed",
+                )
+            } else {
+                error
+            }
+        })?;
+        trailers.extend_from_slice(&line);
+        if trailers.len() > max_http_head_bytes {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "chunked trailers exceeded configured header limit",
+            ));
+        }
+        if line == b"\r\n" {
+            return Ok(trailers);
+        }
+    }
 }
 
 fn parse_chunk_len(line: &[u8]) -> io::Result<u64> {

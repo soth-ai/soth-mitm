@@ -180,7 +180,9 @@ where
         }
     };
     let (response_parts, mut upstream_response_body) = upstream_response.into_parts();
-    if enforce_h2_response_header_limit(&response_parts, max_header_list_size).is_err() {
+    let mut downstream_response_parts = response_parts.clone();
+    strip_hop_by_hop_and_transport_headers(&mut downstream_response_parts.headers);
+    if enforce_h2_response_header_limit(&downstream_response_parts, max_header_list_size).is_err() {
         h2_relay_debug("[h2-relay:response] response header limit exceeded; resetting stream");
         downstream_respond.send_reset(h2::Reason::PROTOCOL_ERROR);
         flow_hooks.on_stream_end(stream_context).await;
@@ -233,7 +235,7 @@ where
 
     let response_end_stream =
         response_captured.bytes.is_empty() && response_captured.trailers.as_ref().is_none();
-    let downstream_response = http::Response::from_parts(response_parts.clone(), ());
+    let downstream_response = http::Response::from_parts(downstream_response_parts.clone(), ());
     let mut downstream_response_stream =
         match downstream_respond.send_response(downstream_response, response_end_stream) {
             Ok(stream) => stream,

@@ -182,6 +182,24 @@ async fn read_to_end_allow_unexpected_eof<S: AsyncRead + Unpin>(stream: &mut S) 
     out
 }
 
+async fn read_h2_body_and_trailers(
+    body: &mut h2::RecvStream,
+) -> (Vec<u8>, Option<http::HeaderMap>) {
+    let mut payload = Vec::new();
+    while let Some(chunk) = body.data().await {
+        payload.extend_from_slice(&chunk.expect("read body chunk"));
+    }
+    let trailers = if body.is_end_stream() {
+        None
+    } else {
+        tokio::time::timeout(Duration::from_secs(1), body.trailers())
+            .await
+            .expect("read body trailers timeout")
+            .expect("read body trailers")
+    };
+    (payload, trailers)
+}
+
 fn should_retry_bind(error: &std::io::Error) -> bool {
     matches!(
         error.kind(),
@@ -938,6 +956,264 @@ async fn upstream_http1_only_relays_with_downstream_http2_translation() {
         stream_closed_for_protocol(&events, ApplicationProtocol::Http2, "mitm_http_error")
             .is_none(),
         "unexpected mitm_http_error close for translated HTTP/2 stream"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn upstream_http2_response_forbidden_headers_and_trailers_are_sanitized() {
+    let upstream_listener = bind_loopback_listener_with_retry("bind upstream listener").await;
+    let upstream_addr = upstream_listener.local_addr().expect("upstream addr");
+    let mut upstream_task = Some(tokio::spawn(async move {
+        let server_config =
+            build_http_server_config_for_host("127.0.0.1", true).expect("h2 server config");
+        let acceptor = TlsAcceptor::from(server_config);
+        let (tcp, _) = upstream_listener.accept().await.expect("accept upstream");
+        let tls = acceptor.accept(tcp).await.expect("TLS accept");
+        assert_eq!(tls.get_ref().1.alpn_protocol(), Some(b"h2".as_slice()));
+
+        let mut h2_conn = h2::server::handshake(tls).await.expect("h2 handshake");
+        let Some(stream_result) = h2_conn.accept().await else {
+            panic!("missing h2 request stream");
+        };
+        let (request, mut respond) = stream_result.expect("accept h2 request");
+        assert_eq!(request.method(), http::Method::GET);
+        assert_eq!(request.uri().path(), "/h2-trailer-sanitize");
+        drop(request.into_body());
+
+        let response = http::Response::builder()
+            .status(200)
+            .header("content-length", "5")
+            .header("trailer", "content-length, x-safe-trailer")
+            .body(())
+            .expect("response");
+        let mut send = respond
+            .send_response(response, false)
+            .expect("send response headers");
+        send.send_data(Bytes::from_static(b"hello"), false)
+            .expect("send response data");
+        let mut trailers = http::HeaderMap::new();
+        trailers.insert("content-length", http::HeaderValue::from_static("999"));
+        trailers.insert("x-safe-trailer", http::HeaderValue::from_static("ok"));
+        send.send_trailers(trailers)
+            .expect("send response trailers");
+
+        h2_conn.graceful_shutdown();
+        let _ = tokio::time::timeout(Duration::from_millis(250), async {
+            let _ = poll_fn(|cx| h2_conn.poll_closed(cx)).await;
+        })
+        .await;
+    }));
+
+    let sink = VecEventConsumer::default();
+    let config = MitmConfig {
+        upstream_tls_insecure_skip_verify: true,
+        http2_enabled: true,
+        ..MitmConfig::default()
+    };
+    let (proxy_addr, proxy_task, sink) = start_sidecar_with_sink(sink, config).await;
+
+    let mut tcp = TcpStream::connect(proxy_addr)
+        .await
+        .expect("connect sidecar");
+    let connect = format!(
+        "CONNECT 127.0.0.1:{} HTTP/1.1\r\nHost: 127.0.0.1:{}\r\n\r\n",
+        upstream_addr.port(),
+        upstream_addr.port()
+    );
+    tcp.write_all(connect.as_bytes())
+        .await
+        .expect("write CONNECT");
+    let connect_response = read_response_head(&mut tcp).await;
+    assert!(
+        connect_response.starts_with("HTTP/1.1 200 Connection Established"),
+        "{connect_response}"
+    );
+
+    let connector = TlsConnector::from(build_http_client_config(true, true));
+    let server_name = ServerName::try_from("127.0.0.1".to_string()).expect("server name");
+    let tls = connector
+        .connect(server_name, tcp)
+        .await
+        .expect("TLS connect to sidecar");
+    assert_eq!(tls.get_ref().1.alpn_protocol(), Some(b"h2".as_slice()));
+
+    let (mut h2_client, h2_connection) = h2::client::handshake(tls)
+        .await
+        .expect("h2 client handshake");
+    let mut h2_connection_task = tokio::spawn(h2_connection);
+
+    let request = http::Request::builder()
+        .method("GET")
+        .uri("https://127.0.0.1/h2-trailer-sanitize")
+        .body(())
+        .expect("request");
+    let (response_future, _send_stream) = h2_client
+        .send_request(request, true)
+        .expect("send h2 request");
+    let response = response_future.await.expect("h2 response");
+    assert_eq!(response.status(), http::StatusCode::OK);
+    assert!(response.headers().get("trailer").is_none());
+
+    let mut body = response.into_body();
+    let (payload, trailers) = read_h2_body_and_trailers(&mut body).await;
+    assert_eq!(&payload, b"hello");
+    let trailers = trailers.expect("response trailers");
+    assert_eq!(
+        trailers
+            .get("x-safe-trailer")
+            .and_then(|value| value.to_str().ok()),
+        Some("ok")
+    );
+    assert!(trailers.get("content-length").is_none());
+
+    if let Some(task) = upstream_task.take() {
+        task.await.expect("upstream task");
+    }
+    drop(h2_client);
+    if tokio::time::timeout(Duration::from_millis(500), &mut h2_connection_task)
+        .await
+        .is_err()
+    {
+        h2_connection_task.abort();
+    }
+    tokio::time::sleep(Duration::from_millis(25)).await;
+    proxy_task.abort();
+
+    let events = sink.snapshot();
+    assert!(
+        stream_closed_for_protocol(&events, ApplicationProtocol::Http2, "mitm_http_error")
+            .is_none(),
+        "unexpected mitm_http_error close for sanitized h2 response"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn upstream_http1_chunked_trailers_are_sanitized_for_downstream_h2() {
+    let upstream_listener = bind_loopback_listener_with_retry("bind upstream listener").await;
+    let upstream_addr = upstream_listener.local_addr().expect("upstream addr");
+    let upstream_task = tokio::spawn(async move {
+        let server_config = build_http1_server_config_for_host("127.0.0.1").expect("server config");
+        let acceptor = TlsAcceptor::from(server_config);
+        let mut accepted_connections = 0_usize;
+        loop {
+            let (tcp, _) = upstream_listener.accept().await.expect("accept upstream");
+            accepted_connections += 1;
+            let mut tls = acceptor.accept(tcp).await.expect("TLS accept");
+            assert_eq!(
+                tls.get_ref().1.alpn_protocol(),
+                Some(b"http/1.1".as_slice())
+            );
+
+            let request_head =
+                tokio::time::timeout(Duration::from_secs(2), read_http_head(&mut tls))
+                    .await
+                    .unwrap_or_default();
+            if request_head.is_empty() {
+                let _ = tls.shutdown().await;
+                assert!(
+                    accepted_connections < 4,
+                    "expected sidecar to forward an HTTP request after optional probes"
+                );
+                continue;
+            }
+
+            let request_text = String::from_utf8_lossy(&request_head);
+            assert!(
+                request_text.starts_with("GET /http1-trailer-sanitize HTTP/1.1"),
+                "{request_text}"
+            );
+
+            let response = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nTrailer: content-length, x-safe-trailer\r\nConnection: close\r\n\r\n5\r\nhello\r\n0\r\ncontent-length: 999\r\nx-safe-trailer: ok\r\n\r\n";
+            tls.write_all(response).await.expect("write response");
+            tls.shutdown().await.expect("shutdown upstream TLS");
+            break accepted_connections;
+        }
+    });
+
+    let sink = VecEventConsumer::default();
+    let config = MitmConfig {
+        upstream_tls_insecure_skip_verify: true,
+        http2_enabled: true,
+        ..MitmConfig::default()
+    };
+    let (proxy_addr, proxy_task, sink) = start_sidecar_with_sink(sink, config).await;
+
+    let mut tcp = TcpStream::connect(proxy_addr)
+        .await
+        .expect("connect sidecar");
+    let connect = format!(
+        "CONNECT 127.0.0.1:{} HTTP/1.1\r\nHost: 127.0.0.1:{}\r\n\r\n",
+        upstream_addr.port(),
+        upstream_addr.port()
+    );
+    tcp.write_all(connect.as_bytes())
+        .await
+        .expect("write CONNECT");
+    let connect_response = read_response_head(&mut tcp).await;
+    assert!(
+        connect_response.starts_with("HTTP/1.1 200 Connection Established"),
+        "{connect_response}"
+    );
+
+    let connector = TlsConnector::from(build_http_client_config(true, true));
+    let server_name = ServerName::try_from("127.0.0.1".to_string()).expect("server name");
+    let tls = connector
+        .connect(server_name, tcp)
+        .await
+        .expect("TLS connect to sidecar");
+    assert_eq!(tls.get_ref().1.alpn_protocol(), Some(b"h2".as_slice()));
+
+    let (mut h2_client, h2_connection) = h2::client::handshake(tls)
+        .await
+        .expect("h2 client handshake");
+    let mut h2_connection_task = tokio::spawn(h2_connection);
+
+    let request = http::Request::builder()
+        .method("GET")
+        .uri("https://127.0.0.1/http1-trailer-sanitize")
+        .body(())
+        .expect("request");
+    let (response_future, _send_stream) = h2_client
+        .send_request(request, true)
+        .expect("send h2 request");
+    let response = response_future.await.expect("h2 response");
+    assert_eq!(response.status(), http::StatusCode::OK);
+
+    let mut body = response.into_body();
+    let (payload, trailers) = read_h2_body_and_trailers(&mut body).await;
+    assert_eq!(&payload, b"hello");
+    let trailers = trailers.expect("response trailers");
+    assert_eq!(
+        trailers
+            .get("x-safe-trailer")
+            .and_then(|value| value.to_str().ok()),
+        Some("ok")
+    );
+    assert!(trailers.get("content-length").is_none());
+
+    let accepted_connections = tokio::time::timeout(Duration::from_secs(2), upstream_task)
+        .await
+        .expect("upstream task timeout")
+        .expect("upstream task");
+    assert!(
+        accepted_connections >= 1,
+        "upstream should receive at least one TLS connection"
+    );
+    drop(h2_client);
+    if tokio::time::timeout(Duration::from_millis(500), &mut h2_connection_task)
+        .await
+        .is_err()
+    {
+        h2_connection_task.abort();
+    }
+    tokio::time::sleep(Duration::from_millis(25)).await;
+    proxy_task.abort();
+
+    let events = sink.snapshot();
+    assert!(
+        stream_closed_for_protocol(&events, ApplicationProtocol::Http2, "mitm_http_error")
+            .is_none(),
+        "unexpected mitm_http_error close for translated HTTP/2 stream with trailers"
     );
 }
 

@@ -66,19 +66,32 @@ async fn send_h2_captured_body(
     runtime_governor: &Arc<runtime_governor::RuntimeGovernor>,
     captured: H2CapturedBody,
 ) -> io::Result<Option<http::HeaderMap>> {
-    if !captured.bytes.is_empty() {
+    let H2CapturedBody {
+        bytes,
+        mut trailers,
+        ..
+    } = captured;
+
+    if let Some(candidate) = trailers.as_mut() {
+        strip_trailer_forbidden_and_transport_headers(candidate);
+        if candidate.is_empty() {
+            trailers = None;
+        }
+    }
+
+    if !bytes.is_empty() {
         send_h2_data_with_backpressure(
             sink,
             runtime_governor,
-            captured.bytes,
-            captured.trailers.is_none(),
+            bytes,
+            trailers.is_none(),
         )
         .await?;
-    } else if captured.trailers.is_none() {
+    } else if trailers.is_none() {
         send_h2_data_with_backpressure(sink, runtime_governor, bytes::Bytes::new(), true).await?;
     }
 
-    if let Some(trailers) = captured.trailers {
+    if let Some(trailers) = trailers {
         sink.send_trailers(trailers.clone())
             .map_err(|error| h2_error_to_io("sending HTTP/2 trailers failed", error))?;
         return Ok(Some(trailers));

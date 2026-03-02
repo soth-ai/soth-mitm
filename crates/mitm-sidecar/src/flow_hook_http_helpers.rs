@@ -17,6 +17,14 @@ const HANDLER_STRIP_HEADERS: &[&str] = &[
     "upgrade",
 ];
 
+const TRAILER_STRIP_HEADERS: &[&str] = &[
+    "content-length",
+    "content-encoding",
+    "content-type",
+    "content-range",
+    "host",
+];
+
 struct BodyCaptureObserver {
     body: Vec<u8>,
     max_handler_bytes: usize,
@@ -116,6 +124,13 @@ fn strip_hop_by_hop_and_transport_headers(headers: &mut HeaderMap) {
     }
     for name in blocked {
         headers.remove(name);
+    }
+}
+
+fn strip_trailer_forbidden_and_transport_headers(headers: &mut HeaderMap) {
+    strip_hop_by_hop_and_transport_headers(headers);
+    for name in TRAILER_STRIP_HEADERS {
+        headers.remove(HeaderName::from_static(name));
     }
 }
 
@@ -480,4 +495,5 @@ mod flow_hook_http_helpers_tests {
             Some("anthropic.com")
         );
     }
+
 }
