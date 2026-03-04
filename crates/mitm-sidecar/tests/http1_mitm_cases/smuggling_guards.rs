@@ -81,6 +81,116 @@ async fn forward_proxy_rejects_te_cl_smuggling_request_with_deterministic_400() 
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn forward_proxy_rejects_origin_form_self_target_with_deterministic_508() {
+    let sink = VecEventConsumer::default();
+    let (proxy_addr, proxy_task, sink, _diagnostics, _learning) =
+        start_sidecar_with_sink(sink, MitmConfig::default()).await;
+
+    let mut client = TcpStream::connect(proxy_addr)
+        .await
+        .expect("connect sidecar");
+    let request = format!(
+        "GET /__soth/health HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nConnection: close\r\n\r\n",
+        proxy_addr.port()
+    );
+    client
+        .write_all(request.as_bytes())
+        .await
+        .expect("write request");
+    client.flush().await.expect("flush request");
+
+    let response = read_to_end_allow_unexpected_eof(&mut client).await;
+    let response_text = String::from_utf8_lossy(&response);
+    assert!(
+        response_text.starts_with("HTTP/1.1 508 Loop Detected"),
+        "{response_text}"
+    );
+    assert!(
+        response_text.contains("forward proxy self-target not allowed"),
+        "{response_text}"
+    );
+
+    tokio::time::sleep(Duration::from_millis(25)).await;
+    proxy_task.abort();
+
+    let events = sink.snapshot();
+    let stream_closed = events
+        .iter()
+        .find(|event| event.kind == EventType::StreamClosed)
+        .expect("stream closed event");
+    assert_eq!(
+        stream_closed
+            .attributes
+            .get("reason_code")
+            .map(String::as_str),
+        Some("route_planner_failed")
+    );
+    assert!(
+        stream_closed
+            .attributes
+            .get("reason_detail")
+            .map(String::as_str)
+            .unwrap_or_default()
+            .contains("self-target loop detected")
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn connect_rejects_self_target_with_deterministic_508() {
+    let sink = VecEventConsumer::default();
+    let (proxy_addr, proxy_task, sink, _diagnostics, _learning) =
+        start_sidecar_with_sink(sink, MitmConfig::default()).await;
+
+    let mut client = TcpStream::connect(proxy_addr)
+        .await
+        .expect("connect sidecar");
+    let connect = format!(
+        "CONNECT 127.0.0.1:{} HTTP/1.1\r\nHost: 127.0.0.1:{}\r\n\r\n",
+        proxy_addr.port(),
+        proxy_addr.port()
+    );
+    client
+        .write_all(connect.as_bytes())
+        .await
+        .expect("write CONNECT");
+    client.flush().await.expect("flush CONNECT");
+
+    let response_text = read_response_head(&mut client).await;
+    assert!(
+        response_text.starts_with("HTTP/1.1 508 Loop Detected"),
+        "{response_text}"
+    );
+    assert!(
+        response_text.contains("proxy CONNECT target resolves to listener itself"),
+        "{response_text}"
+    );
+
+    tokio::time::sleep(Duration::from_millis(25)).await;
+    proxy_task.abort();
+
+    let events = sink.snapshot();
+    let stream_closed = events
+        .iter()
+        .find(|event| event.kind == EventType::StreamClosed)
+        .expect("stream closed event");
+    assert_eq!(
+        stream_closed
+            .attributes
+            .get("reason_code")
+            .map(String::as_str),
+        Some("route_planner_failed")
+    );
+    assert!(
+        stream_closed
+            .attributes
+            .get("reason_detail")
+            .map(String::as_str)
+            .unwrap_or_default()
+            .contains("self-target loop detected")
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn intercept_path_rejects_te_cl_smuggling_before_upstream_http_bytes() {
     let upstream_listener = TcpListener::bind("127.0.0.1:0")
         .await

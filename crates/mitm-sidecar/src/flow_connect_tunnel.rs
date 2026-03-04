@@ -50,6 +50,7 @@ where
     let tls_diagnostics = Arc::clone(&runtime.tls_diagnostics);
     let tls_learning = Arc::clone(&runtime.tls_learning);
     let flow_hooks = Arc::clone(&runtime.flow_hooks);
+    let listener_addr = downstream.local_addr().ok();
 
     let mut input =
         match read_connect_head(&mut downstream, max_connect_head_bytes, &runtime_governor).await {
@@ -111,6 +112,7 @@ where
                     process_info.clone(),
                     input,
                     max_http_head_bytes,
+                    listener_addr,
                 )
                 .await;
             }
@@ -139,6 +141,43 @@ where
                 return Ok(());
             }
         };
+
+    let (listen_addr, listen_port) = listener_addr
+        .map(|addr| (addr.ip().to_string(), addr.port()))
+        .unwrap_or_else(|| (engine.config.listen_addr.clone(), engine.config.listen_port));
+
+    if is_self_listener_target(
+        &connect.server_host,
+        connect.server_port,
+        &listen_addr,
+        listen_port,
+    ) {
+        let context = FlowContext {
+            flow_id,
+            client_addr,
+            server_host: connect.server_host,
+            server_port: connect.server_port,
+            protocol: ApplicationProtocol::Tunnel,
+        };
+        write_proxy_response(
+            &mut downstream,
+            "508 Loop Detected",
+            "proxy CONNECT target resolves to listener itself",
+        )
+        .await?;
+        emit_stream_closed(
+            &engine,
+            context,
+            CloseReasonCode::RoutePlannerFailed,
+            Some(format!(
+                "connect self-target loop detected: listener {}:{}",
+                listen_addr, listen_port
+            )),
+            None,
+            None,
+        );
+        return Ok(());
+    }
 
     let mut route_planner = FlowRoutePlanner::default();
     let route = match route_planner.bind_once(

@@ -11,6 +11,7 @@ async fn handle_forward_http1_proxy_request<P, S, D>(
     process_info: Option<mitm_policy::ProcessInfo>,
     initial_head: Vec<u8>,
     max_http_head_bytes: usize,
+    listener_addr: Option<std::net::SocketAddr>,
 ) -> io::Result<()>
 where
     P: PolicyEngine + Send + Sync + 'static,
@@ -73,6 +74,43 @@ where
             return Ok(());
         }
     };
+
+    let (listen_addr, listen_port) = listener_addr
+        .map(|addr| (addr.ip().to_string(), addr.port()))
+        .unwrap_or_else(|| (engine.config.listen_addr.clone(), engine.config.listen_port));
+
+    if is_self_listener_target(
+        &target.host,
+        target.port,
+        &listen_addr,
+        listen_port,
+    ) {
+        let context = FlowContext {
+            flow_id,
+            client_addr,
+            server_host: target.host.clone(),
+            server_port: target.port,
+            protocol: ApplicationProtocol::Http1,
+        };
+        emit_stream_closed(
+            &engine,
+            context,
+            CloseReasonCode::RoutePlannerFailed,
+            Some(format!(
+                "forward-proxy self-target loop detected: {}:{} matches listener {}:{}",
+                target.host, target.port, listen_addr, listen_port
+            )),
+            None,
+            None,
+        );
+        write_forward_proxy_error_response(
+            &mut downstream,
+            "508 Loop Detected",
+            "forward proxy self-target not allowed",
+        )
+        .await?;
+        return Ok(());
+    }
 
     let mut route_planner = FlowRoutePlanner::default();
     let route = match route_planner.bind_once(&engine.config, target) {

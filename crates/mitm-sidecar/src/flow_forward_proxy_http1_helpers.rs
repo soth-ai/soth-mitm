@@ -1,4 +1,5 @@
 use http::Uri;
+use std::net::IpAddr;
 
 fn is_forward_http1_request_candidate(input: &[u8]) -> bool {
     if let Ok(request) = parse_http_request_head(input) {
@@ -38,6 +39,61 @@ fn resolve_forward_http_route(request: &HttpRequestHead) -> io::Result<RouteTarg
         return resolve_absolute_form_forward_http_route(request);
     }
     resolve_origin_form_forward_http_route(request)
+}
+
+fn is_self_listener_target(
+    target_host: &str,
+    target_port: u16,
+    listen_addr: &str,
+    listen_port: u16,
+) -> bool {
+    if target_port != listen_port {
+        return false;
+    }
+
+    let target_host = normalize_authority_host(target_host);
+    let listen_addr = normalize_authority_host(listen_addr.trim());
+
+    if target_host.eq_ignore_ascii_case(listen_addr) {
+        return true;
+    }
+
+    let target_ip = target_host.parse::<IpAddr>().ok();
+    let listen_ip = listen_addr.parse::<IpAddr>().ok();
+
+    if let (Some(target_ip), Some(listen_ip)) = (target_ip, listen_ip) {
+        if target_ip == listen_ip {
+            return true;
+        }
+        if target_ip.is_loopback() && listen_ip.is_loopback() {
+            return true;
+        }
+        if listen_ip.is_unspecified() && target_ip.is_loopback() {
+            return true;
+        }
+    }
+
+    if is_localhost_name(target_host) {
+        if is_localhost_name(listen_addr) {
+            return true;
+        }
+        if let Some(listen_ip) = listen_ip {
+            return listen_ip.is_loopback() || listen_ip.is_unspecified();
+        }
+    }
+
+    false
+}
+
+fn normalize_authority_host(value: &str) -> &str {
+    value
+        .strip_prefix('[')
+        .and_then(|trimmed| trimmed.strip_suffix(']'))
+        .unwrap_or(value)
+}
+
+fn is_localhost_name(value: &str) -> bool {
+    value.eq_ignore_ascii_case("localhost")
 }
 
 fn resolve_absolute_form_forward_http_route(request: &HttpRequestHead) -> io::Result<RouteTarget> {
