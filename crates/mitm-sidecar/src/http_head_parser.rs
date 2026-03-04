@@ -329,18 +329,6 @@ fn is_sse_response(response: &HttpResponseHead) -> bool {
     })
 }
 
-fn is_websocket_upgrade_request(request: &HttpRequestHead) -> bool {
-    request.method.eq_ignore_ascii_case("GET")
-        && has_header_token(&request.headers, "connection", "upgrade")
-        && has_header_value(&request.headers, "upgrade", "websocket")
-}
-
-fn is_websocket_upgrade_response(response: &HttpResponseHead) -> bool {
-    response.status_code == 101
-        && has_header_token(&response.headers, "connection", "upgrade")
-        && has_header_value(&response.headers, "upgrade", "websocket")
-}
-
 fn is_connection_close(version: HttpVersion, headers: &[HttpHeader]) -> bool {
     if has_header_token(headers, "connection", "close") {
         return true;

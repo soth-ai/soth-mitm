@@ -5,6 +5,7 @@ const HAPPY_EYEBALLS_STAGGER: std::time::Duration = std::time::Duration::from_mi
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct IoTimeoutConfig {
     idle_watchdog_timeout: std::time::Duration,
+    websocket_idle_watchdog_timeout: std::time::Duration,
     upstream_connect_timeout: std::time::Duration,
     stream_stage_timeout: std::time::Duration,
 }
@@ -13,6 +14,7 @@ impl Default for IoTimeoutConfig {
     fn default() -> Self {
         Self {
             idle_watchdog_timeout: std::time::Duration::from_secs(30),
+            websocket_idle_watchdog_timeout: std::time::Duration::from_secs(600),
             upstream_connect_timeout: std::time::Duration::from_secs(10),
             stream_stage_timeout: std::time::Duration::from_secs(5),
         }
@@ -63,11 +65,13 @@ fn ensure_bounded_timeout(timeout: std::time::Duration) -> std::time::Duration {
 
 fn install_io_timeout_config(
     idle_watchdog_timeout: std::time::Duration,
+    websocket_idle_watchdog_timeout: std::time::Duration,
     upstream_connect_timeout: std::time::Duration,
     stream_stage_timeout: std::time::Duration,
 ) {
     let config = IoTimeoutConfig {
         idle_watchdog_timeout: ensure_bounded_timeout(idle_watchdog_timeout),
+        websocket_idle_watchdog_timeout: ensure_bounded_timeout(websocket_idle_watchdog_timeout),
         upstream_connect_timeout: ensure_bounded_timeout(upstream_connect_timeout),
         stream_stage_timeout: ensure_bounded_timeout(stream_stage_timeout),
     };
@@ -301,6 +305,44 @@ where
     }
 }
 
+async fn read_with_websocket_idle_timeout<R>(
+    stream: &mut R,
+    buf: &mut [u8],
+    stage: &'static str,
+) -> std::io::Result<usize>
+where
+    R: tokio::io::AsyncRead + Unpin,
+{
+    let timeout = io_timeout_config().websocket_idle_watchdog_timeout;
+    match tokio::time::timeout(timeout, tokio::io::AsyncReadExt::read(stream, buf)).await {
+        Ok(result) => result,
+        Err(_) => {
+            runtime_governor::mark_idle_timeout_global();
+            runtime_governor::mark_stuck_flow_global();
+            Err(timeout_error(IDLE_TIMEOUT_ERROR_PREFIX, stage, timeout))
+        }
+    }
+}
+
+async fn write_all_with_websocket_idle_timeout<W>(
+    stream: &mut W,
+    bytes: &[u8],
+    stage: &'static str,
+) -> std::io::Result<()>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    let timeout = io_timeout_config().websocket_idle_watchdog_timeout;
+    match tokio::time::timeout(timeout, tokio::io::AsyncWriteExt::write_all(stream, bytes)).await {
+        Ok(result) => result,
+        Err(_) => {
+            runtime_governor::mark_idle_timeout_global();
+            runtime_governor::mark_stuck_flow_global();
+            Err(timeout_error(IDLE_TIMEOUT_ERROR_PREFIX, stage, timeout))
+        }
+    }
+}
+
 async fn flush_with_idle_timeout<W>(
     stream: &mut W,
     stage: &'static str,
@@ -319,6 +361,24 @@ where
     }
 }
 
+async fn flush_with_websocket_idle_timeout<W>(
+    stream: &mut W,
+    stage: &'static str,
+) -> std::io::Result<()>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    let timeout = io_timeout_config().websocket_idle_watchdog_timeout;
+    match tokio::time::timeout(timeout, tokio::io::AsyncWriteExt::flush(stream)).await {
+        Ok(result) => result,
+        Err(_) => {
+            runtime_governor::mark_idle_timeout_global();
+            runtime_governor::mark_stuck_flow_global();
+            Err(timeout_error(IDLE_TIMEOUT_ERROR_PREFIX, stage, timeout))
+        }
+    }
+}
+
 async fn shutdown_with_idle_timeout<W>(
     stream: &mut W,
     stage: &'static str,
@@ -327,6 +387,28 @@ where
     W: tokio::io::AsyncWrite + Unpin,
 {
     let timeout = io_timeout_config().idle_watchdog_timeout;
+    match tokio::time::timeout(timeout, tokio::io::AsyncWriteExt::shutdown(stream)).await {
+        Ok(result) => match result {
+            Ok(()) => Ok(()),
+            Err(error) if ignored_shutdown_error(&error) => Ok(()),
+            Err(error) => Err(error),
+        },
+        Err(_) => {
+            runtime_governor::mark_idle_timeout_global();
+            runtime_governor::mark_stuck_flow_global();
+            Err(timeout_error(IDLE_TIMEOUT_ERROR_PREFIX, stage, timeout))
+        }
+    }
+}
+
+async fn shutdown_with_websocket_idle_timeout<W>(
+    stream: &mut W,
+    stage: &'static str,
+) -> std::io::Result<()>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    let timeout = io_timeout_config().websocket_idle_watchdog_timeout;
     match tokio::time::timeout(timeout, tokio::io::AsyncWriteExt::shutdown(stream)).await {
         Ok(result) => match result {
             Ok(()) => Ok(()),

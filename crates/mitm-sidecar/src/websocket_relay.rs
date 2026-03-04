@@ -1,9 +1,5 @@
 const WS_FRAME_COPY_CHUNK_SIZE: usize = 8 * 1024;
-const WS_MAX_FRAME_HEADER_BYTES: usize = 14;
 const WS_OPCODE_CLOSE: u8 = 0x8;
-const WS_OPCODE_PING: u8 = 0x9;
-const WS_OPCODE_PONG: u8 = 0xA;
-const WS_CONTROL_MAX_PAYLOAD_BYTES: u64 = 125;
 const WS_TURN_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(750);
 const WS_OBSERVER_CHANNEL_CAPACITY: usize = 1024;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -93,25 +89,26 @@ where
     let upstream_write = Arc::new(tokio::sync::Mutex::new(upstream_write));
     let frame_sequence = Arc::new(std::sync::atomic::AtomicU64::new(0));
     let max_payload_capture_bytes = engine.config.max_flow_decoder_buffer_bytes.max(1);
+    let max_frame_payload_bytes = engine.config.max_flow_body_buffer_bytes.max(1);
     let client_task = tokio::spawn(relay_websocket_direction(
         mitm_http::WsDirection::ClientToServer,
         PrefixedReader::new(downstream_prefetch, downstream_read),
         Arc::clone(&upstream_write),
-        Arc::clone(&downstream_write),
         Arc::clone(&runtime_governor),
         Arc::clone(&frame_sequence),
         observer_tx.clone(),
         max_payload_capture_bytes,
+        max_frame_payload_bytes,
     ));
     let server_task = tokio::spawn(relay_websocket_direction(
         mitm_http::WsDirection::ServerToClient,
         PrefixedReader::new(upstream_prefetch, upstream_read),
         downstream_write,
-        upstream_write,
         runtime_governor,
         Arc::clone(&frame_sequence),
         observer_tx.clone(),
         max_payload_capture_bytes,
+        max_frame_payload_bytes,
     ));
     let (client_join, server_join) = tokio::join!(client_task, server_task);
     let client_result = map_joined_direction_result("client_to_server", client_join);
@@ -177,131 +174,68 @@ where
     Err(io::Error::other("websocket relay failed"))
 }
 
-async fn relay_websocket_direction<R, WF, WC>(
+async fn relay_websocket_direction<R, WF>(
     direction: mitm_http::WsDirection,
     mut source: PrefixedReader<R>,
     forward_sink: Arc<tokio::sync::Mutex<WF>>,
-    control_sink: Arc<tokio::sync::Mutex<WC>>,
     runtime_governor: Arc<runtime_governor::RuntimeGovernor>,
     frame_sequence: Arc<std::sync::atomic::AtomicU64>,
     observer_tx: tokio::sync::mpsc::Sender<WebSocketObserverMessage>,
     max_payload_capture_bytes: usize,
+    max_frame_payload_bytes: usize,
 ) -> io::Result<WebSocketDirectionOutcome>
 where
     R: AsyncRead + Unpin,
     WF: AsyncWrite + Unpin + Send + 'static,
-    WC: AsyncWrite + Unpin + Send + 'static,
 {
     let mut bytes_forwarded = 0_u64;
+    let mut frame_codec = soketto::base::Codec::new();
+    frame_codec.set_max_data_size(max_frame_payload_bytes);
     loop {
-        let mut initial_header = [0_u8; 2];
-        let has_frame = source.read_exact_or_eof(&mut initial_header).await?;
-        if !has_frame {
+        let next_frame = read_websocket_frame_header(&mut source, &frame_codec).await?;
+        let Some((frame_header, header_view)) = next_frame
+        else {
             let mut sink = forward_sink.lock().await;
-            shutdown_with_idle_timeout(&mut *sink, "websocket_sink_shutdown").await?;
+            shutdown_with_websocket_idle_timeout(&mut *sink, "websocket_sink_shutdown").await?;
             return Ok(WebSocketDirectionOutcome {
                 bytes_forwarded,
                 close_frame_seen: false,
             });
-        }
+        };
+        let fin = header_view.fin;
+        let opcode = header_view.opcode;
+        let masked = header_view.masked;
+        validate_websocket_mask_direction(direction, masked)?;
+        let payload_len = header_view.payload_len as u64;
+        let masking_key = header_view.mask.map(|value| value.to_be_bytes());
 
-        let mut frame_header = Vec::with_capacity(WS_MAX_FRAME_HEADER_BYTES);
-        frame_header.extend_from_slice(&initial_header);
-        let fin = (initial_header[0] & 0b1000_0000) != 0;
-        let opcode = initial_header[0] & 0b0000_1111;
-        let masked = (initial_header[1] & 0b1000_0000) != 0;
-        let mut payload_len = (initial_header[1] & 0b0111_1111) as u64;
-        if (opcode & 0b1000) != 0 {
-            if !fin {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "fragmented websocket control frame",
-                ));
-            }
-            if payload_len > WS_CONTROL_MAX_PAYLOAD_BYTES {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "websocket control frame payload exceeds 125 bytes",
-                ));
-            }
+        {
+            let _in_flight_lease = runtime_governor.reserve_in_flight_or_error(
+                frame_header.len(),
+                "websocket_frame_header_write",
+            )?;
+            let mut sink = forward_sink.lock().await;
+            write_all_with_websocket_idle_timeout(
+                &mut *sink,
+                &frame_header,
+                "websocket_frame_header_write",
+            )
+            .await?;
         }
-        let mut masking_key: Option<[u8; 4]> = None;
-        if payload_len == 126 {
-            let mut ext_len = [0_u8; 2];
-            source
-                .read_exact_required(&mut ext_len, "extended payload length")
-                .await?;
-            frame_header.extend_from_slice(&ext_len);
-            payload_len = u16::from_be_bytes(ext_len) as u64;
-        } else if payload_len == 127 {
-            let mut ext_len = [0_u8; 8];
-            source
-                .read_exact_required(&mut ext_len, "extended payload length")
-                .await?;
-            frame_header.extend_from_slice(&ext_len);
-            payload_len = u64::from_be_bytes(ext_len);
-            if (payload_len & (1_u64 << 63)) != 0 {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "websocket payload length used reserved high bit",
-                ));
-            }
-        }
-        if masked {
-            let mut key = [0_u8; 4];
-            source.read_exact_required(&mut key, "masking key").await?;
-            frame_header.extend_from_slice(&key);
-            masking_key = Some(key);
-        }
-
-        let payload = if opcode == WS_OPCODE_PING || opcode == WS_OPCODE_PONG {
-            let payload = read_websocket_payload_captured(
+        bytes_forwarded += frame_header.len() as u64;
+        let payload = {
+            let mut sink = forward_sink.lock().await;
+            relay_websocket_payload(
                 &mut source,
+                &mut *sink,
+                &runtime_governor,
                 payload_len,
                 masking_key,
                 max_payload_capture_bytes,
             )
-            .await?;
-            if opcode == WS_OPCODE_PING {
-                send_websocket_pong(
-                    direction,
-                    &control_sink,
-                    &runtime_governor,
-                    payload.as_ref(),
-                )
-                .await?;
-            }
-            payload
-        } else {
-            {
-                let _in_flight_lease = runtime_governor.reserve_in_flight_or_error(
-                    frame_header.len(),
-                    "websocket_frame_header_write",
-                )?;
-                let mut sink = forward_sink.lock().await;
-                write_all_with_idle_timeout(
-                    &mut *sink,
-                    &frame_header,
-                    "websocket_frame_header_write",
-                )
-                .await?;
-            }
-            bytes_forwarded += frame_header.len() as u64;
-            let payload = {
-                let mut sink = forward_sink.lock().await;
-                relay_websocket_payload(
-                    &mut source,
-                    &mut *sink,
-                    &runtime_governor,
-                    payload_len,
-                    masking_key,
-                    max_payload_capture_bytes,
-                )
-                .await?
-            };
-            bytes_forwarded += payload_len;
-            payload
+            .await?
         };
+        bytes_forwarded += payload_len;
 
         let frame_kind = if (opcode & 0b1000) != 0 {
             mitm_http::WsFrameKind::Control
@@ -342,7 +276,7 @@ where
 
         if opcode == WS_OPCODE_CLOSE {
             let mut sink = forward_sink.lock().await;
-            flush_with_idle_timeout(&mut *sink, "websocket_close_flush").await?;
+            flush_with_websocket_idle_timeout(&mut *sink, "websocket_close_flush").await?;
             return Ok(WebSocketDirectionOutcome {
                 bytes_forwarded,
                 close_frame_seen: true,

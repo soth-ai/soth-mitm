@@ -19,6 +19,8 @@ include!("http2_stream_hook_dispatch.rs");
 include!("http2_stream_relay_stream.rs");
 include!("websocket_relay.rs");
 include!("websocket_relay_io.rs");
+include!("websocket_codec.rs");
+include!("websocket_handshake_validation.rs");
 include!("websocket_relay_support.rs");
 include!("websocket_turn_tracker.rs");
 include!("websocket_events.rs");

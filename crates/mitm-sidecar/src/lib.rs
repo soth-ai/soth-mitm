@@ -55,6 +55,7 @@ pub struct SidecarConfig {
     pub max_http_head_bytes: usize,
     pub accept_retry_backoff_ms: u64,
     pub idle_watchdog_timeout: Duration,
+    pub websocket_idle_watchdog_timeout: Duration,
     pub upstream_connect_timeout: Duration,
     pub stream_stage_timeout: Duration,
     pub unix_socket_path: Option<String>,
@@ -68,6 +69,7 @@ impl Default for SidecarConfig {
             max_http_head_bytes: 64 * 1024,
             accept_retry_backoff_ms: DEFAULT_LISTENER_ACCEPT_RETRY_BACKOFF_MS,
             idle_watchdog_timeout: Duration::from_secs(30),
+            websocket_idle_watchdog_timeout: Duration::from_secs(600),
             upstream_connect_timeout: Duration::from_secs(10),
             stream_stage_timeout: Duration::from_secs(15),
             unix_socket_path: None,
@@ -197,6 +199,7 @@ where
         runtime_governor::set_event_queue_depth_global(0);
         install_io_timeout_config(
             config.idle_watchdog_timeout,
+            config.websocket_idle_watchdog_timeout,
             config.upstream_connect_timeout,
             config.stream_stage_timeout,
         );

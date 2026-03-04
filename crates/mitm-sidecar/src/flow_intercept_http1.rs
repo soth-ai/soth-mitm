@@ -261,8 +261,21 @@ where
             }
         };
 
+        let websocket_upgrade_request_intent = has_header_value(&request.headers, "upgrade", "websocket")
+            || has_header_token(&request.headers, "connection", "upgrade")
+            || request.headers.iter().any(|header| {
+                header.name.eq_ignore_ascii_case("sec-websocket-version")
+                    || header.name.eq_ignore_ascii_case("sec-websocket-key")
+            });
+        let websocket_upgrade_response_intent = response.status_code == 101
+            || has_header_value(&response.headers, "upgrade", "websocket")
+            || has_header_token(&response.headers, "connection", "upgrade");
+        let request_upgrade_validation = validate_websocket_upgrade_request_head(&request);
+        let response_upgrade_validation = validate_websocket_upgrade_response_head(&response);
         let websocket_upgrade =
-            is_websocket_upgrade_request(&request) && is_websocket_upgrade_response(&response);
+            request_upgrade_validation.is_ok() && response_upgrade_validation.is_ok();
+        let websocket_upgrade_intent =
+            websocket_upgrade_request_intent || websocket_upgrade_response_intent;
 
         emit_response_headers_event(&engine, &http_context, &response);
         if let Err(error) = write_all_with_idle_timeout(
@@ -279,6 +292,22 @@ where
                 &error,
                 bytes_from_client,
                 bytes_from_server,
+            );
+            return Ok(());
+        }
+
+        if websocket_upgrade_intent && !websocket_upgrade {
+            let reason_detail = websocket_upgrade_validation_error_detail(
+                request_upgrade_validation.err(),
+                response_upgrade_validation.err(),
+            );
+            emit_stream_closed(
+                &engine,
+                http_context,
+                CloseReasonCode::MitmHttpError,
+                Some(reason_detail),
+                Some(bytes_from_client),
+                Some(bytes_from_server),
             );
             return Ok(());
         }
@@ -404,4 +433,20 @@ fn emit_http1_relay_error_close<P, S>(
         Some(bytes_from_client),
         Some(bytes_from_server),
     );
+}
+
+fn websocket_upgrade_validation_error_detail(
+    request_error: Option<io::Error>,
+    response_error: Option<io::Error>,
+) -> String {
+    match (request_error, response_error) {
+        (Some(request), Some(response)) => format!(
+            "websocket upgrade validation failed: request={request}; response={response}"
+        ),
+        (Some(request), None) => format!("websocket upgrade validation failed: request={request}"),
+        (None, Some(response)) => {
+            format!("websocket upgrade validation failed: response={response}")
+        }
+        (None, None) => "websocket upgrade validation failed: unknown".to_string(),
+    }
 }

@@ -209,6 +209,7 @@ async fn run_sidecar(status_emitter: &StatusEmitter) -> RunOutcome {
         max_http_head_bytes: mitm_config.max_http_head_bytes,
         accept_retry_backoff_ms: 100,
         idle_watchdog_timeout: std::time::Duration::from_secs(30),
+        websocket_idle_watchdog_timeout: std::time::Duration::from_secs(600),
         upstream_connect_timeout: std::time::Duration::from_secs(10),
         stream_stage_timeout: std::time::Duration::from_secs(15),
         unix_socket_path: None,

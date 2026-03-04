@@ -88,6 +88,7 @@ hyper-util = { version = "0.1", features = ["client-legacy", "http1", "http2", "
 h2 = "0.4"
 http-body-util = "0.1"
 tokio-tungstenite = "0.21"
+soketto = "0.8.1"
 
 # TLS
 rcgen = "0.14"

@@ -1,3 +1,5 @@
+const WEBSOCKET_CODEC_IMPL_LABEL: &str = "soketto";
+
 fn emit_websocket_opened_event<P, S>(engine: &MitmEngine<P, S>, context: FlowContext)
 where
     P: PolicyEngine + Send + Sync + 'static,
@@ -7,6 +9,10 @@ where
     event
         .attributes
         .insert("relay_mode".to_string(), "intercept".to_string());
+    event.attributes.insert(
+        "ws_codec_impl".to_string(),
+        WEBSOCKET_CODEC_IMPL_LABEL.to_string(),
+    );
     engine.emit_event(event);
 }
 
@@ -55,6 +61,10 @@ fn emit_websocket_frame_event<P, S>(
     event
         .attributes
         .insert("frame_len".to_string(), frame_len.to_string());
+    event.attributes.insert(
+        "ws_codec_impl".to_string(),
+        WEBSOCKET_CODEC_IMPL_LABEL.to_string(),
+    );
     engine.emit_event(event);
 }
 
@@ -86,6 +96,10 @@ fn emit_websocket_closed_event<P, S>(
             .attributes
             .insert("reason_detail".to_string(), reason_detail);
     }
+    event.attributes.insert(
+        "ws_codec_impl".to_string(),
+        WEBSOCKET_CODEC_IMPL_LABEL.to_string(),
+    );
     engine.emit_event(event);
 }
 

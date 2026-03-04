@@ -38,13 +38,16 @@ pub(crate) fn build_runtime_server<H: InterceptHandler>(
     let policy = config_handle.policy_engine();
     let sink = MetricsEventConsumer::new(Arc::clone(&metrics_store));
     let core_config = map_core_config(config);
+    let idle_watchdog_timeout =
+        Duration::from_millis(config.connection_pool.idle_timeout_ms.max(1));
     let sidecar_config = SidecarConfig {
         listen_addr: core_config.listen_addr.clone(),
         listen_port: core_config.listen_port,
         max_connect_head_bytes: 64 * 1024,
         max_http_head_bytes: core_config.max_http_head_bytes,
         accept_retry_backoff_ms: config.accept_retry_backoff_ms.max(1),
-        idle_watchdog_timeout: Duration::from_millis(config.connection_pool.idle_timeout_ms.max(1)),
+        idle_watchdog_timeout,
+        websocket_idle_watchdog_timeout: idle_watchdog_timeout.max(Duration::from_secs(600)),
         upstream_connect_timeout: Duration::from_millis(config.upstream.connect_timeout_ms.max(1)),
         stream_stage_timeout: Duration::from_millis(config.upstream.timeout_ms.max(1)),
         unix_socket_path: config
