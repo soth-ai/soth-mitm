@@ -475,8 +475,7 @@ fn find_script_name_in_args(args: &[String]) -> Option<String> {
             continue;
         }
         let path = std::path::Path::new(arg.as_str());
-        let looks_like_path =
-            path.extension().is_some() || arg.contains('/') || arg.contains('\\');
+        let looks_like_path = path.extension().is_some() || arg.contains('/') || arg.contains('\\');
         if !looks_like_path {
             break;
         }
@@ -529,10 +528,7 @@ mod identity_tests {
     #[test]
     fn extracts_unscoped_package_from_node_modules_path() {
         let path = "/project/node_modules/express/lib/express.js";
-        assert_eq!(
-            extract_node_package_name(path),
-            Some("express".to_string())
-        );
+        assert_eq!(extract_node_package_name(path), Some("express".to_string()));
     }
 
     #[test]
@@ -564,10 +560,7 @@ mod identity_tests {
     #[test]
     fn find_script_name_extracts_basename() {
         let args = vec!["node".into(), "/home/user/worker.js".into()];
-        assert_eq!(
-            find_script_name_in_args(&args),
-            Some("worker".to_string())
-        );
+        assert_eq!(find_script_name_in_args(&args), Some("worker".to_string()));
     }
 
     #[test]
@@ -578,12 +571,7 @@ mod identity_tests {
 
     #[test]
     fn derive_identity_returns_none_for_non_runtime() {
-        let result = derive_identity_walking_parents(
-            100,
-            Some("curl"),
-            &|_| None,
-            &|_| None,
-        );
+        let result = derive_identity_walking_parents(100, Some("curl"), &|_| None, &|_| None);
         assert_eq!(result, None);
     }
 

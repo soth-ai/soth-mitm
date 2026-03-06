@@ -109,6 +109,10 @@ fn map_core_config(config: &MitmConfig) -> CoreMitmConfig {
         crate::config::InterceptMode::Monitor => CoreInterceptMode::Monitor,
         crate::config::InterceptMode::Enforce => CoreInterceptMode::Enforce,
     };
+    core.h2_response_overflow_strict = matches!(
+        config.upstream.h2_response_overflow_mode,
+        crate::config::H2ResponseOverflowMode::StrictFail
+    );
     core
 }
 

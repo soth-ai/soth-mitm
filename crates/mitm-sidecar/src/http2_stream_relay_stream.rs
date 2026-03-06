@@ -435,6 +435,7 @@ where
         stream_context,
         &mut stream_dispatcher,
         max_handler_body,
+        engine.config.h2_response_overflow_strict,
     )
     .await?;
     byte_counters

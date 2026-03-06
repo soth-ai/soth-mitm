@@ -93,6 +93,11 @@ async fn start_sidecar_with_sink_and_h2_reliability(
         h2_response_overflow_mode,
         unix_socket_path: None,
     };
+    let mut config = config;
+    config.h2_response_overflow_strict = matches!(
+        h2_response_overflow_mode,
+        H2ResponseOverflowMode::StrictFail
+    );
     let engine = build_engine(config, sink.clone());
     let server = SidecarServer::new(sidecar_config, engine).expect("build sidecar");
     let listener = server.bind_listener().await.expect("bind sidecar");

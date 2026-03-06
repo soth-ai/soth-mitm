@@ -243,6 +243,7 @@ pub struct MitmConfig {
     pub max_concurrent_flows: usize,
     pub compatibility_overrides: Vec<CompatibilityOverrideConfig>,
     pub intercept_mode: InterceptMode,
+    pub h2_response_overflow_strict: bool,
     pub event_sink: EventSinkConfig,
 }
 
@@ -285,6 +286,7 @@ impl Default for MitmConfig {
             max_concurrent_flows: 2048,
             compatibility_overrides: Vec::new(),
             intercept_mode: InterceptMode::Monitor,
+            h2_response_overflow_strict: false,
             event_sink: EventSinkConfig::default(),
         }
     }

@@ -56,11 +56,16 @@ async fn relay_http1_response_body_with_incremental_forwarding<U>(
     stream_context: &FlowContext,
     stream_dispatcher: &mut Option<H2ResponseStreamHookDispatcher>,
     max_handler_body: usize,
+    h2_response_overflow_strict: bool,
 ) -> io::Result<Http1ToH2ResponseRelayOutcome>
 where
     U: AsyncRead + Unpin,
 {
-    let overflow_mode = h2_response_overflow_mode();
+    let overflow_mode = if h2_response_overflow_strict {
+        H2ResponseOverflowMode::StrictFail
+    } else {
+        H2ResponseOverflowMode::TruncateContinue
+    };
     let mut capture_state = Http1ResponseCaptureState::new();
     let mut trailers = match mode {
         HttpBodyMode::None => None,

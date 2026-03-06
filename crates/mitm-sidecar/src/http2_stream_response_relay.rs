@@ -231,11 +231,11 @@ async fn relay_h2_response_body_with_incremental_forwarding(
     stream_context: &FlowContext,
     stream_dispatcher: &mut Option<H2ResponseStreamHookDispatcher>,
     max_handler_body: usize,
+    h2_response_overflow_strict: bool,
 ) -> io::Result<H2ResponseStreamRelayOutcome> {
     let mut total_forwarded = 0_u64;
     let mut captured = Vec::new();
     let mut body_truncated = false;
-    let overflow_mode = h2_response_overflow_mode();
 
     while let Some(next_data) = with_h2_body_idle_timeout("http2_response_body_next_frame", async {
         Ok(upstream_response_body.data().await)
@@ -264,7 +264,7 @@ async fn relay_h2_response_body_with_incremental_forwarding(
                 truncated_now = true;
             }
         }
-        if truncated_now && matches!(overflow_mode, H2ResponseOverflowMode::StrictFail) {
+        if truncated_now && h2_response_overflow_strict {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "upstream response body exceeded flow body budget (strict overflow mode)",

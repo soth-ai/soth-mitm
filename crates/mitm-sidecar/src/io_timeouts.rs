@@ -462,10 +462,6 @@ where
         })?
 }
 
-fn h2_response_overflow_mode() -> H2ResponseOverflowMode {
-    io_timeout_config().h2_response_overflow_mode
-}
-
 async fn copy_bidirectional_with_websocket_idle_timeout<A, B>(
     side_a: &mut A,
     side_b: &mut B,
