@@ -249,7 +249,10 @@ async fn read_chunk_line<S: AsyncRead + Unpin>(
     source: &mut BufferedConn<S>,
     runtime_governor: &Arc<runtime_governor::RuntimeGovernor>,
 ) -> io::Result<Vec<u8>> {
-    let line = read_until_pattern(source, b"\r\n", CHUNK_LINE_LIMIT, runtime_governor)
+    // Skip the stream stage timeout for chunk line reads: the per-read idle
+    // timeout already guards against stuck connections, and the first chunk
+    // from slow APIs (e.g. LLM inference) can take minutes to arrive.
+    let line = read_until_pattern_no_stage_timeout(source, b"\r\n", CHUNK_LINE_LIMIT, runtime_governor)
         .await?
         .ok_or_else(|| {
             io::Error::new(

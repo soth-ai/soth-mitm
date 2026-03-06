@@ -87,9 +87,28 @@ async fn read_until_pattern<S: AsyncRead + Unpin>(
     max_bytes: usize,
     runtime_governor: &Arc<runtime_governor::RuntimeGovernor>,
 ) -> io::Result<Option<Vec<u8>>> {
+    read_until_pattern_inner(conn, pattern, max_bytes, runtime_governor, true).await
+}
+
+async fn read_until_pattern_no_stage_timeout<S: AsyncRead + Unpin>(
+    conn: &mut BufferedConn<S>,
+    pattern: &[u8],
+    max_bytes: usize,
+    runtime_governor: &Arc<runtime_governor::RuntimeGovernor>,
+) -> io::Result<Option<Vec<u8>>> {
+    read_until_pattern_inner(conn, pattern, max_bytes, runtime_governor, false).await
+}
+
+async fn read_until_pattern_inner<S: AsyncRead + Unpin>(
+    conn: &mut BufferedConn<S>,
+    pattern: &[u8],
+    max_bytes: usize,
+    runtime_governor: &Arc<runtime_governor::RuntimeGovernor>,
+    apply_stage_timeout: bool,
+) -> io::Result<Option<Vec<u8>>> {
     let _in_flight_lease =
         runtime_governor.reserve_in_flight_or_error(max_bytes, "http_head_read")?;
-    with_stream_stage_timeout("http_head_pattern_total", async {
+    let body = async {
         loop {
             if let Some(start) = find_subsequence(&conn.read_buf, pattern) {
                 let end = start + pattern.len();
@@ -119,8 +138,12 @@ async fn read_until_pattern<S: AsyncRead + Unpin>(
             }
             conn.read_buf.extend_from_slice(&chunk[..read]);
         }
-    })
-    .await
+    };
+    if apply_stage_timeout {
+        with_stream_stage_timeout("http_head_pattern_total", body).await
+    } else {
+        body.await
+    }
 }
 
 fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {

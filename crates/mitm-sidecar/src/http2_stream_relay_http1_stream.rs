@@ -211,7 +211,7 @@ where
         return Ok(());
     }
 
-    let response_raw = match read_until_pattern(
+    let response_raw = match read_until_pattern_no_stage_timeout(
         &mut upstream_conn,
         b"\r\n\r\n",
         max_http_head_bytes,

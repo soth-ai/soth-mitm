@@ -353,7 +353,11 @@ where
                 return Ok(());
             }
         }
-        let response_raw = match read_until_pattern(
+        // Response header reads must not use the stream stage timeout because
+        // upstream servers (e.g. LLM APIs) may need significant processing time
+        // before sending the first byte.  The per-read idle_watchdog_timeout
+        // (≥10 min at the runtime layer) still protects against stuck connections.
+        let response_raw = match read_until_pattern_no_stage_timeout(
             &mut upstream_conn,
             b"\r\n\r\n",
             max_http_head_bytes,

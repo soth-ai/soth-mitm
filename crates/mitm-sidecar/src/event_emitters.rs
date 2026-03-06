@@ -360,8 +360,7 @@ fn emit_stream_closed<P, S>(
         && bytes_from_server.unwrap_or_default() == 0;
 
     let should_log_close = !benign_zero_byte_connect_probe
-        && (matches!(context.protocol, ApplicationProtocol::Tunnel)
-        || matches!(
+        && matches!(
             reason_code,
             CloseReasonCode::UpstreamConnectFailed
                 | CloseReasonCode::RelayError
@@ -370,7 +369,7 @@ fn emit_stream_closed<P, S>(
                 | CloseReasonCode::MitmHttpError
                 | CloseReasonCode::WebSocketError
                 | CloseReasonCode::RoutePlannerFailed
-        ));
+        );
     if should_log_close {
         tracing::error!(
             flow_id = context.flow_id,
