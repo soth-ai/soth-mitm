@@ -58,11 +58,7 @@ where
             body_truncated: false,
         }
     } else {
-        with_stream_stage_timeout(
-            "http2_to_http1_request_body_capture",
-            capture_h2_body(&mut downstream_request_body, max_flow_body_bytes),
-        )
-        .await?
+        capture_h2_body(&mut downstream_request_body, max_flow_body_bytes).await?
     };
     byte_counters.request_bytes.fetch_add(
         request_captured.bytes_forwarded,
@@ -99,27 +95,41 @@ where
             handler_request_body,
         );
     }
-    let request_decision = flow_hooks
-        .on_request(
-            stream_context.clone(),
-            RawRequest {
-                method: request_parts.method.to_string(),
-                path: normalize_h2_path_for_handler(&request_parts.uri),
-                headers: handler_request_headers,
-                body: handler_request_body,
-            },
-        )
-        .await;
-    if let RequestDecision::Block { status, body } = request_decision {
-        let _ = send_h2_text_response(
-            &mut downstream_respond,
-            &runtime_governor,
-            sanitize_block_status(status),
-            body,
-        )
-        .await;
-        flow_hooks.on_stream_end(stream_context).await;
-        return Ok(());
+    if engine.config.intercept_mode == InterceptMode::Monitor {
+        flow_hooks
+            .on_request_observe(
+                stream_context.clone(),
+                RawRequest {
+                    method: request_parts.method.to_string(),
+                    path: normalize_h2_path_for_handler(&request_parts.uri),
+                    headers: handler_request_headers,
+                    body: handler_request_body,
+                },
+            )
+            .await;
+    } else {
+        let request_decision = flow_hooks
+            .on_request(
+                stream_context.clone(),
+                RawRequest {
+                    method: request_parts.method.to_string(),
+                    path: normalize_h2_path_for_handler(&request_parts.uri),
+                    headers: handler_request_headers,
+                    body: handler_request_body,
+                },
+            )
+            .await;
+        if let RequestDecision::Block { status, body } = request_decision {
+            let _ = send_h2_text_response(
+                &mut downstream_respond,
+                &runtime_governor,
+                sanitize_block_status(status),
+                body,
+            )
+            .await;
+            flow_hooks.on_stream_end(stream_context).await;
+            return Ok(());
+        }
     }
 
     let upstream_stream = match acquire_h2_h1_upstream_stream(&upstream_factory).await {
@@ -270,37 +280,6 @@ where
         return Ok(());
     }
 
-    let response_captured = match with_stream_stage_timeout(
-        "http2_to_http1_response_body_capture",
-        read_http1_response_body_for_h2(
-            &mut upstream_conn,
-            upstream_response.body_mode,
-            max_http_head_bytes,
-            &runtime_governor,
-            max_flow_body_bytes,
-        ),
-    )
-    .await
-    {
-        Ok(value) => value,
-        Err(error) => {
-            h2_relay_debug(format!("[h2-h1:response] response body read failed: {error}"));
-            respond_h2_error_and_end(
-                &flow_hooks,
-                stream_context,
-                &mut downstream_respond,
-                &runtime_governor,
-                502,
-                "upstream response body read failed",
-            )
-            .await?;
-            return Ok(());
-        }
-    };
-    byte_counters.response_bytes.fetch_add(
-        response_captured.bytes_forwarded,
-        std::sync::atomic::Ordering::Relaxed,
-    );
     let response_parts = match build_h2_response_parts_from_http1(&upstream_response) {
         Ok(parts) => parts,
         Err(error) => {
@@ -334,8 +313,11 @@ where
         );
     }
 
-    let response_end_stream =
-        response_captured.bytes.is_empty() && response_captured.trailers.as_ref().is_none();
+    let response_end_stream = matches!(
+        upstream_response.body_mode,
+        HttpBodyMode::None | HttpBodyMode::ContentLength(0)
+    );
+    let mut stream_dispatcher = h2_response_stream_hook_dispatcher(&response_parts);
     let downstream_response = http::Response::from_parts(response_parts.clone(), ());
     let mut downstream_response_stream =
         match downstream_respond.send_response(downstream_response, response_end_stream) {
@@ -351,41 +333,69 @@ where
                 ));
             }
         };
-    if !response_end_stream {
-        let observed_trailers = with_stream_stage_timeout("http2_to_http1_response_body_forward", async {
-            send_h2_captured_body(
-                &mut downstream_response_stream,
-                &runtime_governor,
-                H2CapturedBody {
-                    bytes: response_captured.bytes.clone(),
-                    bytes_forwarded: response_captured.bytes_forwarded,
-                    trailers: response_captured.trailers.clone(),
-                    body_truncated: response_captured.body_truncated,
-                },
+    if response_end_stream {
+        let response_captured = H2CapturedBody {
+            bytes: bytes::Bytes::new(),
+            bytes_forwarded: 0,
+            trailers: None,
+            body_truncated: false,
+        };
+        if let Some(dispatcher) = stream_dispatcher.as_mut() {
+            dispatcher.finish(&flow_hooks, &stream_context).await;
+        } else {
+            dispatch_h2_response_hooks(
+                &flow_hooks,
+                stream_context,
+                &response_parts,
+                &response_captured,
+                max_flow_body_bytes,
             )
-            .await
-        })
-        .await?;
-        if let (Some(observation), Some(trailers)) =
-            (grpc_observation.as_ref(), observed_trailers.as_ref())
-        {
-            emit_grpc_response_trailers_event(
-                &engine,
-                stream_context.clone(),
-                observation,
-                trailers,
-            );
+            .await;
         }
+        return Ok(());
     }
-    dispatch_h2_response_hooks(
+
+    let relay_outcome = relay_http1_response_body_with_incremental_forwarding(
+        &mut upstream_conn,
+        upstream_response.body_mode,
+        max_http_head_bytes,
+        &runtime_governor,
+        &mut downstream_response_stream,
         &flow_hooks,
-        stream_context,
-        &response_parts,
-        &response_captured,
+        &stream_context,
+        &mut stream_dispatcher,
         max_flow_body_bytes,
     )
-    .await;
+    .await?;
+    byte_counters.response_bytes.fetch_add(
+        relay_outcome.captured.bytes_forwarded,
+        std::sync::atomic::Ordering::Relaxed,
+    );
+
+    if let (Some(observation), Some(trailers)) = (
+        grpc_observation.as_ref(),
+        relay_outcome.observed_trailers.as_ref(),
+    ) {
+        emit_grpc_response_trailers_event(
+            &engine,
+            stream_context.clone(),
+            observation,
+            trailers,
+        );
+    }
+
+    if stream_dispatcher.is_none() {
+        dispatch_h2_response_hooks(
+            &flow_hooks,
+            stream_context,
+            &response_parts,
+            &relay_outcome.captured,
+            max_flow_body_bytes,
+        )
+        .await;
+    }
     Ok(())
 }
 
 include!("http2_stream_relay_http1_body.rs");
+include!("http2_stream_relay_http1_response_relay.rs");

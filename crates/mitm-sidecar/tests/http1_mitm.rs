@@ -3,7 +3,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
-use mitm_core::{MitmConfig, MitmEngine, RouteEndpointConfig, RouteMode};
+use mitm_core::{InterceptMode, MitmConfig, MitmEngine, RouteEndpointConfig, RouteMode};
 use mitm_observe::{EventType, FlowContext, VecEventConsumer};
 use mitm_policy::DefaultPolicyEngine;
 use mitm_sidecar::{
@@ -45,6 +45,8 @@ async fn start_sidecar_with_sink(
         websocket_idle_watchdog_timeout: std::time::Duration::from_secs(120),
         upstream_connect_timeout: std::time::Duration::from_secs(10),
         stream_stage_timeout: std::time::Duration::from_secs(5),
+        h2_body_idle_timeout: std::time::Duration::from_secs(5),
+        h2_response_overflow_mode: mitm_sidecar::H2ResponseOverflowMode::TruncateContinue,
         unix_socket_path: None,
     };
     let engine = build_engine(config, sink.clone());
@@ -78,6 +80,8 @@ async fn start_sidecar_with_flow_hooks(
         websocket_idle_watchdog_timeout: std::time::Duration::from_secs(120),
         upstream_connect_timeout: std::time::Duration::from_secs(10),
         stream_stage_timeout: std::time::Duration::from_secs(5),
+        h2_body_idle_timeout: std::time::Duration::from_secs(5),
+        h2_response_overflow_mode: mitm_sidecar::H2ResponseOverflowMode::TruncateContinue,
         unix_socket_path: None,
     };
     let engine = build_engine(config, sink.clone());

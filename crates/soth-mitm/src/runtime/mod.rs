@@ -2,9 +2,12 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 
-use mitm_core::{MitmConfig as CoreMitmConfig, MitmEngine};
+use mitm_core::{InterceptMode as CoreInterceptMode, MitmConfig as CoreMitmConfig, MitmEngine};
 use mitm_policy::{FlowAction, PolicyDecision, PolicyEngine, PolicyInput, PolicyOverrideState};
-use mitm_sidecar::{FlowHooks, SidecarConfig, SidecarServer};
+use mitm_sidecar::{
+    FlowHooks, H2ResponseOverflowMode as SidecarH2ResponseOverflowMode, SidecarConfig,
+    SidecarServer,
+};
 use parking_lot::RwLock;
 
 use crate::config::{InterceptionScope, MitmConfig};
@@ -21,6 +24,7 @@ mod flow_dispatch;
 mod flow_hooks;
 mod flow_lifecycle;
 mod handler_guard;
+mod tls_intercept_backoff;
 
 pub(crate) type RuntimeServer = SidecarServer<DestinationPolicyEngine, MetricsEventConsumer>;
 pub(crate) struct RuntimeServerBundle {
@@ -33,13 +37,19 @@ pub(crate) fn build_runtime_server<H: InterceptHandler>(
     handler: Arc<H>,
     metrics_store: Arc<ProxyMetricsStore>,
 ) -> Result<RuntimeServerBundle, MitmError> {
+    const MIN_IDLE_WATCHDOG_TIMEOUT_MS: u64 = 10 * 60 * 1000;
     config.validate()?;
     let config_handle = RuntimeConfigHandle::from_config(config)?;
     let policy = config_handle.policy_engine();
     let sink = MetricsEventConsumer::new(Arc::clone(&metrics_store));
     let core_config = map_core_config(config);
-    let idle_watchdog_timeout =
-        Duration::from_millis(config.connection_pool.idle_timeout_ms.max(1));
+    // Keep tunnel/relay sessions resilient by clamping legacy low idle values.
+    let idle_watchdog_timeout = Duration::from_millis(
+        config
+            .connection_pool
+            .idle_timeout_ms
+            .max(MIN_IDLE_WATCHDOG_TIMEOUT_MS),
+    );
     let sidecar_config = SidecarConfig {
         listen_addr: core_config.listen_addr.clone(),
         listen_port: core_config.listen_port,
@@ -49,7 +59,18 @@ pub(crate) fn build_runtime_server<H: InterceptHandler>(
         idle_watchdog_timeout,
         websocket_idle_watchdog_timeout: idle_watchdog_timeout.max(Duration::from_secs(600)),
         upstream_connect_timeout: Duration::from_millis(config.upstream.connect_timeout_ms.max(1)),
-        stream_stage_timeout: Duration::from_millis(config.upstream.timeout_ms.max(1)),
+        stream_stage_timeout: Duration::from_millis(
+            config.upstream.h2_header_stage_timeout_ms.max(1),
+        ),
+        h2_body_idle_timeout: Duration::from_millis(config.upstream.h2_body_idle_timeout_ms.max(1)),
+        h2_response_overflow_mode: match config.upstream.h2_response_overflow_mode {
+            crate::config::H2ResponseOverflowMode::TruncateContinue => {
+                SidecarH2ResponseOverflowMode::TruncateContinue
+            }
+            crate::config::H2ResponseOverflowMode::StrictFail => {
+                SidecarH2ResponseOverflowMode::StrictFail
+            }
+        },
         unix_socket_path: config
             .unix_socket_path
             .as_ref()
@@ -79,13 +100,15 @@ fn map_core_config(config: &MitmConfig) -> CoreMitmConfig {
     core.http2_max_header_list_size = config.http2_max_header_list_size.max(1);
     core.http3_passthrough = config.http3_passthrough;
     core.max_flow_body_buffer_bytes = config.body.max_size_bytes.max(1);
-    core.max_flow_decoder_buffer_bytes = core
-        .max_flow_decoder_buffer_bytes
-        .min(core.max_flow_body_buffer_bytes);
+    core.max_flow_decoder_buffer_bytes = (core.max_flow_body_buffer_bytes / 2).max(1);
     core.max_flow_event_backlog = config.max_flow_event_backlog.max(1);
     core.max_in_flight_bytes = config.max_in_flight_bytes.max(1);
     core.max_concurrent_flows = config.max_concurrent_flows.max(1);
     core.upstream_tls_insecure_skip_verify = !config.upstream.verify_upstream_tls;
+    core.intercept_mode = match config.intercept_mode {
+        crate::config::InterceptMode::Monitor => CoreInterceptMode::Monitor,
+        crate::config::InterceptMode::Enforce => CoreInterceptMode::Enforce,
+    };
     core
 }
 

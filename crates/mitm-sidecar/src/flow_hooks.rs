@@ -84,6 +84,14 @@ pub trait FlowHooks: Send + Sync + 'static {
         Box::pin(async { RequestDecision::Allow })
     }
 
+    fn on_request_observe(
+        &self,
+        _context: FlowContext,
+        _request: RawRequest,
+    ) -> Pin<Box<dyn Future<Output = ()> + Send>> {
+        Box::pin(async {})
+    }
+
     fn on_response(
         &self,
         _context: FlowContext,

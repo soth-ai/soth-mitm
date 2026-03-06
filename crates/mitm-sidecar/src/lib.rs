@@ -1,6 +1,6 @@
 use mitm_core::{
     parse_connect_request_head_with_mode, ConnectParseError,
-    DownstreamCertProfile as CoreDownstreamCertProfile, MitmEngine,
+    DownstreamCertProfile as CoreDownstreamCertProfile, InterceptMode, MitmEngine,
     TlsFingerprintClass as CoreTlsFingerprintClass, TlsFingerprintMode as CoreTlsFingerprintMode,
     TlsProfile as CoreTlsProfile, UpstreamClientAuthMode as CoreUpstreamClientAuthMode,
     UpstreamSniMode as CoreUpstreamSniMode,
@@ -47,6 +47,12 @@ const CHUNK_LINE_LIMIT: usize = 8 * 1024;
 const TLS_OPS_PROVIDER: &str = "rustls";
 const DEFAULT_LISTENER_ACCEPT_RETRY_BACKOFF_MS: u64 = 100;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum H2ResponseOverflowMode {
+    TruncateContinue,
+    StrictFail,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SidecarConfig {
     pub listen_addr: String,
@@ -58,6 +64,8 @@ pub struct SidecarConfig {
     pub websocket_idle_watchdog_timeout: Duration,
     pub upstream_connect_timeout: Duration,
     pub stream_stage_timeout: Duration,
+    pub h2_body_idle_timeout: Duration,
+    pub h2_response_overflow_mode: H2ResponseOverflowMode,
     pub unix_socket_path: Option<String>,
 }
 impl Default for SidecarConfig {
@@ -71,7 +79,9 @@ impl Default for SidecarConfig {
             idle_watchdog_timeout: Duration::from_secs(30),
             websocket_idle_watchdog_timeout: Duration::from_secs(600),
             upstream_connect_timeout: Duration::from_secs(10),
-            stream_stage_timeout: Duration::from_secs(15),
+            stream_stage_timeout: Duration::from_secs(30),
+            h2_body_idle_timeout: Duration::from_secs(120),
+            h2_response_overflow_mode: H2ResponseOverflowMode::TruncateContinue,
             unix_socket_path: None,
         }
     }
@@ -202,6 +212,14 @@ where
             config.websocket_idle_watchdog_timeout,
             config.upstream_connect_timeout,
             config.stream_stage_timeout,
+            config.h2_body_idle_timeout,
+            config.h2_response_overflow_mode,
+        );
+        tracing::info!(
+            stream_stage_timeout_ms = config.stream_stage_timeout.as_millis() as u64,
+            h2_body_idle_timeout_ms = config.h2_body_idle_timeout.as_millis() as u64,
+            h2_response_overflow_mode = ?config.h2_response_overflow_mode,
+            "installed sidecar IO timeout config"
         );
         let tls_diagnostics = Arc::new(TlsDiagnostics::default());
         let tls_learning = Arc::new(TlsLearningGuardrails::new());
@@ -369,7 +387,16 @@ where
             };
             apply_per_connection_socket_hardening(&stream);
             let Some(flow_permit) = self.runtime_governor.try_acquire_flow_permit() else {
-                self.runtime_governor.mark_budget_denial();
+                self.runtime_governor.mark_flow_permit_denial();
+                let snapshot = self.runtime_governor.snapshot();
+                tracing::error!(
+                    active_flows = snapshot.active_flows,
+                    max_active_flows = snapshot.max_active_flows,
+                    flow_permit_denial_count = snapshot.flow_permit_denial_count,
+                    budget_denial_count = snapshot.budget_denial_count,
+                    event_queue_depth = snapshot.event_queue_depth,
+                    "runtime governor denied flow permit; returning 503"
+                );
                 let _ = write_all_with_idle_timeout(
                     &mut stream,
                     b"HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\nContent-Length: 36\r\n\r\nproxy flow capacity exceeded; try later",

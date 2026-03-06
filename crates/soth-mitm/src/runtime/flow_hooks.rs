@@ -11,6 +11,7 @@ use crate::runtime::connection_meta::{
 use crate::runtime::flow_dispatch::FlowDispatchers;
 use crate::runtime::flow_lifecycle::{finalize_flow, schedule_stale_flow_reap, FlowStateContext};
 use crate::runtime::handler_guard::HandlerCallbackGuard;
+use crate::runtime::tls_intercept_backoff::TlsInterceptBackoff;
 use crate::types::{RawRequest, RawResponse, StreamChunk};
 use crate::HandlerDecision;
 use bytes::Bytes;
@@ -32,6 +33,7 @@ use self::translate::{connection_meta_for_context, map_stream_frame_kind};
 #[derive(Debug)]
 struct HandlerFlowHooks<H: InterceptHandler> {
     flow_state: Arc<FlowStateContext<H>>,
+    tls_intercept_backoff: Arc<TlsInterceptBackoff>,
     stale_flow_ttl: Duration,
     stale_reap_interval: Duration,
     stale_reap_max_batch: usize,
@@ -72,6 +74,7 @@ impl<H: InterceptHandler> HandlerFlowHooks<H> {
             flow_dispatchers,
             stream_sequences: Arc::new(DashMap::new()),
             connection_meta_by_flow: Arc::new(DashMap::new()),
+            response_activity_flows: Arc::new(DashSet::new()),
             flow_last_touched: Arc::new(DashMap::new()),
             tls_intercepted_flow_ids: Arc::new(DashMap::new()),
             process_lookup,
@@ -81,6 +84,7 @@ impl<H: InterceptHandler> HandlerFlowHooks<H> {
         let stale_reap_interval = (stale_flow_ttl / 4).max(Duration::from_secs(15));
         Self {
             flow_state,
+            tls_intercept_backoff: Arc::new(TlsInterceptBackoff::default()),
             stale_flow_ttl,
             stale_reap_interval,
             stale_reap_max_batch: stale_reap_max_batch.max(1),
@@ -180,23 +184,33 @@ impl<H: InterceptHandler> FlowHooks for HandlerFlowHooks<H> {
         process_info: Option<mitm_policy::ProcessInfo>,
     ) -> Pin<Box<dyn Future<Output = bool> + Send>> {
         let flow_state = Arc::clone(&self.flow_state);
+        let tls_intercept_backoff = Arc::clone(&self.tls_intercept_backoff);
         Box::pin(async move {
             let process_info = process_info.map(runtime_process_info_from_policy);
+            let process_info_for_handler = process_info.clone();
+            let server_host = context.server_host.clone();
             let handler = Arc::clone(&flow_state.handler);
             let should_intercept = flow_state
                 .callback_guard
                 .run_sync(false, move || {
-                    handler.should_intercept_tls(&context.server_host, process_info.as_ref())
+                    handler.should_intercept_tls(&server_host, process_info_for_handler.as_ref())
                 })
                 .await;
-            if should_intercept {
+            let bypass_for_process = process_info
+                .as_ref()
+                .map(|value| tls_intercept_backoff.should_bypass_for_pid(value.pid))
+                .unwrap_or(false);
+            let bypass_for_host =
+                tls_intercept_backoff.should_bypass_for_host(&context.server_host);
+            let bypass_for_flow = bypass_for_process || bypass_for_host;
+            if should_intercept && !bypass_for_flow {
                 flow_state
                     .tls_intercepted_flow_ids
                     .insert(context.flow_id, ());
             } else {
                 flow_state.tls_intercepted_flow_ids.remove(&context.flow_id);
             }
-            should_intercept
+            should_intercept && !bypass_for_flow
         })
     }
     fn on_tls_failure(
@@ -205,7 +219,31 @@ impl<H: InterceptHandler> FlowHooks for HandlerFlowHooks<H> {
         error: String,
     ) -> Pin<Box<dyn Future<Output = ()> + Send>> {
         let flow_state = Arc::clone(&self.flow_state);
+        let tls_intercept_backoff = Arc::clone(&self.tls_intercept_backoff);
         Box::pin(async move {
+            let process_snapshot = flow_state
+                .connection_meta_by_flow
+                .get(&context.flow_id)
+                .and_then(|meta| meta.process_info.clone());
+            let process_pid = process_snapshot.as_ref().map(|process| process.pid);
+            let process_name = process_snapshot
+                .as_ref()
+                .and_then(|process| process.exe_name.as_deref());
+            if tls_intercept_backoff.register_tls_failure(
+                process_pid,
+                process_name,
+                &context.server_host,
+                &error,
+            ) {
+                tracing::warn!(
+                    flow_id = context.flow_id,
+                    pid = process_pid,
+                    process_name = process_name.unwrap_or("unknown"),
+                    server_host = %context.server_host,
+                    bypass_ttl_ms = tls_intercept_backoff.bypass_ttl().as_millis(),
+                    "downstream TLS incompatibility detected; temporarily bypassing TLS interception"
+                );
+            }
             let handler = Arc::clone(&flow_state.handler);
             flow_state
                 .callback_guard
@@ -258,6 +296,43 @@ impl<H: InterceptHandler> FlowHooks for HandlerFlowHooks<H> {
             }
         })
     }
+    fn on_request_observe(
+        &self,
+        context: FlowContext,
+        request: SidecarRawRequest,
+    ) -> Pin<Box<dyn Future<Output = ()> + Send>> {
+        let flow_state = Arc::clone(&self.flow_state);
+        Box::pin(async move {
+            flow_state
+                .flow_last_touched
+                .insert(context.flow_id, Instant::now());
+            let Some(connection_meta) = connection_meta_for_context(
+                &context,
+                &flow_state.connection_meta_by_flow,
+                &flow_state.closed_flow_live,
+                &flow_state.tls_intercepted_flow_ids,
+            )
+            .await
+            else {
+                return;
+            };
+            let raw_request = RawRequest {
+                method: request.method,
+                path: request.path,
+                headers: request.headers,
+                body: request.body,
+                connection_meta: Arc::clone(&connection_meta),
+            };
+            let handler = Arc::clone(&flow_state.handler);
+            let _ = flow_state
+                .callback_guard
+                .run_request(HandlerDecision::Allow, async move {
+                    handler.on_request(&raw_request).await
+                })
+                .await;
+        })
+    }
+
     fn on_response(
         &self,
         context: FlowContext,
@@ -284,10 +359,13 @@ impl<H: InterceptHandler> FlowHooks for HandlerFlowHooks<H> {
                 body: response.body,
                 connection_meta,
             };
-            flow_state
+            let enqueued = flow_state
                 .flow_dispatchers
                 .enqueue_response(context.flow_id, raw_response)
                 .await;
+            if enqueued {
+                flow_state.response_activity_flows.insert(context.flow_id);
+            }
         })
     }
     fn on_stream_chunk(
@@ -318,19 +396,52 @@ impl<H: InterceptHandler> FlowHooks for HandlerFlowHooks<H> {
                 sequence,
                 frame_kind,
             };
-            flow_state
+            let enqueued = flow_state
                 .flow_dispatchers
                 .enqueue_stream_chunk(context.flow_id, translated)
                 .await;
+            if enqueued {
+                flow_state.response_activity_flows.insert(context.flow_id);
+            }
         })
     }
     fn on_stream_end(&self, context: FlowContext) -> Pin<Box<dyn Future<Output = ()> + Send>> {
         let flow_state = Arc::clone(&self.flow_state);
         Box::pin(async move {
+            let had_response_activity = flow_state
+                .response_activity_flows
+                .remove(&context.flow_id)
+                .is_some();
+            if !had_response_activity {
+                let was_tls_intercepted = flow_state
+                    .tls_intercepted_flow_ids
+                    .contains_key(&context.flow_id);
+                if was_tls_intercepted {
+                    let process_snapshot = flow_state
+                        .connection_meta_by_flow
+                        .get(&context.flow_id)
+                        .and_then(|meta| meta.process_info.clone());
+                    let process_pid = process_snapshot.as_ref().map(|process| process.pid);
+                    let process_name = process_snapshot.as_ref().and_then(|process| {
+                        process
+                            .exe_name
+                            .as_ref()
+                            .map(|name| name.to_ascii_lowercase())
+                    });
+                    tracing::debug!(
+                        flow_id = context.flow_id,
+                        server_host = %context.server_host,
+                        pid = process_pid,
+                        process_name = process_name.as_deref().unwrap_or("<unknown>"),
+                        "intercepted stream ended without response activity"
+                    );
+                }
+            }
             finalize_flow(context.flow_id, Arc::clone(&flow_state)).await;
         })
     }
 }
+
 pub(crate) fn build_handler_flow_hooks<H: InterceptHandler>(
     config: &MitmConfig,
     handler: Arc<H>,

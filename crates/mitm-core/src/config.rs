@@ -121,6 +121,22 @@ impl Default for TlsFingerprintClass {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+pub enum InterceptMode {
+    /// Streaming tee: forward request to upstream immediately while capturing
+    /// a copy for the handler. Handler observes but cannot block.
+    Monitor,
+    /// Store-and-forward: buffer request body, call handler, block or forward.
+    Enforce,
+}
+
+impl Default for InterceptMode {
+    fn default() -> Self {
+        Self::Monitor
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum DownstreamCertProfile {
     Modern,
     Compat,
@@ -226,6 +242,7 @@ pub struct MitmConfig {
     pub max_in_flight_bytes: usize,
     pub max_concurrent_flows: usize,
     pub compatibility_overrides: Vec<CompatibilityOverrideConfig>,
+    pub intercept_mode: InterceptMode,
     pub event_sink: EventSinkConfig,
 }
 
@@ -261,12 +278,13 @@ impl Default for MitmConfig {
             upstream_client_key_pem_path: None,
             tls_fingerprint_mode: TlsFingerprintMode::Native,
             tls_fingerprint_class: TlsFingerprintClass::Native,
-            max_flow_body_buffer_bytes: 8 * 1024 * 1024,
-            max_flow_decoder_buffer_bytes: 4 * 1024 * 1024,
+            max_flow_body_buffer_bytes: 32 * 1024 * 1024,
+            max_flow_decoder_buffer_bytes: 16 * 1024 * 1024,
             max_flow_event_backlog: 8 * 1024,
             max_in_flight_bytes: 64 * 1024 * 1024,
             max_concurrent_flows: 2048,
             compatibility_overrides: Vec::new(),
+            intercept_mode: InterceptMode::Monitor,
             event_sink: EventSinkConfig::default(),
         }
     }

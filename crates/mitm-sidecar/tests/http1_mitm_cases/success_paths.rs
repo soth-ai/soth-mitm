@@ -301,6 +301,118 @@ async fn intercept_post_emits_request_and_response_body_chunks() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn intercept_oversized_request_returns_413_without_forwarding_upstream_body() {
+    let upstream_listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind upstream listener");
+    let upstream_addr = upstream_listener.local_addr().expect("upstream addr");
+    let upstream_task = tokio::spawn(async move {
+        let server_config = build_http1_server_config_for_host("127.0.0.1").expect("server config");
+        let acceptor = TlsAcceptor::from(server_config);
+        let (tcp, _) = upstream_listener.accept().await.expect("accept upstream");
+        let mut tls = acceptor.accept(tcp).await.expect("TLS accept");
+        let mut probe = [0_u8; 32];
+        match tokio::time::timeout(Duration::from_millis(400), tls.read(&mut probe)).await {
+            Ok(Ok(0)) => {}
+            Ok(Ok(read)) => panic!("unexpected upstream request bytes forwarded: {read}"),
+            Ok(Err(error))
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::UnexpectedEof
+                        | std::io::ErrorKind::ConnectionReset
+                        | std::io::ErrorKind::ConnectionAborted
+                        | std::io::ErrorKind::BrokenPipe
+                ) => {}
+            Ok(Err(error)) => panic!("upstream read failed: {error}"),
+            Err(_) => {}
+        }
+    });
+
+    let sink = VecEventConsumer::default();
+    let config = MitmConfig {
+        upstream_tls_insecure_skip_verify: true,
+        max_flow_body_buffer_bytes: 128,
+        max_flow_decoder_buffer_bytes: 128,
+        intercept_mode: InterceptMode::Enforce,
+        ..MitmConfig::default()
+    };
+    let (proxy_addr, proxy_task, sink, _diagnostics, _learning) =
+        start_sidecar_with_sink(sink, config).await;
+
+    let mut tcp = TcpStream::connect(proxy_addr)
+        .await
+        .expect("connect sidecar");
+    let connect = format!(
+        "CONNECT 127.0.0.1:{} HTTP/1.1\r\nHost: 127.0.0.1:{}\r\n\r\n",
+        upstream_addr.port(),
+        upstream_addr.port()
+    );
+    tcp.write_all(connect.as_bytes())
+        .await
+        .expect("write CONNECT");
+    let connect_response = read_response_head(&mut tcp).await;
+    assert!(
+        connect_response.starts_with("HTTP/1.1 200 Connection Established"),
+        "{connect_response}"
+    );
+
+    let connector = TlsConnector::from(build_http1_client_config(true));
+    let server_name = ServerName::try_from("127.0.0.1".to_string()).expect("server name");
+    let mut tls = connector
+        .connect(server_name, tcp)
+        .await
+        .expect("TLS connect to sidecar");
+    let oversized_body = vec![b'a'; 1024];
+    let request = format!(
+        "POST /oversized HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        oversized_body.len()
+    );
+    tls.write_all(request.as_bytes())
+        .await
+        .expect("write request head");
+    tls.write_all(&oversized_body)
+        .await
+        .expect("write oversized request body");
+    tls.flush().await.expect("flush request");
+
+    let response = read_to_end_allow_unexpected_eof(&mut tls).await;
+    let response_text = String::from_utf8_lossy(&response);
+    assert!(
+        response_text.starts_with("HTTP/1.1 413 Payload Too Large"),
+        "{response_text}"
+    );
+    assert!(
+        response_text.contains("request body exceeded flow body budget"),
+        "{response_text}"
+    );
+
+    upstream_task.await.expect("upstream task");
+    tokio::time::sleep(Duration::from_millis(25)).await;
+    proxy_task.abort();
+
+    let events = sink.snapshot();
+    let stream_closed = events
+        .iter()
+        .find(|event| event.kind == EventType::StreamClosed)
+        .expect("stream closed event");
+    assert_eq!(
+        stream_closed
+            .attributes
+            .get("reason_code")
+            .map(String::as_str),
+        Some("mitm_http_error")
+    );
+    assert!(
+        stream_closed
+            .attributes
+            .get("reason_detail")
+            .map(|detail| detail.contains("request body exceeded flow body budget"))
+            .unwrap_or(false),
+        "expected oversized request reason detail"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn intercept_chunked_response_without_trailers_relays_complete_terminator() {
     let upstream_listener = TcpListener::bind("127.0.0.1:0")
         .await
@@ -546,6 +658,7 @@ async fn intercept_http11_request_hooks_receive_ai_host_header_for_capture() {
             port: upstream_addr.port(),
         }),
         upstream_tls_insecure_skip_verify: true,
+        intercept_mode: InterceptMode::Enforce,
         ..MitmConfig::default()
     };
     let hooks = RequestHostCaptureHooks::default();

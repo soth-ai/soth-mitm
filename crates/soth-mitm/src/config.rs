@@ -5,6 +5,16 @@ use crate::destination::parse_destination_rule;
 use crate::MitmError;
 use crate::TlsVersion;
 
+/// Controls whether the proxy runs in observe-only or store-and-forward mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InterceptMode {
+    /// Streaming tee: forward request to upstream immediately while capturing
+    /// a copy for the handler. Handler observes but cannot block.
+    Monitor,
+    /// Store-and-forward: buffer request body, call handler, then forward or block.
+    Enforce,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MitmConfig {
     pub bind: SocketAddr,
@@ -23,6 +33,7 @@ pub struct MitmConfig {
     pub upstream: UpstreamConfig,
     pub connection_pool: ConnectionPoolConfig,
     pub body: BodyConfig,
+    pub intercept_mode: InterceptMode,
     pub handler: HandlerConfig,
     pub flow_runtime: FlowRuntimeConfig,
 }
@@ -52,10 +63,19 @@ pub struct ProcessAttributionConfig {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UpstreamConfig {
     pub timeout_ms: u64,
+    pub h2_header_stage_timeout_ms: u64,
+    pub h2_body_idle_timeout_ms: u64,
+    pub h2_response_overflow_mode: H2ResponseOverflowMode,
     pub connect_timeout_ms: u64,
     pub retry_on_failure: bool,
     pub retry_delay_ms: u64,
     pub verify_upstream_tls: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum H2ResponseOverflowMode {
+    TruncateContinue,
+    StrictFail,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -109,6 +129,7 @@ impl Default for MitmConfig {
             upstream: UpstreamConfig::default(),
             connection_pool: ConnectionPoolConfig::default(),
             body: BodyConfig::default(),
+            intercept_mode: InterceptMode::Monitor,
             handler: HandlerConfig::default(),
             flow_runtime: FlowRuntimeConfig::default(),
         }
@@ -150,6 +171,9 @@ impl Default for UpstreamConfig {
     fn default() -> Self {
         Self {
             timeout_ms: 30_000,
+            h2_header_stage_timeout_ms: 30_000,
+            h2_body_idle_timeout_ms: 120_000,
+            h2_response_overflow_mode: H2ResponseOverflowMode::TruncateContinue,
             connect_timeout_ms: 10_000,
             retry_on_failure: false,
             retry_delay_ms: 200,
@@ -162,7 +186,7 @@ impl Default for ConnectionPoolConfig {
     fn default() -> Self {
         Self {
             max_connections_per_host: 32,
-            idle_timeout_ms: 60_000,
+            idle_timeout_ms: 600_000,
             max_idle_per_host: 8,
         }
     }
@@ -171,7 +195,7 @@ impl Default for ConnectionPoolConfig {
 impl Default for BodyConfig {
     fn default() -> Self {
         Self {
-            max_size_bytes: 10 * 1024 * 1024,
+            max_size_bytes: 32 * 1024 * 1024,
             buffer_request_bodies: false,
         }
     }
@@ -180,8 +204,8 @@ impl Default for BodyConfig {
 impl Default for HandlerConfig {
     fn default() -> Self {
         Self {
-            request_timeout_ms: 5_000,
-            response_timeout_ms: 5_000,
+            request_timeout_ms: 15_000,
+            response_timeout_ms: 15_000,
             recover_from_panics: true,
         }
     }
@@ -258,6 +282,16 @@ impl MitmConfig {
         if self.upstream.timeout_ms == 0 {
             return Err(MitmError::InvalidConfig(
                 "upstream.timeout_ms must be greater than zero".to_string(),
+            ));
+        }
+        if self.upstream.h2_header_stage_timeout_ms == 0 {
+            return Err(MitmError::InvalidConfig(
+                "upstream.h2_header_stage_timeout_ms must be greater than zero".to_string(),
+            ));
+        }
+        if self.upstream.h2_body_idle_timeout_ms == 0 {
+            return Err(MitmError::InvalidConfig(
+                "upstream.h2_body_idle_timeout_ms must be greater than zero".to_string(),
             ));
         }
         if self.upstream.connect_timeout_ms == 0 {
@@ -359,6 +393,11 @@ mod tests {
         assert_eq!(config.max_concurrent_flows, 2_048);
         assert_eq!(config.process_attribution.cache_capacity, 4_096);
         assert_eq!(config.process_attribution.cache_ttl_ms, None);
+        assert_eq!(config.upstream.h2_header_stage_timeout_ms, 30_000);
+        assert_eq!(config.upstream.h2_body_idle_timeout_ms, 120_000);
+        assert_eq!(config.body.max_size_bytes, 32 * 1024 * 1024);
+        assert_eq!(config.handler.request_timeout_ms, 15_000);
+        assert_eq!(config.handler.response_timeout_ms, 15_000);
     }
 
     #[test]
@@ -370,6 +409,23 @@ mod tests {
             .expect_err("zero runtime budget must fail");
         let message = error.to_string();
         assert!(message.contains("max_concurrent_flows"));
+    }
+
+    #[test]
+    fn validate_rejects_zero_h2_timeout_knobs() {
+        let mut config = valid_config();
+        config.upstream.h2_header_stage_timeout_ms = 0;
+        let error = config
+            .validate()
+            .expect_err("zero h2 header timeout must fail");
+        assert!(error.to_string().contains("h2_header_stage_timeout_ms"));
+
+        config.upstream.h2_header_stage_timeout_ms = 30_000;
+        config.upstream.h2_body_idle_timeout_ms = 0;
+        let error = config
+            .validate()
+            .expect_err("zero h2 body idle timeout must fail");
+        assert!(error.to_string().contains("h2_body_idle_timeout_ms"));
     }
 
     #[test]

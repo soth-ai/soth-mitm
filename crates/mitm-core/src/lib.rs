@@ -16,8 +16,9 @@ mod flow_state;
 pub mod server;
 pub use config::{
     CompatibilityOverrideConfig, ConnectParseMode, DownstreamCertProfile, DownstreamTlsBackend,
-    EventSinkConfig, EventSinkKind, MitmConfig, MitmConfigError, RouteEndpointConfig, RouteMode,
-    TlsFingerprintClass, TlsFingerprintMode, TlsProfile, UpstreamClientAuthMode, UpstreamSniMode,
+    EventSinkConfig, EventSinkKind, InterceptMode, MitmConfig, MitmConfigError,
+    RouteEndpointConfig, RouteMode, TlsFingerprintClass, TlsFingerprintMode, TlsProfile,
+    UpstreamClientAuthMode, UpstreamSniMode,
 };
 use flow_state::FlowStateTracker;
 
