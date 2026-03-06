@@ -6,6 +6,7 @@ async fn intercept_http_connection<P, S>(
     tls_diagnostics: Arc<TlsDiagnostics>,
     tls_learning: Arc<TlsLearningGuardrails>,
     flow_hooks: Arc<dyn FlowHooks>,
+    upstream_tls_cache: Arc<UpstreamTlsConfigCache>,
     tunnel_context: FlowContext,
     process_info: Option<mitm_policy::ProcessInfo>,
     route: RouteBinding,
@@ -52,14 +53,7 @@ where
         protocol: ApplicationProtocol::Http1,
         ..tunnel_context.clone()
     };
-    let upstream_tls_profile = resolve_effective_upstream_tls_profile(
-        engine.config.tls_profile,
-        engine.config.tls_fingerprint_mode,
-        engine.config.tls_fingerprint_class,
-    );
     let upstream_sni_mode = map_upstream_sni_mode(engine.config.upstream_sni_mode);
-    let upstream_client_auth_mode =
-        map_upstream_client_auth_mode(engine.config.upstream_client_auth_mode);
     let server_name = match resolve_upstream_server_name(
         &handshake_context.server_host,
         upstream_sni_mode,
@@ -146,39 +140,14 @@ where
 
     let should_offer_http2_upstream =
         http2_enabled_for_flow && downstream_protocol == ApplicationProtocol::Http2;
-    let upstream_client_auth_material = match load_upstream_client_auth_material(
-        &engine.config.upstream_client_cert_pem_path,
-        &engine.config.upstream_client_key_pem_path,
-    ) {
-        Ok(material) => material,
-        Err(_) if upstream_client_auth_mode == TlsUpstreamClientAuthMode::IfRequested => None,
-        Err(error) => {
-            let detail = format!("upstream TLS client-auth material load failed: {error}");
-            return fail_tls_and_close(
-                &engine,
-                &flow_hooks,
-                &tls_diagnostics,
-                &tls_learning,
-                downstream_context.clone(),
-                tunnel_context,
-                "upstream",
-                detail,
-            )
-            .await;
-        }
-    };
-    let client_config = match build_http_client_config_with_policy_and_client_auth(
+    let client_config = match upstream_tls_cache.get_or_build(
         skip_upstream_verify_for_flow,
         should_offer_http2_upstream,
-        upstream_tls_profile,
-        upstream_sni_mode,
-        upstream_client_auth_mode,
         &handshake_context.server_host,
-        upstream_client_auth_material,
     ) {
         Ok(value) => value,
         Err(error) => {
-            let detail = format!("upstream TLS policy build failed: {error}");
+            let detail = format!("upstream TLS config build failed: {error}");
             return fail_tls_and_close(
                 &engine,
                 &flow_hooks,
@@ -292,20 +261,32 @@ where
     .await
 }
 
-fn load_upstream_client_auth_material(
+/// Reads raw PEM bytes for upstream client auth at startup, returning them
+/// for deferred parsing inside the TLS config cache. Fails eagerly when the
+/// auth mode is `Required` but the files cannot be read.
+fn load_upstream_client_auth_pem(
     cert_path: &Option<String>,
     key_path: &Option<String>,
-) -> Result<Option<UpstreamClientAuthMaterial>, String> {
+    auth_mode: TlsUpstreamClientAuthMode,
+) -> Result<Option<(Vec<u8>, Vec<u8>)>, String> {
     let (Some(cert_path), Some(key_path)) = (cert_path.as_ref(), key_path.as_ref()) else {
         return Ok(None);
     };
 
     let cert_pem = std::fs::read(cert_path)
-        .map_err(|error| format!("read cert path {cert_path} failed: {error}"))?;
+        .map_err(|error| format!("read cert path {cert_path} failed: {error}"));
     let key_pem = std::fs::read(key_path)
-        .map_err(|error| format!("read key path {key_path} failed: {error}"))?;
+        .map_err(|error| format!("read key path {key_path} failed: {error}"));
 
-    parse_upstream_client_auth_material(&cert_pem, &key_pem)
-        .map(Some)
-        .map_err(|error| error.to_string())
+    match (cert_pem, key_pem) {
+        (Ok(c), Ok(k)) => Ok(Some((c, k))),
+        (Err(e), _) | (_, Err(e))
+            if auth_mode == TlsUpstreamClientAuthMode::IfRequested
+                || auth_mode == TlsUpstreamClientAuthMode::Never =>
+        {
+            tracing::debug!("upstream client auth PEM not loaded (non-required): {e}");
+            Ok(None)
+        }
+        (Err(e), _) | (_, Err(e)) => Err(e),
+    }
 }

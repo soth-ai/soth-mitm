@@ -14,7 +14,7 @@
         classify_tls_error, parse_upstream_client_auth_material, resolve_upstream_server_name,
         CertStoreMetricsSnapshot, CertificateAuthorityConfig, DownstreamCertProfile,
         LeafCacheStatus, MitmCertificateStore, TlsFailureReason, UpstreamClientAuthMode,
-        UpstreamTlsProfile, UpstreamTlsSniMode,
+        UpstreamTlsConfigCache, UpstreamTlsProfile, UpstreamTlsSniMode,
     };
 
     #[test]
@@ -376,5 +376,66 @@
         assert!(
             algorithm_oid == "1.2.840.113549.1.1.1" || algorithm_oid == "1.2.840.10045.2.1",
             "unexpected leaf public key algorithm oid: {algorithm_oid}"
+        );
+    }
+
+    #[test]
+    fn upstream_tls_config_cache_returns_same_arc_for_same_params() {
+        let cache = UpstreamTlsConfigCache::new(
+            UpstreamTlsProfile::Default,
+            UpstreamTlsSniMode::Auto,
+            UpstreamClientAuthMode::Never,
+            None,
+        );
+        let a = cache.get_or_build(false, false, "example.com").unwrap();
+        let b = cache.get_or_build(false, false, "other.com").unwrap();
+        assert!(Arc::ptr_eq(&a, &b), "same params should yield same Arc");
+    }
+
+    #[test]
+    fn upstream_tls_config_cache_differentiates_by_skip_verify() {
+        let cache = UpstreamTlsConfigCache::new(
+            UpstreamTlsProfile::Default,
+            UpstreamTlsSniMode::Auto,
+            UpstreamClientAuthMode::Never,
+            None,
+        );
+        let secure = cache.get_or_build(false, false, "example.com").unwrap();
+        let insecure = cache.get_or_build(true, false, "example.com").unwrap();
+        assert!(
+            !Arc::ptr_eq(&secure, &insecure),
+            "different skip_verify should yield different Arcs"
+        );
+    }
+
+    #[test]
+    fn upstream_tls_config_cache_differentiates_by_http2() {
+        let cache = UpstreamTlsConfigCache::new(
+            UpstreamTlsProfile::Default,
+            UpstreamTlsSniMode::Auto,
+            UpstreamClientAuthMode::Never,
+            None,
+        );
+        let h1 = cache.get_or_build(false, false, "example.com").unwrap();
+        let h2 = cache.get_or_build(false, true, "example.com").unwrap();
+        assert!(
+            !Arc::ptr_eq(&h1, &h2),
+            "different http2 should yield different Arcs"
+        );
+    }
+
+    #[test]
+    fn upstream_tls_config_cache_differentiates_ip_vs_domain_with_auto_sni() {
+        let cache = UpstreamTlsConfigCache::new(
+            UpstreamTlsProfile::Default,
+            UpstreamTlsSniMode::Auto,
+            UpstreamClientAuthMode::Never,
+            None,
+        );
+        let domain = cache.get_or_build(false, false, "example.com").unwrap();
+        let ip = cache.get_or_build(false, false, "1.2.3.4").unwrap();
+        assert!(
+            !Arc::ptr_eq(&domain, &ip),
+            "domain vs IP should yield different configs (different SNI)"
         );
     }

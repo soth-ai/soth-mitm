@@ -129,6 +129,24 @@ pub fn build_http_client_config_with_policy_and_client_auth(
     client_auth_material: Option<UpstreamClientAuthMaterial>,
 ) -> Result<Arc<ClientConfig>, TlsConfigError> {
     let enable_sni = should_enable_sni_for_target(target_host, sni_mode)?;
+    build_client_config_with_resolved_sni(
+        insecure_skip_verify,
+        http2_enabled,
+        profile,
+        enable_sni,
+        client_auth_mode,
+        client_auth_material,
+    )
+}
+
+fn build_client_config_with_resolved_sni(
+    insecure_skip_verify: bool,
+    http2_enabled: bool,
+    profile: UpstreamTlsProfile,
+    enable_sni: bool,
+    client_auth_mode: UpstreamClientAuthMode,
+    client_auth_material: Option<UpstreamClientAuthMaterial>,
+) -> Result<Arc<ClientConfig>, TlsConfigError> {
     let mut provider = default_crypto_provider();
     provider.cipher_suites = select_cipher_suites(&provider.cipher_suites, profile);
     if provider.cipher_suites.is_empty() {
@@ -157,6 +175,7 @@ pub fn build_http_client_config_with_policy_and_client_auth(
     };
     config.enable_sni = enable_sni;
     config.alpn_protocols = configured_http_alpn_protocols(http2_enabled);
+    config.resumption = rustls::client::Resumption::in_memory_sessions(256);
     Ok(Arc::new(config))
 }
 
@@ -196,6 +215,73 @@ fn apply_upstream_client_auth_config(
             "upstream_client_auth_mode=required but no client cert material is configured"
                 .to_string(),
         )),
+    }
+}
+
+/// Caches upstream `ClientConfig` instances so that TLS session tickets
+/// are preserved across connections to the same upstream host.
+///
+/// The config varies only by three per-flow booleans; all other parameters
+/// are fixed from the engine configuration at construction time. At most
+/// eight config variants exist, so after warm-up every call is a lock-free
+/// `HashMap::get` on a tiny map.
+pub struct UpstreamTlsConfigCache {
+    profile: UpstreamTlsProfile,
+    sni_mode: UpstreamTlsSniMode,
+    client_auth_mode: UpstreamClientAuthMode,
+    /// Raw PEM bytes for client auth, re-parsed on each cache miss (≤8 times).
+    client_auth_pem: Option<(Vec<u8>, Vec<u8>)>,
+    configs: std::sync::Mutex<std::collections::HashMap<(bool, bool, bool), Arc<ClientConfig>>>,
+}
+
+impl UpstreamTlsConfigCache {
+    pub fn new(
+        profile: UpstreamTlsProfile,
+        sni_mode: UpstreamTlsSniMode,
+        client_auth_mode: UpstreamClientAuthMode,
+        client_auth_pem: Option<(Vec<u8>, Vec<u8>)>,
+    ) -> Self {
+        Self {
+            profile,
+            sni_mode,
+            client_auth_mode,
+            client_auth_pem,
+            configs: std::sync::Mutex::new(std::collections::HashMap::new()),
+        }
+    }
+
+    /// Returns a cached `ClientConfig` or builds one on first access for each
+    /// unique `(insecure_skip_verify, http2_enabled, enable_sni)` combination.
+    /// Shared configs carry an in-memory TLS session store, enabling ticket-based
+    /// resumption for repeat connections to the same upstream host.
+    pub fn get_or_build(
+        &self,
+        insecure_skip_verify: bool,
+        http2_enabled: bool,
+        target_host: &str,
+    ) -> Result<Arc<ClientConfig>, TlsConfigError> {
+        let enable_sni = should_enable_sni_for_target(target_host, self.sni_mode)?;
+        let key = (insecure_skip_verify, http2_enabled, enable_sni);
+        let mut cache = self.configs.lock().unwrap();
+        if let Some(config) = cache.get(&key) {
+            return Ok(Arc::clone(config));
+        }
+        let material = match &self.client_auth_pem {
+            Some((cert, key_pem)) => {
+                Some(parse_upstream_client_auth_material(cert, key_pem)?)
+            }
+            None => None,
+        };
+        let config = build_client_config_with_resolved_sni(
+            insecure_skip_verify,
+            http2_enabled,
+            self.profile,
+            enable_sni,
+            self.client_auth_mode,
+            material,
+        )?;
+        cache.insert(key, Arc::clone(&config));
+        Ok(config)
     }
 }
 

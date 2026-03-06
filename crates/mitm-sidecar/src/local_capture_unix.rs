@@ -64,6 +64,7 @@ where
                         tls_diagnostics: Arc::clone(&self.tls_diagnostics),
                         tls_learning: Arc::clone(&self.tls_learning),
                         flow_hooks: Arc::clone(&self.flow_hooks),
+                        upstream_tls_cache: Arc::clone(&self.upstream_tls_cache),
                     };
                     let max_connect_head_bytes = self.config.max_connect_head_bytes;
                     let max_http_head_bytes = self.config.max_http_head_bytes;
@@ -131,6 +132,7 @@ where
                         tls_diagnostics: Arc::clone(&self.tls_diagnostics),
                         tls_learning: Arc::clone(&self.tls_learning),
                         flow_hooks: Arc::clone(&self.flow_hooks),
+                        upstream_tls_cache: Arc::clone(&self.upstream_tls_cache),
                     };
                     let max_connect_head_bytes = self.config.max_connect_head_bytes;
                     let max_http_head_bytes = self.config.max_http_head_bytes;

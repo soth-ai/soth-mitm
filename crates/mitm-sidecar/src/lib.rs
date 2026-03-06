@@ -9,10 +9,9 @@ use mitm_http::{negotiated_alpn_label, protocol_from_negotiated_alpn, Applicatio
 use mitm_observe::{Event, EventConsumer, EventType, FlowContext};
 use mitm_policy::{FlowAction, PolicyEngine};
 use mitm_tls::{
-    build_http_client_config_with_policy_and_client_auth, classify_tls_error,
-    parse_upstream_client_auth_material, resolve_upstream_server_name, CertificateAuthorityConfig,
+    classify_tls_error, resolve_upstream_server_name, CertificateAuthorityConfig,
     DownstreamCertProfile as TlsDownstreamCertProfile, MitmCertificateStore, TlsConfigError,
-    UpstreamClientAuthMaterial, UpstreamClientAuthMode as TlsUpstreamClientAuthMode,
+    UpstreamClientAuthMode as TlsUpstreamClientAuthMode, UpstreamTlsConfigCache,
     UpstreamTlsProfile as TlsUpstreamTlsProfile, UpstreamTlsSniMode as TlsUpstreamTlsSniMode,
 };
 use std::io;
@@ -98,6 +97,7 @@ where
     tls_diagnostics: Arc<TlsDiagnostics>,
     tls_learning: Arc<TlsLearningGuardrails>,
     flow_hooks: Arc<dyn FlowHooks>,
+    upstream_tls_cache: Arc<UpstreamTlsConfigCache>,
 }
 #[derive(Clone)]
 struct RuntimeHandles<P, S>
@@ -111,6 +111,7 @@ where
     tls_diagnostics: Arc<TlsDiagnostics>,
     tls_learning: Arc<TlsLearningGuardrails>,
     flow_hooks: Arc<dyn FlowHooks>,
+    upstream_tls_cache: Arc<UpstreamTlsConfigCache>,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum HttpVersion {
@@ -223,6 +224,32 @@ where
         );
         let tls_diagnostics = Arc::new(TlsDiagnostics::default());
         let tls_learning = Arc::new(TlsLearningGuardrails::new());
+        let upstream_tls_profile = resolve_effective_upstream_tls_profile(
+            engine.config.tls_profile,
+            engine.config.tls_fingerprint_mode,
+            engine.config.tls_fingerprint_class,
+        );
+        let upstream_sni_mode = map_upstream_sni_mode(engine.config.upstream_sni_mode);
+        let upstream_client_auth_mode =
+            map_upstream_client_auth_mode(engine.config.upstream_client_auth_mode);
+        let upstream_client_auth_pem =
+            load_upstream_client_auth_pem(
+                &engine.config.upstream_client_cert_pem_path,
+                &engine.config.upstream_client_key_pem_path,
+                upstream_client_auth_mode,
+            )
+            .map_err(|error| {
+                io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("upstream client auth material load failed: {error}"),
+                )
+            })?;
+        let upstream_tls_cache = Arc::new(UpstreamTlsConfigCache::new(
+            upstream_tls_profile,
+            upstream_sni_mode,
+            upstream_client_auth_mode,
+            upstream_client_auth_pem,
+        ));
         Ok(Self {
             config,
             engine: Arc::new(engine),
@@ -231,6 +258,7 @@ where
             tls_diagnostics,
             tls_learning,
             flow_hooks,
+            upstream_tls_cache,
         })
     }
 
@@ -414,6 +442,7 @@ where
                 tls_diagnostics: Arc::clone(&self.tls_diagnostics),
                 tls_learning: Arc::clone(&self.tls_learning),
                 flow_hooks: Arc::clone(&self.flow_hooks),
+                upstream_tls_cache: Arc::clone(&self.upstream_tls_cache),
             };
             let max_connect_head_bytes = self.config.max_connect_head_bytes;
             let max_http_head_bytes = self.config.max_http_head_bytes;

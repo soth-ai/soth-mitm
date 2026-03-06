@@ -50,6 +50,7 @@ where
     let tls_diagnostics = Arc::clone(&runtime.tls_diagnostics);
     let tls_learning = Arc::clone(&runtime.tls_learning);
     let flow_hooks = Arc::clone(&runtime.flow_hooks);
+    let upstream_tls_cache = Arc::clone(&runtime.upstream_tls_cache);
     let listener_addr = downstream.local_addr().ok();
 
     let mut input =
@@ -290,6 +291,7 @@ where
                 tls_diagnostics,
                 tls_learning,
                 flow_hooks,
+                upstream_tls_cache,
                 context,
                 process_info,
                 route,
