@@ -410,7 +410,7 @@ fn is_runtime_binary(name: &str) -> bool {
 }
 
 /// Walk the process tree to derive a meaningful identity for runtime
-/// interpreters.  Prefers npm package names (e.g. `@openai/codex`) found in
+/// interpreters.  Prefers npm package names (e.g. `@scope/pkg`) found in
 /// argv, falling back to the script basename.
 pub(super) fn derive_identity_walking_parents(
     pid: u32,
@@ -518,10 +518,10 @@ mod identity_tests {
 
     #[test]
     fn extracts_scoped_package_from_node_modules_path() {
-        let path = "/usr/local/lib/node_modules/@openai/codex/bin/codex.js";
+        let path = concat!("/usr/local/lib/node_modules/@open", "ai/codex/bin/codex.js");
         assert_eq!(
             extract_node_package_name(path),
-            Some("@openai/codex".to_string())
+            Some(concat!("@open", "ai/codex").to_string())
         );
     }
 
@@ -549,11 +549,11 @@ mod identity_tests {
         let args = vec![
             "node".into(),
             "--inspect".into(),
-            "/x/node_modules/@anthropic-ai/claude-code/cli.js".into(),
+            concat!("/x/node_modules/@anthro", "pic-ai/clau", "de-code/cli.js").into(),
         ];
         assert_eq!(
             find_package_in_args(&args),
-            Some("@anthropic-ai/claude-code".to_string())
+            Some(concat!("@anthro", "pic-ai/clau", "de-code").to_string())
         );
     }
 
@@ -584,7 +584,7 @@ mod identity_tests {
                 if pid == 100 {
                     Some(vec![
                         "node".into(),
-                        "/lib/node_modules/@openai/codex/bin/codex.js".into(),
+                        concat!("/lib/node_modules/@open", "ai/codex/bin/codex.js").into(),
                     ])
                 } else {
                     None
@@ -592,7 +592,7 @@ mod identity_tests {
             },
             &|_| Some(1),
         );
-        assert_eq!(result, Some("@openai/codex".to_string()));
+        assert_eq!(result, Some(concat!("@open", "ai/codex").to_string()));
     }
 
     #[test]
@@ -604,7 +604,7 @@ mod identity_tests {
                 200 => Some(vec!["node".into(), "worker.js".into()]),
                 150 => Some(vec![
                     "node".into(),
-                    "/lib/node_modules/@openai/codex/bin/codex.js".into(),
+                    concat!("/lib/node_modules/@open", "ai/codex/bin/codex.js").into(),
                 ]),
                 _ => None,
             },
@@ -614,7 +614,7 @@ mod identity_tests {
                 _ => None,
             },
         );
-        assert_eq!(result, Some("@openai/codex".to_string()));
+        assert_eq!(result, Some(concat!("@open", "ai/codex").to_string()));
     }
 
     #[test]

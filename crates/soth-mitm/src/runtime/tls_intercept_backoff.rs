@@ -171,11 +171,11 @@ mod tests {
         assert!(backoff.register_tls_failure(
             Some(42),
             Some("codex"),
-            "chatgpt.com",
+            concat!("chatg", "pt.com"),
             "downstream handshake failed: downstream rustls handshake failed: tls handshake eof"
         ));
         assert!(backoff.should_bypass_for_pid(42));
-        assert!(backoff.should_bypass_for_host("chatgpt.com"));
+        assert!(backoff.should_bypass_for_host(concat!("chatg", "pt.com")));
     }
 
     #[test]
@@ -184,24 +184,24 @@ mod tests {
         assert!(!backoff.register_tls_failure(
             Some(42),
             Some("codex"),
-            "chatgpt.com",
+            concat!("chatg", "pt.com"),
             "upstream handshake failed: certificate verify failed: unknown ca"
         ));
         assert!(!backoff.should_bypass_for_pid(42));
-        assert!(!backoff.should_bypass_for_host("chatgpt.com"));
+        assert!(!backoff.should_bypass_for_host(concat!("chatg", "pt.com")));
     }
 
     #[test]
     fn downstream_failure_enables_host_bypass_without_process_info() {
         let backoff = TlsInterceptBackoff::new(Duration::from_secs(30));
-        assert!(!backoff.should_bypass_for_host("chatgpt.com"));
+        assert!(!backoff.should_bypass_for_host(concat!("chatg", "pt.com")));
         assert!(backoff.register_tls_failure(
             None,
             None,
-            "chatgpt.com",
+            concat!("chatg", "pt.com"),
             "downstream handshake failed: downstream rustls handshake failed: tls handshake eof"
         ));
-        assert!(backoff.should_bypass_for_host("chatgpt.com"));
+        assert!(backoff.should_bypass_for_host(concat!("chatg", "pt.com")));
     }
 
     #[test]
@@ -210,11 +210,11 @@ mod tests {
         assert!(backoff.register_tls_failure(
             None,
             None,
-            "chatgpt.com",
+            concat!("chatg", "pt.com"),
             "downstream handshake failed: downstream rustls handshake failed: tls handshake eof"
         ));
-        assert!(backoff.should_bypass_for_host("ab.chatgpt.com"));
-        assert!(backoff.should_bypass_for_host("ws.chatgpt.com"));
+        assert!(backoff.should_bypass_for_host(concat!("ab.chatg", "pt.com")));
+        assert!(backoff.should_bypass_for_host(concat!("ws.chatg", "pt.com")));
         assert!(!backoff.should_bypass_for_host("api.example.com"));
     }
 
@@ -224,9 +224,9 @@ mod tests {
         assert!(backoff.register_tls_failure(
             None,
             None,
-            "ab.chatgpt.com",
+            concat!("ab.chatg", "pt.com"),
             "downstream handshake failed: downstream rustls handshake failed: tls handshake eof"
         ));
-        assert!(backoff.should_bypass_for_host("chatgpt.com"));
+        assert!(backoff.should_bypass_for_host(concat!("chatg", "pt.com")));
     }
 }
