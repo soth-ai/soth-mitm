@@ -63,8 +63,20 @@ fn lookup_identity(connection: &ConnectionInfo) -> Option<ProcessIdentity> {
 }
 
 fn lookup_process_by_pid(pid: u32) -> Option<ProcessInfo> {
-    let process_name = read_process_name(pid);
     let process_path = read_process_path(pid);
+    let path_name = process_path
+        .as_ref()
+        .and_then(|p| p.file_name())
+        .and_then(|n| n.to_str())
+        .map(|s| s.to_string());
+    let process_name = super::derive_identity_walking_parents(
+        pid,
+        path_name.as_deref(),
+        &read_process_args,
+        &read_parent_pid,
+    )
+    .or(path_name)
+    .or_else(|| read_process_name(pid));
     let parent_pid = read_parent_pid(pid);
 
     Some(ProcessInfo {
@@ -78,6 +90,21 @@ fn lookup_process_by_pid(pid: u32) -> Option<ProcessInfo> {
 
 fn lookup_pid(connection: &ConnectionInfo) -> Option<u32> {
     lookup_established_tcp_pid(connection)
+}
+
+fn read_process_args(pid: u32) -> Option<Vec<String>> {
+    let data = std::fs::read(format!("/proc/{pid}/cmdline")).ok()?;
+    let args: Vec<String> = data
+        .split(|&b| b == 0)
+        .filter(|s| !s.is_empty())
+        .filter_map(|s| std::str::from_utf8(s).ok())
+        .map(|s| s.to_string())
+        .collect();
+    if args.is_empty() {
+        None
+    } else {
+        Some(args)
+    }
 }
 
 fn read_process_name(pid: u32) -> Option<String> {

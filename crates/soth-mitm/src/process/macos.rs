@@ -103,8 +103,19 @@ fn process_snapshot(pid: u32) -> Option<ProcessSnapshot> {
     let bsd_info = read_bsd_info(pid)?;
     let exe_path = read_process_path(pid);
     let parent_pid = NonZeroU32::new(bsd_info.pbi_ppid).map(NonZeroU32::get);
-    let exe_name = process_name_from_bsd_info(&bsd_info)
-        .or_else(|| exe_path.as_ref().and_then(process_name_from_path));
+    let path_name = exe_path.as_ref().and_then(process_name_from_path);
+    let exe_name = super::derive_identity_walking_parents(
+        pid,
+        path_name.as_deref(),
+        &read_process_args,
+        &|p| {
+            read_bsd_info(p)
+                .and_then(|info| NonZeroU32::new(info.pbi_ppid))
+                .map(NonZeroU32::get)
+        },
+    )
+    .or(path_name)
+    .or_else(|| process_name_from_bsd_info(&bsd_info));
     let start_token = build_start_token(bsd_info.pbi_start_tvsec, parent_pid);
 
     Some(ProcessSnapshot {
@@ -153,6 +164,90 @@ fn read_process_path(pid: u32) -> Option<PathBuf> {
         None
     } else {
         Some(path)
+    }
+}
+
+fn read_process_args(pid: u32) -> Option<Vec<String>> {
+    use libc::{c_int, c_void, CTL_KERN};
+
+    const KERN_PROCARGS2: c_int = 49;
+
+    let mut mib = [CTL_KERN, KERN_PROCARGS2, pid as c_int];
+
+    let mut size: usize = 0;
+    // SAFETY: querying the required buffer size for KERN_PROCARGS2.
+    if unsafe {
+        libc::sysctl(
+            mib.as_mut_ptr(),
+            3,
+            std::ptr::null_mut(),
+            &mut size,
+            std::ptr::null_mut(),
+            0,
+        )
+    } != 0
+    {
+        return None;
+    }
+
+    let mut buf = vec![0u8; size];
+    // SAFETY: `buf` is a writable buffer of the declared size.
+    if unsafe {
+        libc::sysctl(
+            mib.as_mut_ptr(),
+            3,
+            buf.as_mut_ptr().cast::<c_void>(),
+            &mut size,
+            std::ptr::null_mut(),
+            0,
+        )
+    } != 0
+    {
+        return None;
+    }
+    buf.truncate(size);
+
+    if buf.len() < mem::size_of::<c_int>() {
+        return None;
+    }
+
+    let argc = c_int::from_ne_bytes(buf[..4].try_into().ok()?) as usize;
+    if argc == 0 {
+        return None;
+    }
+
+    let rest = &buf[4..];
+
+    // Skip the exec_path (null-terminated)
+    let exec_end = rest.iter().position(|&b| b == 0)?;
+    let mut pos = exec_end + 1;
+
+    // Skip null padding after exec_path
+    while pos < rest.len() && rest[pos] == 0 {
+        pos += 1;
+    }
+
+    // Read argv entries
+    let mut args = Vec::with_capacity(argc.min(16));
+    for _ in 0..argc {
+        if pos >= rest.len() {
+            break;
+        }
+        let end = rest[pos..]
+            .iter()
+            .position(|&b| b == 0)
+            .map(|i| pos + i)
+            .unwrap_or(rest.len());
+        if let Ok(s) = std::str::from_utf8(&rest[pos..end]) {
+            args.push(s.to_string());
+        }
+        pos = end + 1;
+    }
+
+    if args.is_empty() {
+        None
+    } else {
+        Some(args)
     }
 }
 

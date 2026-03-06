@@ -398,5 +398,254 @@ where
         Some(entry)
     }
 }
+const MAX_PARENT_DEPTH: usize = 5;
+
+const RUNTIME_BINARIES: &[&str] = &[
+    "node", "nodejs", "deno", "bun", "ts-node", "python", "python3", "python2", "ruby", "perl",
+    "php",
+];
+
+fn is_runtime_binary(name: &str) -> bool {
+    RUNTIME_BINARIES.iter().any(|&rt| name == rt)
+}
+
+/// Walk the process tree to derive a meaningful identity for runtime
+/// interpreters.  Prefers npm package names (e.g. `@openai/codex`) found in
+/// argv, falling back to the script basename.
+pub(super) fn derive_identity_walking_parents(
+    pid: u32,
+    exe_filename: Option<&str>,
+    read_args: &dyn Fn(u32) -> Option<Vec<String>>,
+    read_parent_pid: &dyn Fn(u32) -> Option<u32>,
+) -> Option<String> {
+    if !exe_filename.map(is_runtime_binary).unwrap_or(false) {
+        return None;
+    }
+
+    let own_args = read_args(pid);
+
+    // Phase 1: look for a node_modules package name in the current process
+    if let Some(ref args) = own_args {
+        if let Some(pkg) = find_package_in_args(args) {
+            return Some(pkg);
+        }
+    }
+
+    // Phase 2: walk parents looking for a node_modules package name
+    let mut current = pid;
+    for _ in 0..MAX_PARENT_DEPTH {
+        let parent = match read_parent_pid(current) {
+            Some(ppid) if ppid > 1 => ppid,
+            _ => break,
+        };
+        if let Some(args) = read_args(parent) {
+            if let Some(pkg) = find_package_in_args(&args) {
+                return Some(pkg);
+            }
+        }
+        current = parent;
+    }
+
+    // Phase 3: fall back to the script basename from current process args
+    if let Some(ref args) = own_args {
+        if let Some(name) = find_script_name_in_args(args) {
+            return Some(name);
+        }
+    }
+
+    None
+}
+
+fn find_package_in_args(args: &[String]) -> Option<String> {
+    for arg in args.iter().skip(1) {
+        if arg.starts_with('-') {
+            continue;
+        }
+        if let Some(pkg) = extract_node_package_name(arg) {
+            return Some(pkg);
+        }
+        break;
+    }
+    None
+}
+
+fn find_script_name_in_args(args: &[String]) -> Option<String> {
+    for arg in args.iter().skip(1) {
+        if arg.starts_with('-') {
+            continue;
+        }
+        let path = std::path::Path::new(arg.as_str());
+        let looks_like_path =
+            path.extension().is_some() || arg.contains('/') || arg.contains('\\');
+        if !looks_like_path {
+            break;
+        }
+        if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+            if !stem.is_empty() {
+                return Some(stem.to_string());
+            }
+        }
+        break;
+    }
+    None
+}
+
+fn extract_node_package_name(script_path: &str) -> Option<String> {
+    let normalized = script_path.replace('\\', "/");
+    let parts: Vec<&str> = normalized.split('/').collect();
+    let nm_idx = parts.iter().position(|&p| p == "node_modules")?;
+    let next = nm_idx + 1;
+    if next >= parts.len() {
+        return None;
+    }
+    if parts[next].starts_with('@') {
+        let scope_idx = next + 1;
+        if scope_idx < parts.len() && !parts[scope_idx].is_empty() {
+            return Some(format!("{}/{}", parts[next], parts[scope_idx]));
+        }
+        return None;
+    }
+    let name = parts[next];
+    if name.is_empty() {
+        None
+    } else {
+        Some(name.to_string())
+    }
+}
+
+#[cfg(test)]
+mod identity_tests {
+    use super::*;
+
+    #[test]
+    fn extracts_scoped_package_from_node_modules_path() {
+        let path = "/usr/local/lib/node_modules/@openai/codex/bin/codex.js";
+        assert_eq!(
+            extract_node_package_name(path),
+            Some("@openai/codex".to_string())
+        );
+    }
+
+    #[test]
+    fn extracts_unscoped_package_from_node_modules_path() {
+        let path = "/project/node_modules/express/lib/express.js";
+        assert_eq!(
+            extract_node_package_name(path),
+            Some("express".to_string())
+        );
+    }
+
+    #[test]
+    fn returns_none_when_no_node_modules_in_path() {
+        assert_eq!(extract_node_package_name("/usr/bin/curl"), None);
+    }
+
+    #[test]
+    fn identifies_node_as_runtime() {
+        assert!(is_runtime_binary("node"));
+        assert!(is_runtime_binary("python3"));
+        assert!(!is_runtime_binary("curl"));
+        assert!(!is_runtime_binary("Google Chrome"));
+    }
+
+    #[test]
+    fn find_package_skips_flags() {
+        let args = vec![
+            "node".into(),
+            "--inspect".into(),
+            "/x/node_modules/@anthropic-ai/claude-code/cli.js".into(),
+        ];
+        assert_eq!(
+            find_package_in_args(&args),
+            Some("@anthropic-ai/claude-code".to_string())
+        );
+    }
+
+    #[test]
+    fn find_script_name_extracts_basename() {
+        let args = vec!["node".into(), "/home/user/worker.js".into()];
+        assert_eq!(
+            find_script_name_in_args(&args),
+            Some("worker".to_string())
+        );
+    }
+
+    #[test]
+    fn find_script_name_skips_non_path_args() {
+        let args = vec!["node".into(), "eval-code".into()];
+        assert_eq!(find_script_name_in_args(&args), None);
+    }
+
+    #[test]
+    fn derive_identity_returns_none_for_non_runtime() {
+        let result = derive_identity_walking_parents(
+            100,
+            Some("curl"),
+            &|_| None,
+            &|_| None,
+        );
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn derive_identity_extracts_package_from_current_process() {
+        let result = derive_identity_walking_parents(
+            100,
+            Some("node"),
+            &|pid| {
+                if pid == 100 {
+                    Some(vec![
+                        "node".into(),
+                        "/lib/node_modules/@openai/codex/bin/codex.js".into(),
+                    ])
+                } else {
+                    None
+                }
+            },
+            &|_| Some(1),
+        );
+        assert_eq!(result, Some("@openai/codex".to_string()));
+    }
+
+    #[test]
+    fn derive_identity_walks_parents_for_package() {
+        let result = derive_identity_walking_parents(
+            200,
+            Some("node"),
+            &|pid| match pid {
+                200 => Some(vec!["node".into(), "worker.js".into()]),
+                150 => Some(vec![
+                    "node".into(),
+                    "/lib/node_modules/@openai/codex/bin/codex.js".into(),
+                ]),
+                _ => None,
+            },
+            &|pid| match pid {
+                200 => Some(150),
+                150 => Some(1),
+                _ => None,
+            },
+        );
+        assert_eq!(result, Some("@openai/codex".to_string()));
+    }
+
+    #[test]
+    fn derive_identity_falls_back_to_script_name() {
+        let result = derive_identity_walking_parents(
+            300,
+            Some("node"),
+            &|pid| {
+                if pid == 300 {
+                    Some(vec!["node".into(), "/app/server.js".into()])
+                } else {
+                    None
+                }
+            },
+            &|_| Some(1),
+        );
+        assert_eq!(result, Some("server".to_string()));
+    }
+}
+
 #[cfg(test)]
 mod tests;
