@@ -18,11 +18,23 @@ where
             if read == 0 {
                 return Err(io::Error::new(
                     io::ErrorKind::UnexpectedEof,
-                    "client closed before CONNECT headers completed",
+                    format!(
+                        "client closed before CONNECT headers completed ({})",
+                        describe_connect_head_prefix(&data)
+                    ),
                 ));
             }
 
             data.push(byte[0]);
+            if looks_like_tls_client_hello_prefix(&data) {
+                return Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    format!(
+                        "proxy expected HTTP CONNECT but received TLS ClientHello ({})",
+                        describe_connect_head_prefix(&data)
+                    ),
+                ));
+            }
             if data.len() > max_connect_head_bytes {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
@@ -34,6 +46,39 @@ where
         Ok(data)
     })
     .await
+}
+
+fn describe_connect_head_prefix(data: &[u8]) -> String {
+    const PREFIX_LIMIT: usize = 16;
+    let prefix = &data[..data.len().min(PREFIX_LIMIT)];
+    let mut hex = String::with_capacity(prefix.len().saturating_mul(2));
+    for byte in prefix {
+        use std::fmt::Write as _;
+        let _ = write!(&mut hex, "{byte:02x}");
+    }
+
+    let ascii = prefix
+        .iter()
+        .map(|byte| {
+            if byte.is_ascii_graphic() || *byte == b' ' {
+                char::from(*byte)
+            } else {
+                '.'
+            }
+        })
+        .collect::<String>();
+
+    format!(
+        "received {} bytes; prefix_hex={hex}; prefix_ascii={ascii}",
+        data.len()
+    )
+}
+
+fn looks_like_tls_client_hello_prefix(data: &[u8]) -> bool {
+    if data.len() < 3 {
+        return false;
+    }
+    data[0] == 0x16 && data[1] == 0x03 && (0x00..=0x04).contains(&data[2])
 }
 
 async fn read_until_pattern<S: AsyncRead + Unpin>(

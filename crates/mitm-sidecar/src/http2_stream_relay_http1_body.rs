@@ -79,143 +79,6 @@ fn serialize_http1_trailers(trailers: &http::HeaderMap) -> Vec<u8> {
     out
 }
 
-async fn read_http1_response_body_for_h2<U>(
-    source: &mut BufferedConn<U>,
-    mode: HttpBodyMode,
-    max_http_head_bytes: usize,
-    runtime_governor: &Arc<runtime_governor::RuntimeGovernor>,
-    max_body_bytes: usize,
-) -> io::Result<H2CapturedBody>
-where
-    U: AsyncRead + Unpin,
-{
-    let mut total = 0_u64;
-    let mut body = Vec::new();
-    let mut trailers: Option<http::HeaderMap> = None;
-
-    match mode {
-        HttpBodyMode::None => {}
-        HttpBodyMode::ContentLength(length) => {
-            let mut remaining = length;
-            while remaining > 0 {
-                let read_len = remaining.min(IO_CHUNK_SIZE as u64) as usize;
-                let chunk = read_exact_from_source(source, read_len, runtime_governor).await?;
-                append_http1_body_chunk_with_budget(
-                    &mut body,
-                    &chunk,
-                    &mut total,
-                    max_body_bytes as u64,
-                )?;
-                remaining -= read_len as u64;
-            }
-        }
-        HttpBodyMode::Chunked => {
-            let mut trailer_bytes = 0_usize;
-            loop {
-                let line = read_chunk_line(source, runtime_governor).await?;
-                let chunk_len = parse_chunk_len(&line)?;
-                if chunk_len == 0 {
-                    let mut parsed_trailers = http::HeaderMap::new();
-                    loop {
-                        let trailer_line = read_chunk_line(source, runtime_governor).await?;
-                        trailer_bytes += trailer_line.len();
-                        if trailer_bytes > max_http_head_bytes {
-                            return Err(io::Error::new(
-                                io::ErrorKind::InvalidData,
-                                "chunked trailers exceeded configured header limit",
-                            ));
-                        }
-                        if trailer_line == b"\r\n" {
-                            break;
-                        }
-                        let (name, value) = parse_http1_trailer_line(&trailer_line)?;
-                        parsed_trailers.append(name, value);
-                    }
-                    if !parsed_trailers.is_empty() {
-                        trailers = Some(parsed_trailers);
-                    }
-                    break;
-                }
-
-                let mut remaining = chunk_len;
-                while remaining > 0 {
-                    let read_len = remaining.min(IO_CHUNK_SIZE as u64) as usize;
-                    let chunk = read_exact_from_source(source, read_len, runtime_governor).await?;
-                    append_http1_body_chunk_with_budget(
-                        &mut body,
-                        &chunk,
-                        &mut total,
-                        max_body_bytes as u64,
-                    )?;
-                    remaining -= read_len as u64;
-                }
-                let terminator = read_exact_from_source(source, 2, runtime_governor).await?;
-                if terminator.as_slice() != b"\r\n" {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "invalid chunk terminator",
-                    ));
-                }
-            }
-        }
-        HttpBodyMode::CloseDelimited => {
-            if !source.read_buf.is_empty() {
-                let prefetch = source.read_buf.split_off(0);
-                append_http1_body_chunk_with_budget(
-                    &mut body,
-                    &prefetch,
-                    &mut total,
-                    max_body_bytes as u64,
-                )?;
-            }
-            let mut chunk = [0_u8; IO_CHUNK_SIZE];
-            loop {
-                let read = read_with_idle_timeout(
-                    &mut source.stream,
-                    &mut chunk,
-                    "http2_to_http1_close_delimited_read",
-                )
-                .await?;
-                if read == 0 {
-                    break;
-                }
-                append_http1_body_chunk_with_budget(
-                    &mut body,
-                    &chunk[..read],
-                    &mut total,
-                    max_body_bytes as u64,
-                )?;
-            }
-        }
-    }
-
-    Ok(H2CapturedBody {
-        bytes: bytes::Bytes::from(body),
-        bytes_forwarded: total,
-        trailers,
-        body_truncated: false,
-    })
-}
-
-fn append_http1_body_chunk_with_budget(
-    body: &mut Vec<u8>,
-    chunk: &[u8],
-    total: &mut u64,
-    max_body_bytes: u64,
-) -> io::Result<()> {
-    *total += chunk.len() as u64;
-    if *total > max_body_bytes {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!(
-                "response body exceeded flow body budget (limit={max_body_bytes}, observed={total})"
-            ),
-        ));
-    }
-    body.extend_from_slice(chunk);
-    Ok(())
-}
-
 fn parse_http1_trailer_line(line: &[u8]) -> io::Result<(http::header::HeaderName, http::HeaderValue)> {
     let line = line.strip_suffix(b"\r\n").ok_or_else(|| {
         io::Error::new(io::ErrorKind::InvalidData, "invalid trailer line terminator")
@@ -240,6 +103,115 @@ fn parse_http1_trailer_line(line: &[u8]) -> io::Result<(http::header::HeaderName
     let value = http::HeaderValue::from_bytes(value_bytes)
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid trailer header value"))?;
     Ok((name, value))
+}
+
+async fn read_http1_response_chunk_non_eof<U>(
+    source: &mut BufferedConn<U>,
+    max_len: usize,
+    stage_name: &'static str,
+) -> io::Result<Vec<u8>>
+where
+    U: AsyncRead + Unpin,
+{
+    if let Some(chunk) = take_prefetched_http1_response_chunk(source, max_len) {
+        return Ok(chunk);
+    }
+
+    let mut buf = vec![0_u8; max_len.clamp(1, IO_CHUNK_SIZE)];
+    let read = with_h2_body_idle_timeout(stage_name, async {
+        read_with_idle_timeout(&mut source.stream, &mut buf, stage_name).await
+    })
+    .await?;
+    if read == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::UnexpectedEof,
+            "connection closed before response body completed",
+        ));
+    }
+    buf.truncate(read);
+    Ok(buf)
+}
+
+async fn read_http1_response_chunk_allow_eof<U>(
+    source: &mut BufferedConn<U>,
+    max_len: usize,
+    stage_name: &'static str,
+) -> io::Result<Option<Vec<u8>>>
+where
+    U: AsyncRead + Unpin,
+{
+    if let Some(chunk) = take_prefetched_http1_response_chunk(source, max_len) {
+        return Ok(Some(chunk));
+    }
+
+    let mut buf = vec![0_u8; max_len.clamp(1, IO_CHUNK_SIZE)];
+    let read = with_h2_body_idle_timeout(stage_name, async {
+        read_with_idle_timeout(&mut source.stream, &mut buf, stage_name).await
+    })
+    .await?;
+    if read == 0 {
+        return Ok(None);
+    }
+    buf.truncate(read);
+    Ok(Some(buf))
+}
+
+fn take_prefetched_http1_response_chunk<U>(
+    source: &mut BufferedConn<U>,
+    max_len: usize,
+) -> Option<Vec<u8>> {
+    if source.read_buf.is_empty() {
+        return None;
+    }
+
+    let take = source.read_buf.len().min(max_len.max(1));
+    Some(source.read_buf.drain(..take).collect())
+}
+
+async fn read_http1_chunked_trailers_as_header_map<U>(
+    source: &mut BufferedConn<U>,
+    max_http_head_bytes: usize,
+    runtime_governor: &Arc<runtime_governor::RuntimeGovernor>,
+) -> io::Result<Option<http::HeaderMap>>
+where
+    U: AsyncRead + Unpin,
+{
+    let mut trailer_bytes = 0_usize;
+    let mut parsed_trailers = http::HeaderMap::new();
+
+    loop {
+        let trailer_line = with_h2_body_idle_timeout("http2_to_http1_response_body_trailer_line", async {
+            read_chunk_line(source, runtime_governor).await
+        })
+        .await
+        .map_err(|error| {
+            if error.kind() == io::ErrorKind::UnexpectedEof {
+                io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "connection closed before chunked trailers completed",
+                )
+            } else {
+                error
+            }
+        })?;
+        trailer_bytes += trailer_line.len();
+        if trailer_bytes > max_http_head_bytes {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "chunked trailers exceeded configured header limit",
+            ));
+        }
+        if trailer_line == b"\r\n" {
+            break;
+        }
+        let (name, value) = parse_http1_trailer_line(&trailer_line)?;
+        parsed_trailers.append(name, value);
+    }
+
+    if parsed_trailers.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(parsed_trailers))
 }
 
 fn build_h2_response_parts_from_http1(

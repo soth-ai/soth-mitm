@@ -56,14 +56,14 @@ impl<H: InterceptHandler> FlowDispatchers<H> {
         }
     }
 
-    pub(crate) async fn enqueue_response(&self, flow_id: u64, response: RawResponse) {
+    pub(crate) async fn enqueue_response(&self, flow_id: u64, response: RawResponse) -> bool {
         self.enqueue(flow_id, DispatchWork::Response(response))
-            .await;
+            .await
     }
 
-    pub(crate) async fn enqueue_stream_chunk(&self, flow_id: u64, chunk: StreamChunk) {
+    pub(crate) async fn enqueue_stream_chunk(&self, flow_id: u64, chunk: StreamChunk) -> bool {
         self.enqueue(flow_id, DispatchWork::StreamChunk(chunk))
-            .await;
+            .await
     }
 
     pub(crate) async fn close_and_drain(&self, flow_id: u64) {
@@ -108,17 +108,18 @@ impl<H: InterceptHandler> FlowDispatchers<H> {
         }
     }
 
-    async fn enqueue(&self, flow_id: u64, work: DispatchWork) {
+    async fn enqueue(&self, flow_id: u64, work: DispatchWork) -> bool {
         let Some(sender) = self.sender_for_flow(flow_id).await else {
             self.metrics_store.record_dispatch_drop();
             tracing::warn!(flow_id, "dropped dispatch work for finalized flow");
-            return;
+            return false;
         };
         match tokio::time::timeout(self.queue_send_timeout, sender.send(work)).await {
-            Ok(Ok(())) => {}
+            Ok(Ok(())) => true,
             Ok(Err(_)) => {
                 self.metrics_store.record_dispatch_drop();
                 tracing::warn!(flow_id, "dropped dispatch work; flow worker closed");
+                false
             }
             Err(_) => {
                 self.metrics_store.record_dispatch_drop();
@@ -127,6 +128,7 @@ impl<H: InterceptHandler> FlowDispatchers<H> {
                     timeout_ms = self.queue_send_timeout.as_millis(),
                     "dispatch queue send timed out; dropping work item"
                 );
+                false
             }
         }
     }

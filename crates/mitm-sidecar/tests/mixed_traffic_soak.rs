@@ -23,6 +23,10 @@ use tokio_rustls::{TlsAcceptor, TlsConnector};
 static H2_EXCHANGE_SEQ: AtomicU64 = AtomicU64::new(1);
 static H2_UPSTREAM_CONN_SEQ: AtomicU64 = AtomicU64::new(1);
 static SOAK_DEBUG_ENABLED: OnceLock<bool> = OnceLock::new();
+const H2_LONG_STREAM_CHUNKS: usize = 90;
+const H2_LONG_STREAM_CHUNK_BYTES: usize = 8 * 1024;
+const H2_LONG_STREAM_CHUNK_DELAY_MS: u64 = 50;
+const H2_LONG_STREAM_TOTAL_BYTES: usize = H2_LONG_STREAM_CHUNKS * H2_LONG_STREAM_CHUNK_BYTES;
 
 fn soak_debug_enabled() -> bool {
     *SOAK_DEBUG_ENABLED.get_or_init(|| {
@@ -43,7 +47,7 @@ fn soak_bind_retries() -> u32 {
     env::var("SOTH_MITM_SOAK_BIND_RETRIES")
         .ok()
         .and_then(|value| value.parse::<u32>().ok())
-        .unwrap_or(10)
+        .unwrap_or(60)
 }
 
 fn soak_bind_retry_delay() -> Duration {
@@ -115,7 +119,7 @@ where
         .and_then(|value| value.parse::<u64>().ok())
         .filter(|value| *value > 0)
         .unwrap_or(20);
-    let timeout_seconds = if label == "tls_h2_exchange"
+    let timeout_seconds = if (label == "tls_h2_exchange" || label == "tls_h2_long_exchange")
         && env::var("SOTH_MITM_SOAK_EXCHANGE_TIMEOUT_SECONDS").is_err()
     {
         let stage_timeout_seconds = env::var("SOTH_MITM_SOAK_STAGE_TIMEOUT_SECONDS")
@@ -164,6 +168,18 @@ async fn start_sidecar(
     tokio::task::JoinHandle<std::io::Result<()>>,
     std::sync::Arc<RuntimeGovernor>,
 ) {
+    start_sidecar_with_timeouts(config, Duration::from_secs(15), Duration::from_secs(15)).await
+}
+
+async fn start_sidecar_with_timeouts(
+    config: MitmConfig,
+    stream_stage_timeout: Duration,
+    h2_body_idle_timeout: Duration,
+) -> (
+    std::net::SocketAddr,
+    tokio::task::JoinHandle<std::io::Result<()>>,
+    std::sync::Arc<RuntimeGovernor>,
+) {
     let sidecar_config = SidecarConfig {
         listen_addr: "127.0.0.1".to_string(),
         listen_port: 0,
@@ -173,7 +189,9 @@ async fn start_sidecar(
         idle_watchdog_timeout: std::time::Duration::from_secs(30),
         websocket_idle_watchdog_timeout: std::time::Duration::from_secs(120),
         upstream_connect_timeout: std::time::Duration::from_secs(10),
-        stream_stage_timeout: std::time::Duration::from_secs(15),
+        stream_stage_timeout,
+        h2_body_idle_timeout,
+        h2_response_overflow_mode: mitm_sidecar::H2ResponseOverflowMode::TruncateContinue,
         unix_socket_path: None,
     };
     let engine = build_engine(config);
@@ -194,6 +212,26 @@ async fn start_sidecar_with_vec_sink(
     std::sync::Arc<RuntimeGovernor>,
     VecEventConsumer,
 ) {
+    start_sidecar_with_vec_sink_and_timeouts(
+        config,
+        sink,
+        Duration::from_secs(15),
+        Duration::from_secs(15),
+    )
+    .await
+}
+
+async fn start_sidecar_with_vec_sink_and_timeouts(
+    config: MitmConfig,
+    sink: VecEventConsumer,
+    stream_stage_timeout: Duration,
+    h2_body_idle_timeout: Duration,
+) -> (
+    std::net::SocketAddr,
+    tokio::task::JoinHandle<std::io::Result<()>>,
+    std::sync::Arc<RuntimeGovernor>,
+    VecEventConsumer,
+) {
     let sidecar_config = SidecarConfig {
         listen_addr: "127.0.0.1".to_string(),
         listen_port: 0,
@@ -203,7 +241,9 @@ async fn start_sidecar_with_vec_sink(
         idle_watchdog_timeout: std::time::Duration::from_secs(30),
         websocket_idle_watchdog_timeout: std::time::Duration::from_secs(120),
         upstream_connect_timeout: std::time::Duration::from_secs(10),
-        stream_stage_timeout: std::time::Duration::from_secs(15),
+        stream_stage_timeout,
+        h2_body_idle_timeout,
+        h2_response_overflow_mode: mitm_sidecar::H2ResponseOverflowMode::TruncateContinue,
         unix_socket_path: None,
     };
     let engine = build_engine_with_sink(config, sink.clone());
@@ -256,6 +296,38 @@ async fn read_to_end_allow_unexpected_eof<S: AsyncRead + Unpin>(stream: &mut S) 
         }
     }
     out
+}
+
+async fn send_h2_payload_with_backpressure(
+    send: &mut h2::SendStream<Bytes>,
+    fill_byte: u8,
+    total_bytes: usize,
+    chunk_limit: usize,
+    inter_chunk_delay: Duration,
+) -> io::Result<()> {
+    let mut remaining = total_bytes;
+    while remaining > 0 {
+        send.reserve_capacity(remaining);
+        let capacity = timeout(
+            Duration::from_secs(5),
+            std::future::poll_fn(|cx| send.poll_capacity(cx)),
+        )
+        .await
+        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "h2 send capacity timeout"))?
+        .ok_or_else(|| io::Error::other("h2 send stream closed while waiting for capacity"))?
+        .map_err(|error| io::Error::other(format!("h2 poll capacity failed: {error}")))?;
+        if capacity == 0 {
+            continue;
+        }
+        let frame_len = remaining.min(chunk_limit).min(capacity);
+        remaining -= frame_len;
+        send.send_data(Bytes::from(vec![fill_byte; frame_len]), remaining == 0)
+            .map_err(|error| io::Error::other(format!("h2 send data failed: {error}")))?;
+        if remaining > 0 && !inter_chunk_delay.is_zero() {
+            sleep(inter_chunk_delay).await;
+        }
+    }
+    Ok(())
 }
 
 async fn start_tunnel_upstream() -> (u16, tokio::task::JoinHandle<()>) {
@@ -412,35 +484,91 @@ async fn start_tls_h2_upstream() -> (u16, tokio::task::JoinHandle<()>) {
                     Ok(value) => value,
                     Err(_) => return,
                 };
-                let (parts, mut body) = request.into_parts();
-                assert_eq!(parts.method, http::Method::POST);
-                let response = http::Response::builder()
-                    .status(200)
-                    .header("content-length", "2")
-                    .body(())
-                    .expect("h2 response");
-                let mut send = match respond.send_response(response, false) {
-                    Ok(stream) => stream,
-                    Err(_) => return,
-                };
-                if send.send_data(Bytes::from_static(b"ok"), true).is_err() {
-                    return;
-                }
-                soak_debug(format!("[h2-upstream:{conn_id}] response sent"));
-                let _ = timeout(Duration::from_millis(250), async {
-                    while let Some(next) = body.data().await {
-                        if next.is_err() {
-                            break;
+                let (parts, _body) = request.into_parts();
+                let mut send_task = tokio::spawn(async move {
+                    if parts.method == http::Method::GET && parts.uri.path().contains("long-stream")
+                    {
+                        let response = http::Response::builder()
+                            .status(200)
+                            .header("content-type", "application/octet-stream")
+                            .header("content-length", H2_LONG_STREAM_TOTAL_BYTES.to_string())
+                            .body(())
+                            .expect("h2 long-stream response");
+                        let mut send = match respond.send_response(response, false) {
+                            Ok(stream) => stream,
+                            Err(_) => return,
+                        };
+                        if send
+                            .send_data(Bytes::from(vec![b'l'; H2_LONG_STREAM_CHUNK_BYTES]), false)
+                            .is_err()
+                        {
+                            return;
                         }
+                        let remaining =
+                            H2_LONG_STREAM_TOTAL_BYTES.saturating_sub(H2_LONG_STREAM_CHUNK_BYTES);
+                        if remaining > 0 {
+                            sleep(Duration::from_millis(H2_LONG_STREAM_CHUNK_DELAY_MS)).await;
+                            if send_h2_payload_with_backpressure(
+                                &mut send,
+                                b'l',
+                                remaining,
+                                H2_LONG_STREAM_CHUNK_BYTES,
+                                Duration::from_millis(H2_LONG_STREAM_CHUNK_DELAY_MS),
+                            )
+                            .await
+                            .is_err()
+                            {
+                                return;
+                            }
+                        }
+                        soak_debug(format!("[h2-upstream:{conn_id}] long stream response sent"));
+                        return;
                     }
-                    let _ = body.trailers().await;
-                })
-                .await;
+
+                    if parts.method == http::Method::POST {
+                        let response = http::Response::builder()
+                            .status(200)
+                            .header("content-length", "2")
+                            .body(())
+                            .expect("h2 response");
+                        let mut send = match respond.send_response(response, false) {
+                            Ok(stream) => stream,
+                            Err(_) => return,
+                        };
+                        if send.send_data(Bytes::from_static(b"ok"), true).is_err() {
+                            return;
+                        }
+                        soak_debug(format!("[h2-upstream:{conn_id}] response sent"));
+                        return;
+                    }
+
+                    let response = http::Response::builder()
+                        .status(404)
+                        .header("content-length", "9")
+                        .body(())
+                        .expect("h2 fallback response");
+                    let mut send = match respond.send_response(response, false) {
+                        Ok(stream) => stream,
+                        Err(_) => return,
+                    };
+                    let _ = send.send_data(Bytes::from_static(b"not-found"), true);
+                    soak_debug(format!(
+                        "[h2-upstream:{conn_id}] unexpected request method={} path={}; sent fallback",
+                        parts.method,
+                        parts.uri.path()
+                    ));
+                });
                 h2_conn.graceful_shutdown();
-                let _ = timeout(Duration::from_secs(1), async {
+                let mut h2_conn_task = tokio::spawn(async move {
                     let _ = std::future::poll_fn(|cx| h2_conn.poll_closed(cx)).await;
-                })
-                .await;
+                });
+                let _ = timeout(Duration::from_secs(12), &mut send_task).await;
+                if timeout(Duration::from_secs(15), &mut h2_conn_task)
+                    .await
+                    .is_err()
+                {
+                    h2_conn_task.abort();
+                }
                 soak_debug(format!("[h2-upstream:{conn_id}] closed"));
             });
         }
@@ -724,6 +852,168 @@ async fn run_tls_h2_exchange(
     Err(last_error.unwrap_or_else(|| io::Error::other("tls_h2_exchange failed without detail")))
 }
 
+async fn run_tls_h2_long_exchange_once(
+    proxy_addr: std::net::SocketAddr,
+    upstream_port: u16,
+) -> io::Result<()> {
+    let stage_timeout_secs = env::var("SOTH_MITM_SOAK_STAGE_TIMEOUT_SECONDS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(10);
+    let exchange_id = H2_EXCHANGE_SEQ.fetch_add(1, Ordering::Relaxed);
+    soak_debug(format!("[h2-long:{exchange_id}] start"));
+
+    let mut tcp = run_stage_timeout(
+        "tls_h2_long_tcp_connect",
+        stage_timeout_secs,
+        TcpStream::connect(proxy_addr),
+    )
+    .await?;
+    let connect = format!(
+        "CONNECT 127.0.0.1:{upstream_port} HTTP/1.1\r\nHost: 127.0.0.1:{upstream_port}\r\n\r\n"
+    );
+    run_stage_timeout(
+        "tls_h2_long_connect_write",
+        stage_timeout_secs,
+        tcp.write_all(connect.as_bytes()),
+    )
+    .await?;
+    let connect_response = run_stage_timeout_raw(
+        "tls_h2_long_connect_response",
+        stage_timeout_secs,
+        read_response_head(&mut tcp),
+    )
+    .await?;
+    if !connect_response.starts_with("HTTP/1.1 200 Connection Established") {
+        return Err(io::Error::other(format!(
+            "unexpected TLS/H2 long CONNECT response: {connect_response}"
+        )));
+    }
+
+    let connector = TlsConnector::from(build_http_client_config(true, true));
+    let server_name = ServerName::try_from("127.0.0.1".to_string()).expect("server name");
+    let tls = run_stage_timeout(
+        "tls_h2_long_tls_connect",
+        stage_timeout_secs,
+        connector.connect(server_name, tcp),
+    )
+    .await?;
+    if tls.get_ref().1.alpn_protocol() != Some(b"h2".as_slice()) {
+        return Err(io::Error::other("sidecar did not negotiate h2 ALPN"));
+    }
+
+    let mut h2_builder = h2::client::Builder::new();
+    h2_builder.initial_window_size(1_048_576);
+    h2_builder.initial_connection_window_size(4_194_304);
+    let (mut h2_client, h2_connection) =
+        run_stage_timeout("tls_h2_long_client_handshake", stage_timeout_secs, async {
+            h2_builder
+                .handshake::<_, Bytes>(tls)
+                .await
+                .map_err(|error| io::Error::other(format!("h2 client handshake failed: {error}")))
+        })
+        .await?;
+    let mut h2_connection_task = tokio::spawn(async move {
+        let _ = h2_connection.await;
+    });
+
+    let request = http::Request::builder()
+        .method("GET")
+        .uri("https://127.0.0.1/long-stream")
+        .body(())
+        .expect("h2 long request");
+    let (response_future, _send_stream) =
+        run_stage_timeout("tls_h2_long_send_request", stage_timeout_secs, async {
+            h2_client
+                .send_request(request, true)
+                .map_err(|error| io::Error::other(format!("h2 send request failed: {error}")))
+        })
+        .await?;
+
+    let response = run_stage_timeout("tls_h2_long_response", stage_timeout_secs, async {
+        response_future
+            .await
+            .map_err(|error| io::Error::other(format!("h2 response failed: {error}")))
+    })
+    .await?;
+    if response.status() != http::StatusCode::OK {
+        return Err(io::Error::other(format!(
+            "unexpected h2 long status: {}",
+            response.status()
+        )));
+    }
+
+    let mut body = response.into_body();
+    let first_chunk = timeout(Duration::from_millis(1_000), body.data())
+        .await
+        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "tls_h2_long_first_byte timed out"))?
+        .ok_or_else(|| io::Error::new(io::ErrorKind::UnexpectedEof, "missing long-stream data"))?
+        .map_err(|error| io::Error::other(format!("h2 long body read failed: {error}")))?;
+    if first_chunk.is_empty() || !first_chunk.iter().all(|byte| *byte == b'l') {
+        return Err(io::Error::other(
+            "unexpected first long-stream chunk payload",
+        ));
+    }
+    let mut payload_len = first_chunk.len();
+    while let Some(chunk) =
+        run_stage_timeout_raw("tls_h2_long_body_chunk", stage_timeout_secs, body.data()).await?
+    {
+        let chunk = chunk
+            .map_err(|error| io::Error::other(format!("h2 long body read failed: {error}")))?;
+        if !chunk.iter().all(|byte| *byte == b'l') {
+            return Err(io::Error::other("unexpected long-stream chunk payload"));
+        }
+        payload_len += chunk.len();
+    }
+    if payload_len != H2_LONG_STREAM_TOTAL_BYTES {
+        return Err(io::Error::other(format!(
+            "unexpected long-stream payload length: got={payload_len} expected={H2_LONG_STREAM_TOTAL_BYTES}"
+        )));
+    }
+
+    drop(h2_client);
+    if timeout(Duration::from_millis(150), &mut h2_connection_task)
+        .await
+        .is_err()
+    {
+        h2_connection_task.abort();
+        let _ = h2_connection_task.await;
+    }
+    soak_debug(format!("[h2-long:{exchange_id}] done"));
+    Ok(())
+}
+
+async fn run_tls_h2_long_exchange(
+    proxy_addr: std::net::SocketAddr,
+    upstream_port: u16,
+) -> io::Result<()> {
+    let retries = env::var("SOTH_MITM_SOAK_H2_RETRIES")
+        .ok()
+        .and_then(|value| value.parse::<u32>().ok())
+        .unwrap_or(2);
+    let mut last_error: Option<io::Error> = None;
+    for attempt in 0..=retries {
+        match run_tls_h2_long_exchange_once(proxy_addr, upstream_port).await {
+            Ok(()) => return Ok(()),
+            Err(error) => {
+                if attempt == retries {
+                    last_error = Some(error);
+                    break;
+                }
+                soak_debug(format!(
+                    "[h2-long-retry] attempt={} failed with {}; retrying",
+                    attempt + 1,
+                    error
+                ));
+                sleep(Duration::from_millis(25)).await;
+            }
+        }
+    }
+    Err(last_error
+        .unwrap_or_else(|| io::Error::other("tls_h2_long_exchange failed without detail")))
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 async fn mixed_traffic_soak_respects_runtime_budget_envelope() {
     let soak_seconds = env::var("SOTH_MITM_SOAK_SECONDS")
@@ -758,12 +1048,14 @@ async fn mixed_traffic_soak_respects_runtime_budget_envelope() {
     let run_tls_http1 = selected.contains("tls_http1");
     let run_tls_sse = selected.contains("tls_sse");
     let run_tls_h2 = selected.contains("tls_h2");
+    let run_tls_h2_long = selected.contains("tls_h2_long");
     let expected_flows_per_iteration = [
         run_tunnel,
         run_forward,
         run_tls_http1,
         run_tls_sse,
         run_tls_h2,
+        run_tls_h2_long,
     ]
     .into_iter()
     .filter(|enabled| *enabled)
@@ -839,6 +1131,14 @@ async fn mixed_traffic_soak_respects_runtime_budget_envelope() {
                 .await
                 .expect("TLS/H2 exchange should succeed");
             }
+            if run_tls_h2_long {
+                run_with_timeout(
+                    "tls_h2_long_exchange",
+                    run_tls_h2_long_exchange(proxy_addr, tls_h2_port),
+                )
+                .await
+                .expect("TLS/H2 long exchange should succeed");
+            }
         } else {
             let mixed_result = tokio::try_join!(
                 async {
@@ -890,6 +1190,17 @@ async fn mixed_traffic_soak_respects_runtime_budget_envelope() {
                         run_with_timeout(
                             "tls_h2_exchange",
                             run_tls_h2_exchange(proxy_addr, tls_h2_port),
+                        )
+                        .await
+                    } else {
+                        Ok(())
+                    }
+                },
+                async {
+                    if run_tls_h2_long {
+                        run_with_timeout(
+                            "tls_h2_long_exchange",
+                            run_tls_h2_long_exchange(proxy_addr, tls_h2_port),
                         )
                         .await
                     } else {
@@ -999,6 +1310,122 @@ async fn mixed_traffic_soak_respects_runtime_budget_envelope() {
 
     proxy_task.abort();
     tunnel_task.abort();
+    plain_http_task.abort();
+    tls_http1_task.abort();
+    tls_h2_task.abort();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+#[ignore = "manual long-stream stress lane; unstable under constrained local sandboxes"]
+async fn mixed_traffic_concurrent_long_h2_stream_settles_without_stuck_flows() {
+    let config = MitmConfig {
+        upstream_tls_insecure_skip_verify: true,
+        http2_enabled: true,
+        max_concurrent_flows: 256,
+        max_in_flight_bytes: 32 * 1024 * 1024,
+        ..MitmConfig::default()
+    };
+    let sink = VecEventConsumer::default();
+
+    let (plain_http_port, plain_http_task) = start_plain_http_upstream().await;
+    let (tls_http1_port, tls_http1_task) = start_tls_http1_upstream().await;
+    let (tls_h2_port, tls_h2_task) = start_tls_h2_upstream().await;
+    let (proxy_addr, proxy_task, runtime, sink) = start_sidecar_with_vec_sink_and_timeouts(
+        config,
+        sink,
+        Duration::from_secs(4),
+        Duration::from_secs(30),
+    )
+    .await;
+
+    tokio::try_join!(
+        run_with_timeout(
+            "forward_http_exchange",
+            run_forward_http_exchange(proxy_addr, plain_http_port),
+        ),
+        run_with_timeout(
+            "tls_http1_exchange",
+            run_tls_http1_exchange(proxy_addr, tls_http1_port),
+        ),
+        run_with_timeout(
+            "tls_h2_long_exchange",
+            run_tls_h2_long_exchange(proxy_addr, tls_h2_port),
+        ),
+    )
+    .expect("mixed traffic exchanges should succeed");
+
+    let settle_deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let snapshot = runtime.snapshot();
+        if snapshot.active_flows == 0 && snapshot.current_in_flight_bytes == 0 {
+            break;
+        }
+        assert!(
+            Instant::now() < settle_deadline,
+            "runtime did not settle after long mixed exchange: active_flows={} in_flight={} flow_count={} budget_denials={} backpressure={} idle_timeouts={} stage_timeouts={} stuck_flows={}",
+            snapshot.active_flows,
+            snapshot.current_in_flight_bytes,
+            snapshot.flow_count,
+            snapshot.budget_denial_count,
+            snapshot.backpressure_activation_count,
+            snapshot.idle_timeout_count,
+            snapshot.stream_stage_timeout_count,
+            snapshot.stuck_flow_count,
+        );
+        sleep(Duration::from_millis(20)).await;
+    }
+
+    let snapshot = runtime.snapshot();
+    assert_eq!(
+        snapshot.active_flows, 0,
+        "runtime should settle active flows"
+    );
+    assert_eq!(
+        snapshot.current_in_flight_bytes, 0,
+        "runtime should settle in-flight bytes"
+    );
+    assert_eq!(
+        snapshot.budget_denial_count, 0,
+        "no budget denials expected in long mixed exchange"
+    );
+    assert_eq!(
+        snapshot.idle_timeout_count, 0,
+        "no idle watchdog timeout expected in long mixed exchange"
+    );
+    assert_eq!(
+        snapshot.stream_stage_timeout_count, 0,
+        "active long HTTP/2 stream should not be counted as stream_stage_timeout"
+    );
+    assert!(
+        snapshot.stuck_flow_count <= 2,
+        "stuck-flow telemetry exceeded bounded allowance: stuck_flows={}",
+        snapshot.stuck_flow_count
+    );
+
+    let events = sink.snapshot();
+    let mut seen_flows = HashSet::new();
+    for event in events
+        .iter()
+        .filter(|event| event.kind == EventType::StreamClosed)
+    {
+        assert!(
+            seen_flows.insert(event.context.flow_id),
+            "duplicate stream_closed event for flow_id={}",
+            event.context.flow_id
+        );
+    }
+    assert!(
+        events
+            .iter()
+            .filter(|event| event.kind == EventType::StreamClosed)
+            .all(|event| {
+                event.attributes.get("reason_code").map(String::as_str)
+                    != Some("stream_stage_timeout")
+            }),
+        "long mixed exchange emitted unexpected stream_stage_timeout close reason"
+    );
+
+    proxy_task.abort();
     plain_http_task.abort();
     tls_http1_task.abort();
     tls_h2_task.abort();
@@ -1141,6 +1568,76 @@ async fn tls_h2_exchange_harness_path_succeeds() {
     assert_eq!(
         snapshot.budget_denial_count, 0,
         "unexpected budget denials in focused TLS/H2 exchange"
+    );
+    proxy_task.abort();
+    tls_h2_task.abort();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "manual long-stream stress lane; unstable under constrained local sandboxes"]
+async fn tls_h2_long_exchange_harness_path_succeeds() {
+    let config = MitmConfig {
+        upstream_tls_insecure_skip_verify: true,
+        http2_enabled: true,
+        max_concurrent_flows: 256,
+        max_in_flight_bytes: 32 * 1024 * 1024,
+        ..MitmConfig::default()
+    };
+    let sink = VecEventConsumer::default();
+    let (tls_h2_port, tls_h2_task) = start_tls_h2_upstream().await;
+    let (proxy_addr, proxy_task, runtime, sink) = start_sidecar_with_vec_sink_and_timeouts(
+        config,
+        sink,
+        Duration::from_secs(4),
+        Duration::from_secs(30),
+    )
+    .await;
+
+    if let Err(error) = run_with_timeout(
+        "tls_h2_long_exchange",
+        run_tls_h2_long_exchange(proxy_addr, tls_h2_port),
+    )
+    .await
+    {
+        let snapshot = runtime.snapshot();
+        let events = sink.snapshot();
+        let reasons = events
+            .iter()
+            .filter(|event| event.kind == EventType::StreamClosed)
+            .map(|event| {
+                let reason = event
+                    .attributes
+                    .get("reason_code")
+                    .cloned()
+                    .unwrap_or_else(|| "<missing>".to_string());
+                let detail = event
+                    .attributes
+                    .get("reason_detail")
+                    .cloned()
+                    .unwrap_or_else(|| "<none>".to_string());
+                format!("{reason}:{detail}")
+            })
+            .collect::<Vec<_>>();
+        panic!(
+            "TLS/H2 long exchange should succeed: error={error} active_flows={} in_flight={} flow_count={} budget_denials={} idle_timeouts={} stage_timeouts={} stuck_flows={} close_reasons={reasons:?}",
+            snapshot.active_flows,
+            snapshot.current_in_flight_bytes,
+            snapshot.flow_count,
+            snapshot.budget_denial_count,
+            snapshot.idle_timeout_count,
+            snapshot.stream_stage_timeout_count,
+            snapshot.stuck_flow_count,
+        );
+    }
+
+    let snapshot = runtime.snapshot();
+    assert_eq!(
+        snapshot.budget_denial_count, 0,
+        "unexpected budget denials in focused TLS/H2 long exchange"
+    );
+    assert_eq!(
+        snapshot.stream_stage_timeout_count, 0,
+        "focused TLS/H2 long exchange should not emit stream_stage_timeout"
     );
     proxy_task.abort();
     tls_h2_task.abort();

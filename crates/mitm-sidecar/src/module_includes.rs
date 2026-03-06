@@ -16,6 +16,7 @@ include!("http2_relay_support.rs");
 include!("http2_stream_relay.rs");
 include!("http2_stream_relay_http1.rs");
 include!("http2_stream_hook_dispatch.rs");
+include!("http2_stream_response_relay.rs");
 include!("http2_stream_relay_stream.rs");
 include!("websocket_relay.rs");
 include!("websocket_relay_io.rs");

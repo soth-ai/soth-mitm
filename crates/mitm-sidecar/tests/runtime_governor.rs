@@ -103,6 +103,8 @@ async fn runtime_governor_enforces_concurrent_flow_limit_and_records_metrics() {
         websocket_idle_watchdog_timeout: std::time::Duration::from_secs(120),
         upstream_connect_timeout: std::time::Duration::from_secs(10),
         stream_stage_timeout: std::time::Duration::from_secs(5),
+        h2_body_idle_timeout: std::time::Duration::from_secs(5),
+        h2_response_overflow_mode: mitm_sidecar::H2ResponseOverflowMode::TruncateContinue,
         unix_socket_path: None,
     };
     let engine = build_engine(config, sink);
@@ -213,6 +215,8 @@ async fn idle_watchdog_timeout_closes_stuck_tunnel_and_records_metrics() {
         websocket_idle_watchdog_timeout: std::time::Duration::from_secs(120),
         upstream_connect_timeout: std::time::Duration::from_secs(10),
         stream_stage_timeout: Duration::from_secs(1),
+        h2_body_idle_timeout: Duration::from_secs(1),
+        h2_response_overflow_mode: mitm_sidecar::H2ResponseOverflowMode::TruncateContinue,
         unix_socket_path: None,
     };
     let engine = build_engine(config, sink);

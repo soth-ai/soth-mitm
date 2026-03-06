@@ -48,6 +48,21 @@ run_case() {
   run_case h2_stage_budget_metrics \
     cargo test -p mitm-sidecar --test mixed_traffic_soak \
       tls_h2_exchange_harness_path_succeeds -q
+  run_case codex_intercept_terminalization_contract \
+    cargo test -p mitm-sidecar --test http2_mitm \
+      intercept_http2_ai_host_request_hooks_receive_host_header_for_capture -q
+  run_case h2_long_exchange_reliability \
+    cargo test -p mitm-sidecar --test mixed_traffic_soak \
+      tls_h2_long_exchange_harness_path_succeeds -q -- --ignored
+  run_case mixed_long_h2_stream_reliability \
+    cargo test -p mitm-sidecar --test mixed_traffic_soak \
+      mixed_traffic_concurrent_long_h2_stream_settles_without_stuck_flows -q -- --ignored
+  run_case h2_strict_overflow_rollback_switch \
+    cargo test -p mitm-sidecar --test http2_mitm \
+      http2_response_body_over_budget_strict_fail_aborts_stream_and_emits_error_close -q
+  run_case h2_to_h1_strict_overflow_rollback_switch \
+    cargo test -p mitm-sidecar --test http2_mitm \
+      h2_to_h1_response_body_over_budget_strict_fail_aborts_stream_and_emits_error_close -q
 } >"$run_log" 2>&1 || true
 
 failed="$(awk '$2 != "pass" {print $1}' "$status_tsv" || true)"

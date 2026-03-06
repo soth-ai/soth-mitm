@@ -13,7 +13,11 @@ async fn capture_h2_body(
     let mut body = Vec::new();
     let mut body_truncated = false;
 
-    while let Some(next_data) = source.data().await {
+    while let Some(next_data) = with_h2_body_idle_timeout("http2_request_body_next_frame", async {
+        Ok(source.data().await)
+    })
+    .await?
+    {
         let data =
             next_data.map_err(|error| h2_error_to_io("reading HTTP/2 body frame failed", error))?;
         let frame_len = data.len();
@@ -52,6 +56,111 @@ async fn capture_h2_body(
             .await
             .map_err(|error| h2_error_to_io("reading HTTP/2 trailers failed", error))?
     };
+
+    Ok(H2CapturedBody {
+        bytes: bytes::Bytes::from(body),
+        bytes_forwarded: total,
+        trailers,
+        body_truncated,
+    })
+}
+
+/// Tee H2 request body: read each chunk from downstream, forward it upstream immediately,
+/// and buffer a copy for the handler. This eliminates the store-and-forward latency where
+/// the proxy would first buffer the entire body, then re-upload it to upstream.
+///
+/// Takes owned streams so it can be spawned as a concurrent task for racing against
+/// early upstream responses.
+async fn tee_h2_request_body(
+    mut source: h2::RecvStream,
+    mut sink: h2::SendStream<bytes::Bytes>,
+    runtime_governor: Arc<runtime_governor::RuntimeGovernor>,
+    max_handler_body: usize,
+) -> io::Result<H2CapturedBody> {
+    let mut total = 0_u64;
+    let mut body = Vec::new();
+    let mut body_truncated = false;
+    let mut upstream_send_failed = false;
+
+    while let Some(next_data) = with_h2_body_idle_timeout("http2_request_body_tee_next", async {
+        Ok(source.data().await)
+    })
+    .await?
+    {
+        let data =
+            next_data.map_err(|error| h2_error_to_io("reading HTTP/2 body frame failed", error))?;
+        let frame_len = data.len();
+        if frame_len == 0 {
+            if source.is_end_stream() {
+                break;
+            }
+            continue;
+        }
+        // Buffer for handler (up to limit)
+        if !body_truncated {
+            let remaining = max_handler_body.saturating_sub(body.len());
+            if remaining >= frame_len {
+                body.extend_from_slice(data.as_ref());
+            } else {
+                if remaining > 0 {
+                    body.extend_from_slice(&data.as_ref()[..remaining]);
+                }
+                body_truncated = true;
+            }
+        }
+        total += frame_len as u64;
+        // Release downstream receive capacity so more data can arrive
+        source
+            .flow_control()
+            .release_capacity(frame_len)
+            .map_err(|error| h2_error_to_io("releasing HTTP/2 receive capacity failed", error))?;
+        // Forward to upstream immediately. If upstream rejects (e.g. early response),
+        // stop forwarding but continue reading from downstream to drain the body.
+        if !upstream_send_failed {
+            if let Err(_) =
+                send_h2_data_with_backpressure(&mut sink, &runtime_governor, data, false).await
+            {
+                upstream_send_failed = true;
+            }
+        }
+        if source.is_end_stream() {
+            break;
+        }
+    }
+
+    // Handle trailers
+    let trailers = if source.is_end_stream() {
+        None
+    } else {
+        source
+            .trailers()
+            .await
+            .map_err(|error| h2_error_to_io("reading HTTP/2 trailers failed", error))?
+    };
+
+    // Always attempt to finalize the upstream stream to avoid implicit RST_STREAM(CANCEL)
+    // on drop, which would kill the response side of the stream too. If previous sends
+    // failed, these calls fail immediately and the error is harmless.
+    // Use direct send_data/send_trailers to avoid blocking on flow control capacity
+    // (which may never arrive if upstream stopped reading the body).
+    if !upstream_send_failed {
+        if let Some(ref trailer_map) = trailers {
+            let mut cleaned = trailer_map.clone();
+            strip_trailer_forbidden_and_transport_headers(&mut cleaned);
+            if !cleaned.is_empty() {
+                let _ = sink.send_trailers(cleaned);
+            } else {
+                let _ = sink.send_data(bytes::Bytes::new(), true);
+            }
+        } else {
+            let _ = sink.send_data(bytes::Bytes::new(), true);
+        }
+    } else {
+        // Upstream send already failed — the stream may be reset. Explicitly reset
+        // with NO_ERROR instead of letting the drop send CANCEL, which would kill
+        // the response side too.
+        sink.send_reset(h2::Reason::NO_ERROR);
+    }
 
     Ok(H2CapturedBody {
         bytes: bytes::Bytes::from(body),

@@ -66,6 +66,7 @@ where
 async fn read_websocket_frame_header<R>(
     source: &mut PrefixedReader<R>,
     codec: &soketto::base::Codec,
+    max_frame_payload_bytes: usize,
 ) -> io::Result<Option<(Vec<u8>, WebSocketHeaderView)>>
 where
     R: AsyncRead + Unpin,
@@ -97,6 +98,7 @@ where
                 frame_header.push(next_byte[0]);
             }
             WebSocketHeaderDecodeResult::Complete(header_view) => {
+                websocket_payload_len_within_limit(header_view.payload_len, max_frame_payload_bytes)?;
                 if header_view.header_len != frame_header.len() {
                     return Err(io::Error::new(
                         io::ErrorKind::InvalidData,

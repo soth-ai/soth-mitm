@@ -33,6 +33,8 @@ pub struct RuntimeObservabilitySnapshot {
     pub flow_duration_max_ms: u64,
     pub backpressure_activation_count: u64,
     pub budget_denial_count: u64,
+    pub flow_permit_denial_count: u64,
+    pub in_flight_budget_denial_count: u64,
     pub decoder_failure_count: u64,
     pub idle_timeout_count: u64,
     pub stream_stage_timeout_count: u64,
@@ -53,6 +55,8 @@ pub struct RuntimeGovernor {
     flow_duration_max_ms: AtomicU64,
     backpressure_activation_count: AtomicU64,
     budget_denial_count: AtomicU64,
+    flow_permit_denial_count: AtomicU64,
+    in_flight_budget_denial_count: AtomicU64,
     decoder_failure_count: AtomicU64,
     idle_timeout_count: AtomicU64,
     stream_stage_timeout_count: AtomicU64,
@@ -84,6 +88,8 @@ impl RuntimeGovernor {
             flow_duration_max_ms: AtomicU64::new(0),
             backpressure_activation_count: AtomicU64::new(0),
             budget_denial_count: AtomicU64::new(0),
+            flow_permit_denial_count: AtomicU64::new(0),
+            in_flight_budget_denial_count: AtomicU64::new(0),
             decoder_failure_count: AtomicU64::new(0),
             idle_timeout_count: AtomicU64::new(0),
             stream_stage_timeout_count: AtomicU64::new(0),
@@ -141,7 +147,17 @@ impl RuntimeGovernor {
         context: &'static str,
     ) -> io::Result<InFlightLease> {
         self.try_reserve_in_flight(bytes).ok_or_else(|| {
-            self.mark_budget_denial();
+            self.mark_in_flight_budget_denial();
+            let snapshot = self.snapshot();
+            tracing::error!(
+                context,
+                requested_bytes = bytes,
+                current_in_flight_bytes = snapshot.current_in_flight_bytes,
+                in_flight_bytes_watermark = snapshot.in_flight_bytes_watermark,
+                budget_denial_count = snapshot.budget_denial_count,
+                in_flight_budget_denial_count = snapshot.in_flight_budget_denial_count,
+                "runtime governor denied in-flight byte reservation"
+            );
             io::Error::new(
                 io::ErrorKind::OutOfMemory,
                 format!("{context}: global in-flight byte budget exceeded"),
@@ -157,6 +173,18 @@ impl RuntimeGovernor {
     pub fn mark_budget_denial(&self) {
         self.budget_denial_count.fetch_add(1, Ordering::Relaxed);
         self.mark_backpressure_activation();
+    }
+
+    pub fn mark_flow_permit_denial(&self) {
+        self.flow_permit_denial_count
+            .fetch_add(1, Ordering::Relaxed);
+        self.mark_budget_denial();
+    }
+
+    pub fn mark_in_flight_budget_denial(&self) {
+        self.in_flight_budget_denial_count
+            .fetch_add(1, Ordering::Relaxed);
+        self.mark_budget_denial();
     }
 
     pub fn mark_decoder_failure(&self) {
@@ -207,6 +235,10 @@ impl RuntimeGovernor {
                 .backpressure_activation_count
                 .load(Ordering::Relaxed),
             budget_denial_count: self.budget_denial_count.load(Ordering::Relaxed),
+            flow_permit_denial_count: self.flow_permit_denial_count.load(Ordering::Relaxed),
+            in_flight_budget_denial_count: self
+                .in_flight_budget_denial_count
+                .load(Ordering::Relaxed),
             decoder_failure_count: self.decoder_failure_count.load(Ordering::Relaxed),
             idle_timeout_count: self.idle_timeout_count.load(Ordering::Relaxed),
             stream_stage_timeout_count: self.stream_stage_timeout_count.load(Ordering::Relaxed),
@@ -360,6 +392,17 @@ mod tests {
         let snapshot = governor.snapshot();
         assert!(snapshot.budget_denial_count >= 1);
         assert!(snapshot.backpressure_activation_count >= 1);
+    }
+
+    #[test]
+    fn denial_counters_are_attributed_by_budget_type() {
+        let governor = RuntimeGovernor::new(RuntimeBudgetConfig::default());
+        governor.mark_flow_permit_denial();
+        governor.mark_in_flight_budget_denial();
+        let snapshot = governor.snapshot();
+        assert_eq!(snapshot.flow_permit_denial_count, 1);
+        assert_eq!(snapshot.in_flight_budget_denial_count, 1);
+        assert_eq!(snapshot.budget_denial_count, 2);
     }
 
     #[test]

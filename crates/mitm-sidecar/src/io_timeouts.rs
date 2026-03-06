@@ -8,6 +8,8 @@ struct IoTimeoutConfig {
     websocket_idle_watchdog_timeout: std::time::Duration,
     upstream_connect_timeout: std::time::Duration,
     stream_stage_timeout: std::time::Duration,
+    h2_body_idle_timeout: std::time::Duration,
+    h2_response_overflow_mode: H2ResponseOverflowMode,
 }
 
 impl Default for IoTimeoutConfig {
@@ -17,6 +19,8 @@ impl Default for IoTimeoutConfig {
             websocket_idle_watchdog_timeout: std::time::Duration::from_secs(600),
             upstream_connect_timeout: std::time::Duration::from_secs(10),
             stream_stage_timeout: std::time::Duration::from_secs(5),
+            h2_body_idle_timeout: std::time::Duration::from_secs(5),
+            h2_response_overflow_mode: H2ResponseOverflowMode::TruncateContinue,
         }
     }
 }
@@ -68,12 +72,16 @@ fn install_io_timeout_config(
     websocket_idle_watchdog_timeout: std::time::Duration,
     upstream_connect_timeout: std::time::Duration,
     stream_stage_timeout: std::time::Duration,
+    h2_body_idle_timeout: std::time::Duration,
+    h2_response_overflow_mode: H2ResponseOverflowMode,
 ) {
     let config = IoTimeoutConfig {
         idle_watchdog_timeout: ensure_bounded_timeout(idle_watchdog_timeout),
         websocket_idle_watchdog_timeout: ensure_bounded_timeout(websocket_idle_watchdog_timeout),
         upstream_connect_timeout: ensure_bounded_timeout(upstream_connect_timeout),
         stream_stage_timeout: ensure_bounded_timeout(stream_stage_timeout),
+        h2_body_idle_timeout: ensure_bounded_timeout(h2_body_idle_timeout),
+        h2_response_overflow_mode,
     };
     let mut guard = IO_TIMEOUT_CONFIG
         .get_or_init(|| std::sync::Mutex::new(IoTimeoutConfig::default()))
@@ -440,7 +448,25 @@ where
         })?
 }
 
-async fn copy_bidirectional_with_idle_timeout<A, B>(
+async fn with_h2_body_idle_timeout<T, F>(stage: &'static str, future: F) -> std::io::Result<T>
+where
+    F: std::future::Future<Output = std::io::Result<T>>,
+{
+    let timeout = io_timeout_config().h2_body_idle_timeout;
+    tokio::time::timeout(timeout, future)
+        .await
+        .map_err(|_| {
+            runtime_governor::mark_stream_stage_timeout_global();
+            runtime_governor::mark_stuck_flow_global();
+            timeout_error(STREAM_STAGE_TIMEOUT_ERROR_PREFIX, stage, timeout)
+        })?
+}
+
+fn h2_response_overflow_mode() -> H2ResponseOverflowMode {
+    io_timeout_config().h2_response_overflow_mode
+}
+
+async fn copy_bidirectional_with_websocket_idle_timeout<A, B>(
     side_a: &mut A,
     side_b: &mut B,
 ) -> std::io::Result<(u64, u64)>
@@ -461,23 +487,23 @@ where
         }
 
         tokio::select! {
-            result = read_with_idle_timeout(side_a, &mut a_to_b, "copy_bidirectional_read_a"), if !a_closed => {
+            result = read_with_websocket_idle_timeout(side_a, &mut a_to_b, "copy_bidirectional_read_a"), if !a_closed => {
                 let read = result?;
                 if read == 0 {
                     a_closed = true;
-                    let _ = shutdown_with_idle_timeout(side_b, "copy_bidirectional_shutdown_b").await;
+                    let _ = shutdown_with_websocket_idle_timeout(side_b, "copy_bidirectional_shutdown_b").await;
                 } else {
-                    write_all_with_idle_timeout(side_b, &a_to_b[..read], "copy_bidirectional_write_b").await?;
+                    write_all_with_websocket_idle_timeout(side_b, &a_to_b[..read], "copy_bidirectional_write_b").await?;
                     bytes_from_a += read as u64;
                 }
             }
-            result = read_with_idle_timeout(side_b, &mut b_to_a, "copy_bidirectional_read_b"), if !b_closed => {
+            result = read_with_websocket_idle_timeout(side_b, &mut b_to_a, "copy_bidirectional_read_b"), if !b_closed => {
                 let read = result?;
                 if read == 0 {
                     b_closed = true;
-                    let _ = shutdown_with_idle_timeout(side_a, "copy_bidirectional_shutdown_a").await;
+                    let _ = shutdown_with_websocket_idle_timeout(side_a, "copy_bidirectional_shutdown_a").await;
                 } else {
-                    write_all_with_idle_timeout(side_a, &b_to_a[..read], "copy_bidirectional_write_a").await?;
+                    write_all_with_websocket_idle_timeout(side_a, &b_to_a[..read], "copy_bidirectional_write_a").await?;
                     bytes_from_b += read as u64;
                 }
             }

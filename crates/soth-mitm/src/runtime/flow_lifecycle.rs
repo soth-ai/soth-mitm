@@ -21,6 +21,7 @@ pub(super) struct FlowStateContext<H: InterceptHandler> {
     pub(super) flow_dispatchers: Arc<FlowDispatchers<H>>,
     pub(super) stream_sequences: Arc<DashMap<u64, u64>>,
     pub(super) connection_meta_by_flow: Arc<DashMap<u64, Arc<ConnectionMeta>>>,
+    pub(super) response_activity_flows: Arc<DashSet<u64>>,
     pub(super) flow_last_touched: Arc<DashMap<u64, Instant>>,
     pub(super) tls_intercepted_flow_ids: Arc<DashMap<u64, ()>>,
     pub(super) process_lookup: Option<Arc<ProcessLookupService<PlatformProcessAttributor>>>,
@@ -109,6 +110,7 @@ pub(super) async fn finalize_flow<H: InterceptHandler>(
             flow_state.closed_flow_live.insert(flow_id);
             flow_state.stream_sequences.remove(&flow_id);
             flow_state.connection_meta_by_flow.remove(&flow_id);
+            flow_state.response_activity_flows.remove(&flow_id);
             flow_state.flow_last_touched.remove(&flow_id);
             flow_state.tls_intercepted_flow_ids.remove(&flow_id);
             true

@@ -130,8 +130,12 @@ fn detect_grpc_request(parts: &http::request::Parts) -> Option<GrpcRequestObserv
         .map(is_grpc_content_type)
         .unwrap_or(false);
     let service_method = grpc_service_method_from_path(&path);
+    let matches_grpc_path_pattern = service_method
+        .as_ref()
+        .map(|(service, method)| is_likely_grpc_path_pattern(service, method))
+        .unwrap_or(false);
 
-    let detection_mode = match (has_grpc_content_type, service_method.is_some()) {
+    let detection_mode = match (has_grpc_content_type, matches_grpc_path_pattern) {
         (true, true) => "content_type_and_path",
         (true, false) => "content_type",
         (false, true) => "path_pattern",
@@ -155,8 +159,16 @@ fn is_grpc_content_type(value: &str) -> bool {
     value
         .split(';')
         .next()
-        .map(|head| head.trim().to_ascii_lowercase().starts_with("application/grpc"))
+        .map(|head| {
+            head.trim()
+                .to_ascii_lowercase()
+                .starts_with("application/grpc")
+        })
         .unwrap_or(false)
+}
+
+fn is_likely_grpc_path_pattern(service: &str, method: &str) -> bool {
+    !service.is_empty() && !method.is_empty() && service.contains('.')
 }
 
 fn grpc_service_method_from_path(path: &str) -> Option<(String, String)> {
@@ -215,5 +227,19 @@ mod http2_relay_support_tests {
         assert_eq!(observation.detection_mode, "path_pattern");
         assert_eq!(observation.service.as_deref(), Some("greeter.Service"));
         assert_eq!(observation.method.as_deref(), Some("SayHello"));
+    }
+
+    #[test]
+    fn does_not_detect_openai_rest_path_as_grpc_without_content_type() {
+        let request = http::Request::builder()
+            .method("GET")
+            .uri("https://api.openai.com/v1/models")
+            .body(())
+            .expect("request");
+        let (parts, _) = request.into_parts();
+        assert!(
+            detect_grpc_request(&parts).is_none(),
+            "plain REST paths like /v1/models must not be tagged as grpc"
+        );
     }
 }

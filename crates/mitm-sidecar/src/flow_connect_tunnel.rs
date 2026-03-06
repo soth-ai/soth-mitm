@@ -74,7 +74,7 @@ where
                     &engine,
                     context,
                     CloseReasonCode::ConnectParseFailed,
-                    Some(parse_code.as_str().to_string()),
+                    Some(format!("{}: {error}", parse_code.as_str())),
                     None,
                     None,
                 );
@@ -352,7 +352,7 @@ where
         .await?;
     }
 
-    match copy_bidirectional_with_idle_timeout(downstream, &mut upstream).await {
+    match copy_bidirectional_with_websocket_idle_timeout(downstream, &mut upstream).await {
         Ok((from_client, from_server)) => {
             let per_flow_budget = engine.config.max_flow_body_buffer_bytes as u64;
             let (reason, detail) = if from_client > per_flow_budget || from_server > per_flow_budget

@@ -37,7 +37,16 @@ where
                     let (mut stream, client_addr) = accepted?;
                     apply_per_connection_socket_hardening(&stream);
                     let Some(flow_permit) = self.runtime_governor.try_acquire_flow_permit() else {
-                        self.runtime_governor.mark_budget_denial();
+                        self.runtime_governor.mark_flow_permit_denial();
+                        let snapshot = self.runtime_governor.snapshot();
+                        tracing::error!(
+                            active_flows = snapshot.active_flows,
+                            max_active_flows = snapshot.max_active_flows,
+                            flow_permit_denial_count = snapshot.flow_permit_denial_count,
+                            budget_denial_count = snapshot.budget_denial_count,
+                            event_queue_depth = snapshot.event_queue_depth,
+                            "runtime governor denied flow permit on tcp listener; returning 503"
+                        );
                         let _ = write_all_with_idle_timeout(
                             &mut stream,
                             b"HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\nContent-Length: 36\r\n\r\nproxy flow capacity exceeded; try later",
@@ -96,7 +105,16 @@ where
                         peer_addr.as_pathname(),
                     );
                     let Some(flow_permit) = self.runtime_governor.try_acquire_flow_permit() else {
-                        self.runtime_governor.mark_budget_denial();
+                        self.runtime_governor.mark_flow_permit_denial();
+                        let snapshot = self.runtime_governor.snapshot();
+                        tracing::error!(
+                            active_flows = snapshot.active_flows,
+                            max_active_flows = snapshot.max_active_flows,
+                            flow_permit_denial_count = snapshot.flow_permit_denial_count,
+                            budget_denial_count = snapshot.budget_denial_count,
+                            event_queue_depth = snapshot.event_queue_depth,
+                            "runtime governor denied flow permit on unix listener; returning 503"
+                        );
                         let mut stream = stream;
                         let _ = write_forward_proxy_error_response(
                             &mut stream,
@@ -253,7 +271,7 @@ where
                     &engine,
                     context,
                     CloseReasonCode::ConnectParseFailed,
-                    Some(parse_code.as_str().to_string()),
+                    Some(format!("{}: {error}", parse_code.as_str())),
                     None,
                     None,
                 );

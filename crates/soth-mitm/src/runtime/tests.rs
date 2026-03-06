@@ -160,6 +160,11 @@ fn body_size_limit_maps_to_core_runtime_budget() {
     config.body.max_size_bytes = 32 * 1024;
     let core = map_core_config(&config);
     assert_eq!(core.max_flow_body_buffer_bytes, 32 * 1024);
+    assert_eq!(
+        core.max_flow_decoder_buffer_bytes,
+        16 * 1024,
+        "decoder budget should default to half of body budget"
+    );
 }
 
 #[test]
@@ -168,10 +173,7 @@ fn decoder_budget_is_clamped_by_body_size_limit() {
     config.body.max_size_bytes = 256;
     let core = map_core_config(&config);
     assert_eq!(core.max_flow_body_buffer_bytes, 256);
-    assert!(
-        core.max_flow_decoder_buffer_bytes <= 256,
-        "decoder budget must be bounded by body size limit"
-    );
+    assert_eq!(core.max_flow_decoder_buffer_bytes, 128);
 }
 
 #[test]

@@ -2,10 +2,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
 
 const H2_MAX_CONCURRENT_STREAMS: u32 = 128;
-const H2_INITIAL_WINDOW_SIZE: u32 = 65_535;
-const H2_INITIAL_CONNECTION_WINDOW_SIZE: u32 = 262_144;
+const H2_INITIAL_WINDOW_SIZE: u32 = 1_048_576;
+const H2_INITIAL_CONNECTION_WINDOW_SIZE: u32 = 4_194_304;
 const H2_MAX_SEND_BUFFER_SIZE: usize = 128 * 1024;
-const H2_FORWARD_CHUNK_LIMIT: usize = 16 * 1024;
+const H2_FORWARD_CHUNK_LIMIT: usize = 128 * 1024;
 static H2_RELAY_DEBUG_ENABLED: OnceLock<bool> = OnceLock::new();
 
 fn h2_relay_debug_enabled() -> bool {
@@ -127,7 +127,14 @@ where
                         stream_byte_counters,
                     )
                     .await;
-                    if result.is_err() {
+                    if let Err(ref error) = result {
+                        h2_relay_debug(format!(
+                            "[h2-relay:stream] flow_id={} host={} error={} benign={}",
+                            stream_end_context.flow_id,
+                            stream_end_context.server_host,
+                            error,
+                            is_benign_h2_stream_io_error(error),
+                        ));
                         stream_flow_hooks.on_stream_end(stream_end_context).await;
                     }
                     result

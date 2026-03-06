@@ -55,6 +55,8 @@ async fn start_sidecar(
         websocket_idle_watchdog_timeout: std::time::Duration::from_secs(600),
         upstream_connect_timeout: std::time::Duration::from_secs(10),
         stream_stage_timeout: std::time::Duration::from_secs(15),
+        h2_body_idle_timeout: std::time::Duration::from_secs(15),
+        h2_response_overflow_mode: mitm_sidecar::H2ResponseOverflowMode::TruncateContinue,
         unix_socket_path: None,
     };
     let engine = build_engine(config);

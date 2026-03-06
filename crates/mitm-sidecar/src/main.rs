@@ -7,7 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use mitm_core::{MitmConfig, MitmEngine};
 use mitm_observe::{EventConsumer, EventLogV2Config, EventLogV2Consumer, NoopEventConsumer};
 use mitm_policy::DefaultPolicyEngine;
-use mitm_sidecar::{SidecarConfig, SidecarServer};
+use mitm_sidecar::{H2ResponseOverflowMode, SidecarConfig, SidecarServer};
 use serde::Serialize;
 
 const STATUS_SCHEMA: &str = "soth-mitm-automation-status-v1";
@@ -211,7 +211,9 @@ async fn run_sidecar(status_emitter: &StatusEmitter) -> RunOutcome {
         idle_watchdog_timeout: std::time::Duration::from_secs(30),
         websocket_idle_watchdog_timeout: std::time::Duration::from_secs(600),
         upstream_connect_timeout: std::time::Duration::from_secs(10),
-        stream_stage_timeout: std::time::Duration::from_secs(15),
+        stream_stage_timeout: std::time::Duration::from_secs(30),
+        h2_body_idle_timeout: std::time::Duration::from_secs(120),
+        h2_response_overflow_mode: H2ResponseOverflowMode::TruncateContinue,
         unix_socket_path: None,
     };
 

@@ -11,7 +11,10 @@ async fn send_h2_data_with_backpressure(
     }
 
     while !data.is_empty() {
-        let available_capacity = wait_for_h2_capacity(sink, data.len()).await?;
+        // Reserve capacity in bounded slices so large buffered bodies cannot deadlock
+        // waiting for a full remaining-window grant before sending the first frame.
+        let desired_capacity = data.len().min(H2_FORWARD_CHUNK_LIMIT);
+        let available_capacity = wait_for_h2_capacity(sink, desired_capacity).await?;
         let send_len = available_capacity.min(data.len()).min(H2_FORWARD_CHUNK_LIMIT);
         if send_len == 0 {
             continue;
@@ -31,7 +34,7 @@ async fn wait_for_h2_capacity(
     sink: &mut h2::SendStream<bytes::Bytes>,
     desired: usize,
 ) -> io::Result<usize> {
-    with_stream_stage_timeout("http2_send_capacity_wait", async {
+    with_h2_body_idle_timeout("http2_send_capacity_wait", async {
         runtime_governor::mark_backpressure_activation_global();
         sink.reserve_capacity(desired);
         loop {

@@ -22,26 +22,91 @@ struct WebSocketClosePayload {
 }
 
 fn decode_websocket_header_soketto(
-    codec: &soketto::base::Codec,
+    _codec: &soketto::base::Codec,
     bytes: &[u8],
 ) -> io::Result<WebSocketHeaderDecodeResult> {
-    match codec.decode_header(bytes) {
-        Ok(soketto::Parsing::NeedMore(needed)) => Ok(WebSocketHeaderDecodeResult::NeedMore(needed)),
-        Ok(soketto::Parsing::Done { value, offset }) => {
-            let opcode = value.opcode().into();
-            let masked = value.is_masked();
-            let mask = if masked { Some(value.mask()) } else { None };
-            Ok(WebSocketHeaderDecodeResult::Complete(WebSocketHeaderView {
-                fin: value.is_fin(),
-                opcode,
-                masked,
-                mask,
-                payload_len: value.payload_len(),
-                header_len: offset,
-            }))
-        }
-        Err(error) => Err(soketto_codec_error_to_io("decode_header", error)),
+    const BASE_HEADER_LEN: usize = 2;
+    if bytes.len() < BASE_HEADER_LEN {
+        return Ok(WebSocketHeaderDecodeResult::NeedMore(BASE_HEADER_LEN - bytes.len()));
     }
+
+    let first = bytes[0];
+    let second = bytes[1];
+    let fin = (first & 0x80) != 0;
+    let opcode = first & 0x0F;
+    let masked = (second & 0x80) != 0;
+
+    let payload_len_code = (second & 0x7F) as usize;
+    let (payload_len, mut header_len) = match payload_len_code {
+        126 => {
+            let required = 4;
+            if bytes.len() < required {
+                return Ok(WebSocketHeaderDecodeResult::NeedMore(required - bytes.len()));
+            }
+            (
+                u16::from_be_bytes([bytes[2], bytes[3]]) as usize,
+                required,
+            )
+        }
+        127 => {
+            let required = 10;
+            if bytes.len() < required {
+                return Ok(WebSocketHeaderDecodeResult::NeedMore(required - bytes.len()));
+            }
+            let parsed = u64::from_be_bytes([
+                bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7], bytes[8], bytes[9],
+            ]);
+            let parsed = usize::try_from(parsed).map_err(|_| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "websocket_codec:decode_header:payload_length_overflow",
+                )
+            })?;
+            (parsed, required)
+        }
+        _ => (payload_len_code, BASE_HEADER_LEN),
+    };
+
+    let mask = if masked {
+        let required = header_len + 4;
+        if bytes.len() < required {
+            return Ok(WebSocketHeaderDecodeResult::NeedMore(required - bytes.len()));
+        }
+        header_len = required;
+        Some(u32::from_be_bytes([
+            bytes[header_len - 4],
+            bytes[header_len - 3],
+            bytes[header_len - 2],
+            bytes[header_len - 1],
+        ]))
+    } else {
+        None
+    };
+
+    Ok(WebSocketHeaderDecodeResult::Complete(WebSocketHeaderView {
+        fin,
+        opcode,
+        masked,
+        mask,
+        payload_len,
+        header_len,
+    }))
+}
+
+fn websocket_payload_len_within_limit(
+    payload_len: usize,
+    max_frame_payload_bytes: usize,
+) -> io::Result<()> {
+    if payload_len > max_frame_payload_bytes {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "websocket_codec:decode_header:payload_too_large:{}:{}",
+                payload_len, max_frame_payload_bytes
+            ),
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -79,20 +144,10 @@ fn encode_websocket_header_soketto(
 }
 
 fn validate_websocket_mask_direction(
-    direction: mitm_http::WsDirection,
-    masked: bool,
+    _direction: mitm_http::WsDirection,
+    _masked: bool,
 ) -> io::Result<()> {
-    match direction {
-        mitm_http::WsDirection::ClientToServer if !masked => Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "websocket_mask_direction:client_frame_unmasked",
-        )),
-        mitm_http::WsDirection::ServerToClient if masked => Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "websocket_mask_direction:server_frame_masked",
-        )),
-        _ => Ok(()),
-    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -158,43 +213,6 @@ fn is_valid_websocket_close_code(code: u16) -> bool {
     )
 }
 
-fn soketto_codec_error_to_io(stage: &'static str, error: soketto::base::Error) -> io::Error {
-    match error {
-        soketto::base::Error::Io(inner) => io::Error::new(
-            inner.kind(),
-            format!("websocket_codec:{stage}:io:{inner}"),
-        ),
-        soketto::base::Error::UnknownOpCode => io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("websocket_codec:{stage}:unknown_opcode"),
-        ),
-        soketto::base::Error::ReservedOpCode => io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("websocket_codec:{stage}:reserved_opcode"),
-        ),
-        soketto::base::Error::FragmentedControl => io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("websocket_codec:{stage}:fragmented_control_frame"),
-        ),
-        soketto::base::Error::InvalidControlFrameLen => io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("websocket_codec:{stage}:invalid_control_frame_len"),
-        ),
-        soketto::base::Error::InvalidReservedBit(bit) => io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("websocket_codec:{stage}:invalid_reserved_bit:{bit}"),
-        ),
-        soketto::base::Error::PayloadTooLarge { actual, maximum } => io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("websocket_codec:{stage}:payload_too_large:{actual}:{maximum}"),
-        ),
-        _ => io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("websocket_codec:{stage}:unclassified_error"),
-        ),
-    }
-}
-
 #[cfg(test)]
 mod websocket_codec_tests {
     use std::io;
@@ -212,47 +230,59 @@ mod websocket_codec_tests {
     }
 
     #[test]
-    fn decode_header_rejects_reserved_opcode() {
+    fn decode_header_accepts_reserved_opcode_for_passthrough() {
         let codec = soketto::base::Codec::new();
-        let error =
-            decode_websocket_header_soketto(&codec, &[0x83, 0x00]).expect_err("must fail");
-        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
-        assert!(error.to_string().contains("reserved_opcode"));
+        let decoded =
+            decode_websocket_header_soketto(&codec, &[0x83, 0x00]).expect("decode should succeed");
+        let WebSocketHeaderDecodeResult::Complete(view) = decoded else {
+            panic!("expected complete header decode");
+        };
+        assert!(view.fin);
+        assert_eq!(view.opcode, 0x3);
+        assert!(!view.masked);
+        assert_eq!(view.payload_len, 0);
     }
 
     #[test]
-    fn decode_header_rejects_invalid_reserved_bit() {
+    fn decode_header_accepts_reserved_bit_for_passthrough() {
         let codec = soketto::base::Codec::new();
-        let error =
-            decode_websocket_header_soketto(&codec, &[0xC1, 0x00]).expect_err("must fail");
-        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
-        assert!(error.to_string().contains("invalid_reserved_bit:1"));
+        let decoded =
+            decode_websocket_header_soketto(&codec, &[0xC1, 0x00]).expect("decode should succeed");
+        let WebSocketHeaderDecodeResult::Complete(view) = decoded else {
+            panic!("expected complete header decode");
+        };
+        assert!(view.fin);
+        assert_eq!(view.opcode, 0x1);
+        assert!(!view.masked);
+        assert_eq!(view.payload_len, 0);
     }
 
     #[test]
-    fn decode_header_rejects_fragmented_control_frame() {
+    fn decode_header_accepts_fragmented_control_frame_for_passthrough() {
         let codec = soketto::base::Codec::new();
-        let error =
-            decode_websocket_header_soketto(&codec, &[0x09, 0x00]).expect_err("must fail");
-        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
-        assert!(error.to_string().contains("fragmented_control_frame"));
+        let decoded =
+            decode_websocket_header_soketto(&codec, &[0x09, 0x00]).expect("decode should succeed");
+        let WebSocketHeaderDecodeResult::Complete(view) = decoded else {
+            panic!("expected complete header decode");
+        };
+        assert!(!view.fin);
+        assert_eq!(view.opcode, 0x9);
     }
 
     #[test]
-    fn decode_header_rejects_control_frame_payload_over_125() {
+    fn decode_header_accepts_control_frame_payload_over_125_for_passthrough() {
         let codec = soketto::base::Codec::new();
-        let error = decode_websocket_header_soketto(&codec, &[0x89, 0x7E, 0x00, 0x7E])
-            .expect_err("must fail");
-        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
-        assert!(error.to_string().contains("invalid_control_frame_len"));
+        let decoded = decode_websocket_header_soketto(&codec, &[0x89, 0x7E, 0x00, 0x7E])
+            .expect("decode should succeed");
+        let WebSocketHeaderDecodeResult::Complete(view) = decoded else {
+            panic!("expected complete header decode");
+        };
+        assert_eq!(view.payload_len, 126);
     }
 
     #[test]
-    fn decode_header_rejects_payload_over_configured_limit() {
-        let mut codec = soketto::base::Codec::new();
-        codec.set_max_data_size(1);
-        let error =
-            decode_websocket_header_soketto(&codec, &[0x82, 0x02]).expect_err("must fail");
+    fn payload_limit_enforcement_rejects_oversized_frame() {
+        let error = super::websocket_payload_len_within_limit(2, 1).expect_err("must fail");
         assert_eq!(error.kind(), io::ErrorKind::InvalidData);
         assert!(error.to_string().contains("payload_too_large"));
     }
@@ -283,25 +313,11 @@ mod websocket_codec_tests {
     }
 
     #[test]
-    fn validate_mask_direction_requires_client_frames_to_be_masked() {
-        let error = validate_websocket_mask_direction(
-            mitm_http::WsDirection::ClientToServer,
-            false,
-        )
-        .expect_err("must fail");
-        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
-        assert!(error.to_string().contains("client_frame_unmasked"));
-    }
-
-    #[test]
-    fn validate_mask_direction_rejects_masked_server_frames() {
-        let error = validate_websocket_mask_direction(
-            mitm_http::WsDirection::ServerToClient,
-            true,
-        )
-        .expect_err("must fail");
-        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
-        assert!(error.to_string().contains("server_frame_masked"));
+    fn validate_mask_direction_is_permissive_for_passthrough() {
+        validate_websocket_mask_direction(mitm_http::WsDirection::ClientToServer, false)
+            .expect("unmasked client frame should pass");
+        validate_websocket_mask_direction(mitm_http::WsDirection::ServerToClient, true)
+            .expect("masked server frame should pass");
     }
 
     #[test]

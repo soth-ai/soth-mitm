@@ -190,9 +190,11 @@ where
 {
     let mut bytes_forwarded = 0_u64;
     let mut frame_codec = soketto::base::Codec::new();
-    frame_codec.set_max_data_size(max_frame_payload_bytes);
+        frame_codec.set_max_data_size(max_frame_payload_bytes);
     loop {
-        let next_frame = read_websocket_frame_header(&mut source, &frame_codec).await?;
+        let next_frame =
+            read_websocket_frame_header(&mut source, &frame_codec, max_frame_payload_bytes)
+                .await?;
         let Some((frame_header, header_view)) = next_frame
         else {
             let mut sink = forward_sink.lock().await;

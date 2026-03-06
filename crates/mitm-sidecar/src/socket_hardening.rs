@@ -1,4 +1,6 @@
 async fn bind_listener_with_socket_hardening(config: &SidecarConfig) -> io::Result<TcpListener> {
+    const LISTENER_BIND_RETRY_ATTEMPTS: u32 = 8;
+
     let resolved = tokio::net::lookup_host((config.listen_addr.as_str(), config.listen_port))
         .await
         .map_err(|error| {
@@ -22,14 +24,34 @@ async fn bind_listener_with_socket_hardening(config: &SidecarConfig) -> io::Resu
     }
     order_listen_addrs_for_dual_stack(&mut listen_addrs);
 
+    let retry_delay = std::time::Duration::from_millis(config.accept_retry_backoff_ms.max(1));
     let mut last_error: Option<io::Error> = None;
-    for listen_addr in listen_addrs {
-        match bind_single_listener_socket(listen_addr) {
-            Ok(listener) => return Ok(listener),
-            Err(error) => {
-                last_error = Some(error);
+    for attempt in 1..=LISTENER_BIND_RETRY_ATTEMPTS {
+        let mut saw_retryable_error = false;
+        for listen_addr in listen_addrs.iter().copied() {
+            match bind_single_listener_socket(listen_addr) {
+                Ok(listener) => return Ok(listener),
+                Err(error) => {
+                    if should_retry_listener_bind(&error) {
+                        saw_retryable_error = true;
+                    }
+                    last_error = Some(error);
+                }
             }
         }
+
+        if !saw_retryable_error || attempt >= LISTENER_BIND_RETRY_ATTEMPTS {
+            break;
+        }
+        tracing::warn!(
+            listen_addr = %config.listen_addr,
+            listen_port = config.listen_port,
+            attempt,
+            max_attempts = LISTENER_BIND_RETRY_ATTEMPTS,
+            backoff_ms = retry_delay.as_millis() as u64,
+            "transient listener bind failure; retrying"
+        );
+        tokio::time::sleep(retry_delay).await;
     }
     Err(last_error.unwrap_or_else(|| {
         io::Error::new(
@@ -40,6 +62,13 @@ async fn bind_listener_with_socket_hardening(config: &SidecarConfig) -> io::Resu
             ),
         )
     }))
+}
+
+fn should_retry_listener_bind(error: &io::Error) -> bool {
+    matches!(
+        error.kind(),
+        io::ErrorKind::PermissionDenied | io::ErrorKind::AddrInUse
+    )
 }
 
 fn bind_single_listener_socket(listen_addr: std::net::SocketAddr) -> io::Result<TcpListener> {
@@ -133,7 +162,10 @@ fn is_benign_socket_close_error(error: &io::Error) -> bool {
 
 #[cfg(test)]
 mod socket_hardening_tests {
-    use super::{is_benign_socket_close_error, is_dual_stack_candidate, order_listen_addrs_for_dual_stack};
+    use super::{
+        is_benign_socket_close_error, is_dual_stack_candidate, order_listen_addrs_for_dual_stack,
+        should_retry_listener_bind,
+    };
     use std::io;
     use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 
@@ -173,5 +205,21 @@ mod socket_hardening_tests {
         assert!(is_dual_stack_candidate(&ipv6_unspecified));
         assert!(!is_dual_stack_candidate(&ipv6_loopback));
         assert!(!is_dual_stack_candidate(&ipv4_unspecified));
+    }
+
+    #[test]
+    fn bind_retry_classifier_only_marks_transient_bind_errors() {
+        assert!(should_retry_listener_bind(&io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "operation not permitted",
+        )));
+        assert!(should_retry_listener_bind(&io::Error::new(
+            io::ErrorKind::AddrInUse,
+            "address in use",
+        )));
+        assert!(!should_retry_listener_bind(&io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "invalid address",
+        )));
     }
 }

@@ -348,6 +348,44 @@ fn emit_stream_closed<P, S>(
     P: PolicyEngine + Send + Sync + 'static,
     S: EventConsumer + Send + Sync + 'static,
 {
+    let benign_zero_byte_connect_probe = matches!(context.protocol, ApplicationProtocol::Tunnel)
+        && reason_code == CloseReasonCode::ConnectParseFailed
+        && reason_detail
+            .as_deref()
+            .map(|detail| detail.contains("received 0 bytes"))
+            .unwrap_or(false)
+        && context.server_host == "<unknown>"
+        && context.server_port == 0
+        && bytes_from_client.unwrap_or_default() == 0
+        && bytes_from_server.unwrap_or_default() == 0;
+
+    let should_log_close = !benign_zero_byte_connect_probe
+        && (matches!(context.protocol, ApplicationProtocol::Tunnel)
+        || matches!(
+            reason_code,
+            CloseReasonCode::UpstreamConnectFailed
+                | CloseReasonCode::RelayError
+                | CloseReasonCode::IdleWatchdogTimeout
+                | CloseReasonCode::StreamStageTimeout
+                | CloseReasonCode::MitmHttpError
+                | CloseReasonCode::WebSocketError
+                | CloseReasonCode::RoutePlannerFailed
+        ));
+    if should_log_close {
+        tracing::error!(
+            flow_id = context.flow_id,
+            client_addr = %context.client_addr,
+            server_host = %context.server_host,
+            server_port = context.server_port,
+            protocol = ?context.protocol,
+            reason_code = reason_code.as_str(),
+            reason_detail = reason_detail.as_deref().unwrap_or(""),
+            bytes_from_client = bytes_from_client.unwrap_or_default(),
+            bytes_from_server = bytes_from_server.unwrap_or_default(),
+            "stream closed with diagnostic reason"
+        );
+    }
+
     let mut event = Event::new(EventType::StreamClosed, context);
     event
         .attributes

@@ -370,6 +370,155 @@ async fn should_intercept_tls_receives_process_info_from_connect_path() {
 }
 
 #[tokio::test]
+async fn downstream_tls_failure_bypasses_intercept_for_same_process() {
+    let handler = Arc::new(PassThroughTlsHandler);
+    let metrics_store = Arc::new(ProxyMetricsStore::default());
+    let hooks = build_hooks(
+        handler,
+        metrics_store,
+        Duration::from_millis(100),
+        Duration::from_millis(100),
+        true,
+    );
+    let failing_context = sample_context(109);
+    register_connection(&hooks, failing_context.clone()).await;
+
+    hooks
+        .on_tls_failure(
+            failing_context,
+            "downstream handshake failed: downstream rustls handshake failed: tls handshake eof"
+                .to_string(),
+        )
+        .await;
+
+    let next_context = sample_context(110);
+    let should_intercept = hooks
+        .should_intercept_tls(next_context, Some(fixture_policy_process_info(7001)))
+        .await;
+    assert!(
+        !should_intercept,
+        "process with downstream TLS EOF should temporarily bypass interception"
+    );
+}
+
+#[tokio::test]
+async fn downstream_tls_failure_bypasses_intercept_for_same_host_without_process_info() {
+    let handler = Arc::new(PassThroughTlsHandler);
+    let metrics_store = Arc::new(ProxyMetricsStore::default());
+    let hooks = build_hooks(
+        handler,
+        metrics_store,
+        Duration::from_millis(100),
+        Duration::from_millis(100),
+        true,
+    );
+    let failing_context = sample_context(121);
+    hooks
+        .on_connection_open(failing_context.clone(), None)
+        .await;
+
+    hooks
+        .on_tls_failure(
+            failing_context,
+            "downstream handshake failed: downstream rustls handshake failed: tls handshake eof"
+                .to_string(),
+        )
+        .await;
+
+    let next_context = sample_context(122);
+    let should_intercept = hooks.should_intercept_tls(next_context, None).await;
+    assert!(
+        !should_intercept,
+        "host with downstream TLS EOF should temporarily bypass interception even without process attribution"
+    );
+
+    let mut sibling_host_context = sample_context(123);
+    sibling_host_context.server_host = "api2.example.com".to_string();
+    let sibling_host_should_intercept =
+        hooks.should_intercept_tls(sibling_host_context, None).await;
+    assert!(
+        !sibling_host_should_intercept,
+        "bypass should apply to sibling hosts that share the same parent domain"
+    );
+
+    let mut other_host_context = sample_context(124);
+    other_host_context.server_host = "api.other-example.net".to_string();
+    let other_host_should_intercept = hooks.should_intercept_tls(other_host_context, None).await;
+    assert!(
+        other_host_should_intercept,
+        "bypass should not spill over to unrelated hosts"
+    );
+}
+
+#[tokio::test]
+async fn upstream_tls_failure_does_not_bypass_intercept_for_process() {
+    let handler = Arc::new(PassThroughTlsHandler);
+    let metrics_store = Arc::new(ProxyMetricsStore::default());
+    let hooks = build_hooks(
+        handler,
+        metrics_store,
+        Duration::from_millis(100),
+        Duration::from_millis(100),
+        true,
+    );
+    let context = sample_context(111);
+    register_connection(&hooks, context.clone()).await;
+
+    hooks
+        .on_tls_failure(
+            context,
+            "upstream handshake failed: certificate verify failed: unknown ca".to_string(),
+        )
+        .await;
+
+    let next_context = sample_context(112);
+    let should_intercept = hooks
+        .should_intercept_tls(next_context, Some(fixture_policy_process_info(7001)))
+        .await;
+    assert!(
+        should_intercept,
+        "upstream TLS failures should not disable interception for local process"
+    );
+}
+
+#[tokio::test]
+async fn stream_end_without_response_activity_does_not_trigger_process_fail_open_bypass() {
+    let handler = Arc::new(PassThroughTlsHandler);
+    let metrics_store = Arc::new(ProxyMetricsStore::default());
+    let hooks = build_hooks(
+        handler,
+        metrics_store,
+        Duration::from_millis(100),
+        Duration::from_millis(100),
+        true,
+    );
+    let flow_context = sample_context(125);
+    register_connection(&hooks, flow_context.clone()).await;
+
+    let first_should_intercept = hooks
+        .should_intercept_tls(
+            flow_context.clone(),
+            Some(fixture_policy_process_info(7001)),
+        )
+        .await;
+    assert!(
+        first_should_intercept,
+        "baseline process flow should be intercepted"
+    );
+
+    hooks.on_stream_end(flow_context).await;
+
+    let next_context = sample_context(126);
+    let second_should_intercept = hooks
+        .should_intercept_tls(next_context, Some(fixture_policy_process_info(7001)))
+        .await;
+    assert!(
+        second_should_intercept,
+        "stream end without response activity should not trigger process fail-open bypass"
+    );
+}
+
+#[tokio::test]
 async fn request_connection_meta_includes_tls_info_for_http2_flow() {
     let observed_tls_proto = Arc::new(std::sync::Mutex::new(None::<String>));
     let observed_tls_sni = Arc::new(std::sync::Mutex::new(None::<String>));
@@ -424,15 +573,16 @@ fn sample_context(flow_id: u64) -> FlowContext {
 
 async fn register_connection(hooks: &Arc<dyn FlowHooks>, context: FlowContext) {
     hooks
-        .on_connection_open(
-            context,
-            Some(PolicyProcessInfo {
-                pid: 7001,
-                bundle_id: Some("com.soth.fixture".to_string()),
-                process_name: Some("fixture-client".to_string()),
-            }),
-        )
+        .on_connection_open(context, Some(fixture_policy_process_info(7001)))
         .await;
+}
+
+fn fixture_policy_process_info(pid: u32) -> PolicyProcessInfo {
+    PolicyProcessInfo {
+        pid,
+        bundle_id: Some("com.soth.fixture".to_string()),
+        process_name: Some("fixture-client".to_string()),
+    }
 }
 
 fn sample_sidecar_request() -> SidecarRawRequest {
@@ -555,6 +705,15 @@ impl InterceptHandler for ProcessAwareTlsHandler {
     fn should_intercept_tls(&self, _host: &str, process_info: Option<&ProcessInfo>) -> bool {
         let pid = process_info.map(|value| value.pid).unwrap_or(0);
         self.observed_pid.store(pid, Ordering::Relaxed);
+        true
+    }
+}
+
+#[derive(Debug)]
+struct PassThroughTlsHandler;
+
+impl InterceptHandler for PassThroughTlsHandler {
+    fn should_intercept_tls(&self, _host: &str, _process_info: Option<&ProcessInfo>) -> bool {
         true
     }
 }
