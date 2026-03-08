@@ -85,6 +85,7 @@ fn lookup_process_by_pid(pid: u32) -> Option<ProcessInfo> {
         exe_name: process_name,
         exe_path: process_path,
         parent_pid,
+        parent_process_name: None,
     })
 }
 

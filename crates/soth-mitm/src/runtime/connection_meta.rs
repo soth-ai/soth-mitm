@@ -173,6 +173,7 @@ pub(crate) fn runtime_process_info_from_policy(
         exe_name: process_info.process_name,
         exe_path: None,
         parent_pid: None,
+        parent_process_name: None,
     }
 }
 
@@ -222,6 +223,7 @@ pub(crate) fn process_info_from_unix_client_addr(client_addr: &str) -> Option<Pr
         exe_name: None,
         exe_path: None,
         parent_pid: None,
+        parent_process_name: None,
     })
 }
 

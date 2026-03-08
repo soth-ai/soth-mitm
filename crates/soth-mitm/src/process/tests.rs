@@ -71,6 +71,7 @@ impl ProcessAttributor for SleepyAttributor {
                 exe_name: Some("curl".to_string()),
                 exe_path: Some(PathBuf::from("/usr/bin/curl")),
                 parent_pid: Some(1),
+                parent_process_name: None,
             })
         })
     }
@@ -103,6 +104,7 @@ impl ProcessAttributor for SleepyAttributor {
                 exe_name: Some("curl".to_string()),
                 exe_path: Some(PathBuf::from("/usr/bin/curl")),
                 parent_pid: Some(1),
+                parent_process_name: None,
             })
         })
     }

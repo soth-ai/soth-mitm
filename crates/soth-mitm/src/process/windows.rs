@@ -74,6 +74,7 @@ fn lookup_process_by_pid(pid: u32) -> Option<ProcessInfo> {
         exe_name: snapshot.exe_name,
         exe_path: snapshot.exe_path,
         parent_pid: snapshot.parent_pid,
+        parent_process_name: None,
     })
 }
 

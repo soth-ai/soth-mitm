@@ -111,4 +111,5 @@ pub struct ProcessInfo {
     pub exe_name: Option<String>,
     pub exe_path: Option<PathBuf>,
     pub parent_pid: Option<u32>,
+    pub parent_process_name: Option<String>,
 }
