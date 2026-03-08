@@ -73,6 +73,10 @@ fn lookup_identity(connection: &ConnectionInfo) -> Option<ProcessIdentity> {
 fn lookup_process_by_pid(pid: u32) -> Option<ProcessInfo> {
     let snapshot = process_snapshot(pid)?;
     let bundle_id = snapshot.exe_path.as_ref().and_then(lookup_bundle_id);
+    let parent_process_name = snapshot
+        .parent_pid
+        .and_then(read_bsd_info)
+        .and_then(|info| process_name_from_bsd_info(&info));
 
     Some(ProcessInfo {
         pid,
@@ -80,6 +84,7 @@ fn lookup_process_by_pid(pid: u32) -> Option<ProcessInfo> {
         exe_path: snapshot.exe_path,
         bundle_id,
         parent_pid: snapshot.parent_pid,
+        parent_process_name,
     })
 }
 
@@ -114,8 +119,8 @@ fn process_snapshot(pid: u32) -> Option<ProcessSnapshot> {
                 .map(NonZeroU32::get)
         },
     )
-    .or(path_name)
-    .or_else(|| process_name_from_bsd_info(&bsd_info));
+    .or_else(|| process_name_from_bsd_info(&bsd_info))
+    .or(path_name);
     let start_token = build_start_token(bsd_info.pbi_start_tvsec, parent_pid);
 
     Some(ProcessSnapshot {
@@ -293,6 +298,10 @@ fn c_char_array_to_string<const N: usize>(raw: &[i8; N]) -> Option<String> {
 }
 
 fn lookup_bundle_id(process_path: &PathBuf) -> Option<String> {
+    lookup_app_bundle_id(process_path).or_else(|| lookup_codesign_identity(process_path))
+}
+
+fn lookup_app_bundle_id(process_path: &PathBuf) -> Option<String> {
     let app_bundle_path = app_bundle_path(process_path)?;
     let info_plist = app_bundle_path.join("Contents").join("Info.plist");
 
@@ -304,6 +313,25 @@ fn lookup_bundle_id(process_path: &PathBuf) -> Option<String> {
     } else {
         Some(bundle_id.to_string())
     }
+}
+
+fn lookup_codesign_identity(process_path: &PathBuf) -> Option<String> {
+    let output = std::process::Command::new("codesign")
+        .args(["-dv", "--verbose=1"])
+        .arg(process_path)
+        .output()
+        .ok()?;
+    // codesign outputs signing info to stderr
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    for line in stderr.lines() {
+        if let Some(identifier) = line.strip_prefix("Identifier=") {
+            let trimmed = identifier.trim();
+            if !trimmed.is_empty() && trimmed.contains('.') {
+                return Some(trimmed.to_string());
+            }
+        }
+    }
+    None
 }
 
 fn app_bundle_path(process_path: &PathBuf) -> Option<PathBuf> {
@@ -396,8 +424,8 @@ mod tests {
     use std::path::PathBuf;
 
     use super::{
-        app_bundle_path, build_start_token, c_char_array_to_string, process_name_from_bsd_info,
-        process_name_from_path, ProcBsdInfo,
+        app_bundle_path, build_start_token, c_char_array_to_string, lookup_codesign_identity,
+        process_name_from_bsd_info, process_name_from_path, ProcBsdInfo,
     };
 
     #[test]
@@ -447,5 +475,19 @@ mod tests {
     #[test]
     fn start_token_uses_parent_placeholder_for_missing_parent() {
         assert_eq!(build_start_token(123, None), "st=123|ppid=-");
+    }
+
+    #[test]
+    fn codesign_identity_returns_none_for_nonexistent_binary() {
+        let path = PathBuf::from("/nonexistent/binary");
+        assert!(lookup_codesign_identity(&path).is_none());
+    }
+
+    #[test]
+    fn codesign_identity_extracts_from_signed_system_binary() {
+        let path = PathBuf::from("/usr/bin/curl");
+        if let Some(identity) = lookup_codesign_identity(&path) {
+            assert!(identity.contains('.'), "expected reverse-dns identity: {identity}");
+        }
     }
 }
