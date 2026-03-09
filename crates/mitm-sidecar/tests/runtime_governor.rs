@@ -212,7 +212,7 @@ async fn idle_watchdog_timeout_closes_stuck_tunnel_and_records_metrics() {
         max_http_head_bytes: 4 * 1024,
         accept_retry_backoff_ms: 100,
         idle_watchdog_timeout: Duration::from_millis(120),
-        websocket_idle_watchdog_timeout: std::time::Duration::from_secs(120),
+        websocket_idle_watchdog_timeout: Duration::from_millis(120),
         upstream_connect_timeout: std::time::Duration::from_secs(10),
         stream_stage_timeout: Duration::from_secs(1),
         h2_body_idle_timeout: Duration::from_secs(1),
