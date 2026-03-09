@@ -408,7 +408,7 @@ where
             || has_header_value(&response.headers, "upgrade", "websocket")
             || has_header_token(&response.headers, "connection", "upgrade");
         let request_upgrade_validation = validate_websocket_upgrade_request_head(&request);
-        let response_upgrade_validation = validate_websocket_upgrade_response_head(&response);
+        let response_upgrade_validation = validate_websocket_upgrade_response_head(&request, &response);
         let websocket_upgrade =
             request_upgrade_validation.is_ok() && response_upgrade_validation.is_ok();
 
@@ -444,8 +444,45 @@ where
                     request_upgrade_intent = websocket_upgrade_request_intent,
                     response_upgrade_intent = websocket_upgrade_response_intent,
                     reason = %reason_detail,
-                    "websocket upgrade validation failed; continuing in fail-open relay mode"
+                    "websocket upgrade validation failed; falling back to plain relay without websocket hooks"
                 );
+                // Validation failed — do NOT fire on_websocket_start or enter
+                // WebSocket framing.  Plain bidirectional relay only (the 101
+                // response has already been written to downstream).
+                let relay_result = copy_bidirectional_with_websocket_idle_timeout(
+                    &mut downstream_conn.stream,
+                    &mut upstream_conn.stream,
+                )
+                .await;
+                let (reason, detail, client_bytes, server_bytes) = match relay_result {
+                    Ok((from_client, from_server)) => (
+                        CloseReasonCode::RelayEof,
+                        None,
+                        Some(bytes_from_client + from_client),
+                        Some(bytes_from_server + from_server),
+                    ),
+                    Err(ref error) if is_idle_watchdog_timeout(error) => (
+                        CloseReasonCode::IdleWatchdogTimeout,
+                        Some(error.to_string()),
+                        None,
+                        None,
+                    ),
+                    Err(ref error) => (
+                        CloseReasonCode::RelayError,
+                        Some(error.to_string()),
+                        None,
+                        None,
+                    ),
+                };
+                emit_stream_closed(
+                    &engine,
+                    tunnel_context.clone(),
+                    reason,
+                    detail,
+                    client_bytes,
+                    server_bytes,
+                );
+                return Ok(());
             }
 
             // Fire on_websocket_start so downstream handler knows the

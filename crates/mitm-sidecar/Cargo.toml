@@ -6,6 +6,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+base64 = { workspace = true }
 bytes = "1"
 brotli = "8.0.2"
 dashmap = { workspace = true }
@@ -19,6 +20,7 @@ mitm-policy = { path = "../mitm-policy", version = "0.1.0" }
 mitm-tls = { path = "../mitm-tls", version = "0.1.0" }
 parking_lot = { workspace = true }
 pin-project-lite = "0.2"
+sha1 = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 socket2 = "0.5"

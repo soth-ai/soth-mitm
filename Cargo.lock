@@ -1012,6 +1012,7 @@ version = "0.1.0"
 name = "mitm-sidecar"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "brotli",
  "bytes",
  "dashmap",
@@ -1029,6 +1030,7 @@ dependencies = [
  "rcgen",
  "serde",
  "serde_json",
+ "sha1",
  "socket2 0.5.10",
  "soketto",
  "tempfile",
