@@ -15,7 +15,6 @@ use rcgen::{
 use tempfile::TempDir;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::time::timeout;
 use tokio_rustls::rustls;
 use tokio_rustls::rustls::pki_types::pem::PemObject;
 use tokio_rustls::rustls::pki_types::{
@@ -211,16 +210,11 @@ fn write_client_auth_material(cert_pem: &str, key_pem: &str) -> (TempDir, String
     )
 }
 
+/// When `UpstreamClientAuthMode::Required` is set and the cert/key files
+/// do not exist, `SidecarServer::new` should fail eagerly at construction
+/// with a descriptive error rather than silently starting.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn required_mode_without_material_fails_deterministically() {
-    let upstream_listener = TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("bind upstream listener");
-    let upstream_addr = upstream_listener.local_addr().expect("upstream addr");
-    let upstream_task = tokio::spawn(async move {
-        let _ = timeout(Duration::from_secs(5), upstream_listener.accept()).await;
-    });
-
     let sink = VecEventConsumer::default();
     let missing_paths = tempfile::tempdir().expect("create missing-path dir");
     let missing_cert_path = missing_paths.path().join("missing-client.crt");
@@ -232,58 +226,29 @@ async fn required_mode_without_material_fails_deterministically() {
         upstream_client_key_pem_path: Some(missing_key_path.to_string_lossy().to_string()),
         ..MitmConfig::default()
     };
-    let (proxy_addr, proxy_task, sink) = start_sidecar_with_sink(sink, config).await;
-
-    let mut tcp = TcpStream::connect(proxy_addr)
-        .await
-        .expect("connect sidecar");
-    let connect = format!(
-        "CONNECT 127.0.0.1:{} HTTP/1.1\r\nHost: 127.0.0.1:{}\r\n\r\n",
-        upstream_addr.port(),
-        upstream_addr.port()
-    );
-    tcp.write_all(connect.as_bytes())
-        .await
-        .expect("write CONNECT");
-    let connect_response = read_response_head(&mut tcp).await;
+    let sidecar_config = SidecarConfig {
+        listen_addr: "127.0.0.1".to_string(),
+        listen_port: 0,
+        max_connect_head_bytes: 64 * 1024,
+        max_http_head_bytes: 64 * 1024,
+        accept_retry_backoff_ms: 100,
+        idle_watchdog_timeout: std::time::Duration::from_secs(30),
+        websocket_idle_watchdog_timeout: std::time::Duration::from_secs(120),
+        upstream_connect_timeout: std::time::Duration::from_secs(10),
+        stream_stage_timeout: std::time::Duration::from_secs(5),
+        h2_body_idle_timeout: std::time::Duration::from_secs(5),
+        h2_response_overflow_mode: mitm_sidecar::H2ResponseOverflowMode::TruncateContinue,
+        unix_socket_path: None,
+    };
+    let engine = build_engine(config, sink);
+    let error = match SidecarServer::new(sidecar_config, engine) {
+        Ok(_) => panic!("SidecarServer::new should fail when required client auth material is missing"),
+        Err(e) => e,
+    };
+    let error_msg = error.to_string();
     assert!(
-        connect_response.starts_with("HTTP/1.1 200 Connection Established"),
-        "{connect_response}"
-    );
-
-    let connector = TlsConnector::from(build_http1_client_config(true));
-    let server_name = ServerName::try_from("127.0.0.1".to_string()).expect("server name");
-    let mut tls = connector
-        .connect(server_name, tcp)
-        .await
-        .expect("TLS connect to sidecar");
-    let _ = tls
-        .write_all(b"GET /upstream-required-missing HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
-        .await;
-    let _ = tls.flush().await;
-    let _ = read_to_end_allow_unexpected_eof(&mut tls).await;
-
-    upstream_task.await.expect("upstream task");
-    tokio::time::sleep(Duration::from_millis(40)).await;
-    proxy_task.abort();
-
-    let events = sink.snapshot();
-    let failure = events
-        .iter()
-        .find(|event| {
-            event.kind == EventType::TlsHandshakeFailed
-                && event.attributes.get("peer").map(String::as_str) == Some("upstream")
-        })
-        .expect("expected upstream tls failure");
-    assert!(
-        failure
-            .attributes
-            .get("detail")
-            .map(String::as_str)
-            .unwrap_or_default()
-            .contains("upstream TLS client-auth material load failed"),
-        "{:?}",
-        failure.attributes
+        error_msg.contains("upstream client auth material load failed"),
+        "error should mention material load failure: {error_msg}"
     );
 }
 
