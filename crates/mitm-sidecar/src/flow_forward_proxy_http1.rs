@@ -273,23 +273,12 @@ where
 
     match copy_bidirectional_with_websocket_idle_timeout(&mut downstream, &mut upstream).await {
         Ok((from_client, from_server)) => {
-            let per_flow_budget = engine.config.max_flow_body_buffer_bytes as u64;
-            let (reason, detail) = if from_client > per_flow_budget || from_server > per_flow_budget
-            {
-                (
-                    CloseReasonCode::MitmHttpError,
-                    Some(format!(
-                        "flow body budget exceeded (limit={per_flow_budget}, client_bytes={from_client}, server_bytes={from_server})"
-                    )),
-                )
-            } else {
-                (CloseReasonCode::RelayEof, None)
-            };
+            // Forward-proxy tunnel: blind TCP passthrough, no body budget applies.
             emit_stream_closed(
                 &engine,
                 context,
-                reason,
-                detail,
+                CloseReasonCode::RelayEof,
+                None,
                 Some(from_client + (initial_head.len() as u64)),
                 Some(from_server),
             );
