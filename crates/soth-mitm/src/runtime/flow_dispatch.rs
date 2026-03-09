@@ -14,6 +14,7 @@ use crate::types::{RawResponse, StreamChunk};
 enum DispatchWork {
     Response(RawResponse),
     StreamChunk(StreamChunk),
+    WebSocketStart(RawResponse),
 }
 
 #[derive(Debug)]
@@ -63,6 +64,15 @@ impl<H: InterceptHandler> FlowDispatchers<H> {
 
     pub(crate) async fn enqueue_stream_chunk(&self, flow_id: u64, chunk: StreamChunk) -> bool {
         self.enqueue(flow_id, DispatchWork::StreamChunk(chunk))
+            .await
+    }
+
+    pub(crate) async fn enqueue_websocket_start(
+        &self,
+        flow_id: u64,
+        response: RawResponse,
+    ) -> bool {
+        self.enqueue(flow_id, DispatchWork::WebSocketStart(response))
             .await
     }
 
@@ -201,6 +211,14 @@ fn spawn_flow_dispatch_worker<H: InterceptHandler>(
                     let handler = Arc::clone(&handler);
                     callback_guard
                         .run_response((), async move { handler.on_stream_chunk(&chunk).await })
+                        .await;
+                }
+                DispatchWork::WebSocketStart(response) => {
+                    let handler = Arc::clone(&handler);
+                    callback_guard
+                        .run_response((), async move {
+                            handler.on_websocket_start(&response).await
+                        })
                         .await;
                 }
             }

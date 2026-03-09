@@ -100,6 +100,14 @@ pub trait FlowHooks: Send + Sync + 'static {
         Box::pin(async {})
     }
 
+    fn on_websocket_start(
+        &self,
+        _context: FlowContext,
+        _response: RawResponse,
+    ) -> Pin<Box<dyn Future<Output = ()> + Send>> {
+        Box::pin(async {})
+    }
+
     fn on_stream_chunk(
         &self,
         _context: FlowContext,

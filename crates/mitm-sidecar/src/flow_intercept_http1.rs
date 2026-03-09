@@ -447,6 +447,23 @@ where
                     "websocket upgrade validation failed; continuing in fail-open relay mode"
                 );
             }
+
+            // Fire on_websocket_start so downstream handler knows the
+            // upgrade succeeded.  Uses the per-flow dispatch queue, so
+            // ordering is guaranteed: on_request → on_websocket_start →
+            // first on_stream_chunk.
+            let ws_response_headers = build_handler_header_map(&response.headers);
+            flow_hooks
+                .on_websocket_start(
+                    http_context.clone(),
+                    RawResponse {
+                        status: response.status_code,
+                        headers: ws_response_headers,
+                        body: Bytes::new(),
+                    },
+                )
+                .await;
+
             return finalize_websocket_upgrade(
                 Arc::clone(&engine),
                 Arc::clone(&runtime_governor),

@@ -368,6 +368,41 @@ impl<H: InterceptHandler> FlowHooks for HandlerFlowHooks<H> {
             }
         })
     }
+    fn on_websocket_start(
+        &self,
+        context: FlowContext,
+        response: SidecarRawResponse,
+    ) -> Pin<Box<dyn Future<Output = ()> + Send>> {
+        let flow_state = Arc::clone(&self.flow_state);
+        Box::pin(async move {
+            flow_state
+                .flow_last_touched
+                .insert(context.flow_id, Instant::now());
+            let Some(connection_meta) = connection_meta_for_context(
+                &context,
+                &flow_state.connection_meta_by_flow,
+                &flow_state.closed_flow_live,
+                &flow_state.tls_intercepted_flow_ids,
+            )
+            .await
+            else {
+                return;
+            };
+            let raw_response = RawResponse {
+                status: response.status,
+                headers: response.headers,
+                body: response.body,
+                connection_meta,
+            };
+            let enqueued = flow_state
+                .flow_dispatchers
+                .enqueue_websocket_start(context.flow_id, raw_response)
+                .await;
+            if enqueued {
+                flow_state.response_activity_flows.insert(context.flow_id);
+            }
+        })
+    }
     fn on_stream_chunk(
         &self,
         context: FlowContext,
