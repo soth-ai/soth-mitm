@@ -15,9 +15,11 @@ pub mod server;
 pub use crate::config::InterceptMode;
 pub use config::{
     CompatibilityOverrideConfig, ConnectParseMode, DownstreamCertProfile, DownstreamTlsBackend,
-    EventSinkConfig, EventSinkKind, MitmConfig, MitmConfigError, RouteEndpointConfig, RouteMode,
-    TlsFingerprintClass, TlsFingerprintMode, TlsProfile, UpstreamClientAuthMode, UpstreamSniMode,
+    MitmConfig, MitmConfigError, RouteEndpointConfig, RouteMode, TlsFingerprintClass,
+    TlsFingerprintMode, TlsProfile, UpstreamClientAuthMode, UpstreamSniMode,
 };
+#[cfg(test)]
+pub use config::{EventSinkConfig, EventSinkKind};
 use flow_state::FlowStateTracker;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -64,6 +66,7 @@ impl ConnectParseError {
     }
 }
 
+#[cfg(test)]
 pub fn parse_connect_request_line(request_line: &str) -> Result<ConnectRequest, ConnectParseError> {
     parse_connect_request_line_with_mode(request_line, ConnectParseMode::Strict)
 }
@@ -102,6 +105,7 @@ pub fn parse_connect_request_line_with_mode(
     })
 }
 
+#[cfg(test)]
 pub fn parse_connect_request_head(
     input: &[u8],
 ) -> Result<(ConnectRequest, usize), ConnectParseError> {

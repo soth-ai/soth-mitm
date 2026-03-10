@@ -37,15 +37,6 @@ impl HandlerCallbackGuard {
             .await
     }
 
-    pub(crate) async fn run_lifecycle<R, F>(&self, default_value: R, callback: F) -> R
-    where
-        R: Send + 'static,
-        F: FnOnce() -> R + Send + 'static,
-    {
-        self.run_sync_with_timeout(self.response_timeout, default_value, callback)
-            .await
-    }
-
     async fn run_sync_with_timeout<R, F>(
         &self,
         timeout: Duration,

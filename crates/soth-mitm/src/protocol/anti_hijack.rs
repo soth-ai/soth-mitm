@@ -44,6 +44,7 @@ impl AntiHijackSanitizeResult {
     }
 }
 
+#[cfg(test)]
 pub fn sanitize_anti_hijack_prefix(input: &[u8]) -> AntiHijackSanitizeResult {
     sanitize_anti_hijack_prefixes(input, &KNOWN_ANTI_HIJACK_PREFIXES)
 }
