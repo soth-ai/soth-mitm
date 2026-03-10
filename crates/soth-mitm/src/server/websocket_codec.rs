@@ -151,9 +151,37 @@ fn encode_websocket_header_soketto(
 }
 
 pub(crate) fn validate_websocket_mask_direction(
-    _direction: crate::protocol::WsDirection,
-    _masked: bool,
+    direction: crate::protocol::WsDirection,
+    masked: bool,
 ) -> io::Result<()> {
+    match direction {
+        crate::protocol::WsDirection::ClientToServer if !masked => Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "websocket_codec:client_frame_unmasked",
+        )),
+        crate::protocol::WsDirection::ServerToClient if masked => Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "websocket_codec:server_frame_masked",
+        )),
+        _ => Ok(()),
+    }
+}
+
+pub(crate) fn validate_websocket_frame_rfc6455(fin: bool, opcode: u8) -> io::Result<()> {
+    let is_control = (opcode & 0x8) != 0;
+    if is_control && !fin {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "websocket_codec:fragmented_control_frame",
+        ));
+    }
+    let is_known = matches!(opcode, 0x0 | 0x1 | 0x2 | 0x8 | 0x9 | 0xA);
+    if !is_known {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("websocket_codec:reserved_opcode:{opcode:#x}"),
+        ));
+    }
     Ok(())
 }
 
@@ -322,11 +350,27 @@ mod websocket_codec_tests {
     }
 
     #[test]
-    fn validate_mask_direction_is_permissive_for_passthrough() {
-        validate_websocket_mask_direction(crate::protocol::WsDirection::ClientToServer, false)
-            .expect("unmasked client frame should pass");
-        validate_websocket_mask_direction(crate::protocol::WsDirection::ServerToClient, true)
-            .expect("masked server frame should pass");
+    fn validate_mask_direction_rejects_unmasked_client_frame() {
+        let error =
+            validate_websocket_mask_direction(crate::protocol::WsDirection::ClientToServer, false)
+                .expect_err("unmasked client frame must fail");
+        assert!(error.to_string().contains("client_frame_unmasked"));
+    }
+
+    #[test]
+    fn validate_mask_direction_rejects_masked_server_frame() {
+        let error =
+            validate_websocket_mask_direction(crate::protocol::WsDirection::ServerToClient, true)
+                .expect_err("masked server frame must fail");
+        assert!(error.to_string().contains("server_frame_masked"));
+    }
+
+    #[test]
+    fn validate_mask_direction_accepts_valid_frames() {
+        validate_websocket_mask_direction(crate::protocol::WsDirection::ClientToServer, true)
+            .expect("masked client frame should pass");
+        validate_websocket_mask_direction(crate::protocol::WsDirection::ServerToClient, false)
+            .expect("unmasked server frame should pass");
     }
 
     #[test]
@@ -363,5 +407,34 @@ mod websocket_codec_tests {
             parse_websocket_close_payload(&[0x03, 0xE8, b'o', b'k']).expect("parse should succeed");
         assert_eq!(payload.code, Some(1000));
         assert_eq!(payload.reason.as_deref(), Some("ok"));
+    }
+
+    #[test]
+    fn validate_rfc6455_rejects_fragmented_control_frame() {
+        let error = super::validate_websocket_frame_rfc6455(false, 0x9)
+            .expect_err("fragmented ping must fail");
+        assert!(error.to_string().contains("fragmented_control_frame"));
+    }
+
+    #[test]
+    fn validate_rfc6455_rejects_reserved_opcode() {
+        for opcode in [0x3, 0x4, 0x5, 0x6, 0x7, 0xB, 0xC, 0xD, 0xE, 0xF] {
+            let error = super::validate_websocket_frame_rfc6455(true, opcode)
+                .expect_err(&format!("opcode {opcode:#x} must fail"));
+            assert!(error.to_string().contains("reserved_opcode"));
+        }
+    }
+
+    #[test]
+    fn validate_rfc6455_accepts_valid_frames() {
+        for opcode in [0x0, 0x1, 0x2] {
+            super::validate_websocket_frame_rfc6455(true, opcode).expect("data frame should pass");
+            super::validate_websocket_frame_rfc6455(false, opcode)
+                .expect("continuation frame should pass");
+        }
+        for opcode in [0x8, 0x9, 0xA] {
+            super::validate_websocket_frame_rfc6455(true, opcode)
+                .expect("control frame with fin should pass");
+        }
     }
 }

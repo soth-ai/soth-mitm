@@ -225,6 +225,7 @@ where
         let opcode = header_view.opcode;
         let masked = header_view.masked;
         validate_websocket_mask_direction(direction, masked)?;
+        super::websocket_codec::validate_websocket_frame_rfc6455(fin, opcode)?;
         let payload_len = header_view.payload_len as u64;
         let masking_key = header_view.mask.map(|value| value.to_be_bytes());
 
