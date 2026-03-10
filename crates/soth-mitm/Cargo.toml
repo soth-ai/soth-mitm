@@ -80,7 +80,7 @@ uuid = { workspace = true }
 lru = "0.12"
 libc = "0.2"
 plist = "1"
-sysinfo = "0.33"
+sysinfo = "0.38"
 
 [target.'cfg(not(windows))'.dependencies]
 openssl = { version = "0.10", features = ["vendored"] }
