@@ -1,21 +1,9 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/mitm-core",
-    "crates/mitm-http",
-    "crates/mitm-observe",
-    "crates/mitm-policy",
-    "crates/mitm-sidecar",
-    "crates/mitm-tls",
     "crates/soth-mitm",
 ]
 default-members = [
-    "crates/mitm-core",
-    "crates/mitm-http",
-    "crates/mitm-observe",
-    "crates/mitm-policy",
-    "crates/mitm-sidecar",
-    "crates/mitm-tls",
     "crates/soth-mitm",
 ]
 exclude = [
@@ -31,13 +19,6 @@ repository = "https://github.com/soth-ai/soth-mitm"
 authors = ["Labterminal"]
 
 [workspace.dependencies]
-# Internal crates
-mitm-core = { path = "crates/mitm-core" }
-mitm-http = { path = "crates/mitm-http" }
-mitm-observe = { path = "crates/mitm-observe" }
-mitm-policy = { path = "crates/mitm-policy" }
-mitm-sidecar = { path = "crates/mitm-sidecar" }
-mitm-tls = { path = "crates/mitm-tls" }
 soth-mitm = { path = "crates/soth-mitm" }
 
 # Async runtime

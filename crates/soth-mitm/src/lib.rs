@@ -42,3 +42,9 @@ pub use types::{
     ConnectionMeta, FrameKind, ProcessInfo, RawRequest, RawResponse, SocketFamily, StreamChunk,
     TlsInfo, TlsVersion,
 };
+
+// TLS helpers re-exported for benchmarks
+#[doc(hidden)]
+pub mod bench_tls {
+    pub use crate::tls::{build_http1_client_config, build_http1_server_config_for_host};
+}

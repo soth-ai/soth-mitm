@@ -89,13 +89,6 @@ tokio-openssl = "0.6"
 [dev-dependencies]
 hudsucker = { version = "0.24.0", default-features = false, features = ["rcgen-ca", "rustls-client"] }
 hyper-rustls = { version = "0.27.0", default-features = false, features = ["http1", "webpki-tokio"] }
-# Legacy sub-crate deps kept for benchmarks/examples (will be migrated to consolidated modules)
-mitm-core = { path = "../mitm-core", version = "0.1.0" }
-mitm-http = { path = "../mitm-http", version = "0.1.0" }
-mitm-observe = { path = "../mitm-observe", version = "0.1.0" }
-mitm-policy = { path = "../mitm-policy", version = "0.1.0" }
-mitm-sidecar = { path = "../mitm-sidecar", version = "0.1.0" }
-mitm-tls = { path = "../mitm-tls", version = "0.1.0" }
 rustls-pemfile = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
 tokio-rustls = { workspace = true }
