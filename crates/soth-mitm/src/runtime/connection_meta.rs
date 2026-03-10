@@ -1,8 +1,8 @@
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::path::PathBuf;
 
-use crate::protocol::ApplicationProtocol;
 use crate::observe::FlowContext;
+use crate::protocol::ApplicationProtocol;
 
 use crate::runtime::connection_id::connection_id_for_flow_id;
 use crate::types::{ConnectionInfo, ConnectionMeta, ProcessInfo, SocketFamily, TlsInfo};
@@ -199,8 +199,8 @@ pub(crate) fn process_info_from_unix_client_addr(client_addr: &str) -> Option<Pr
 #[cfg(test)]
 mod tests {
     use super::{lookup_connection_info_from_flow_context, tls_info_from_flow_context};
-    use crate::protocol::ApplicationProtocol;
     use crate::observe::FlowContext;
+    use crate::protocol::ApplicationProtocol;
     use crate::types::FlowId;
 
     #[test]

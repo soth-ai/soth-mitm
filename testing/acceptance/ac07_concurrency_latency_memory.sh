@@ -71,7 +71,7 @@ run_soak_with_rss_audit() {
     SOTH_MITM_SOAK_EXCHANGE_TIMEOUT_SECONDS="$soak_exchange_timeout_seconds" \
     SOTH_MITM_SOAK_H2_RETRIES="$soak_h2_retries" \
     SOTH_MITM_SOAK_H2_UPSTREAM_ACCEPT_TIMEOUT_SECONDS="$soak_h2_upstream_accept_timeout_seconds" \
-    cargo test -p mitm-sidecar --test mixed_traffic_soak \
+    cargo test -p soth-mitm --test mixed_traffic_soak \
       mixed_traffic_soak_respects_runtime_budget_envelope -q \
       >"$log_file" 2>&1 &
   local soak_pid=$!

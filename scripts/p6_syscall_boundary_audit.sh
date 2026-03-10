@@ -49,13 +49,7 @@ fi
 
 unsafe_matches="$(
   search_sources "$unsafe_pattern" \
-    crates/soth-mitm/src \
-    crates/mitm-core/src \
-    crates/mitm-http/src \
-    crates/mitm-policy/src \
-    crates/mitm-sidecar/src \
-    crates/mitm-tls/src \
-    crates/mitm-observe/src | \
+    crates/soth-mitm/src | \
     grep -E -v "$allowed_syscall_boundary_regex" || true
 )"
 if [[ -n "$unsafe_matches" ]]; then

@@ -4,11 +4,11 @@ use std::process;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use soth_mitm::test_protocol::ApplicationProtocol;
 use soth_mitm::test_observe::{
     deterministic_event_record_v2, Event, EventConsumer, EventEnvelope, EventLogV2Config,
     EventLogV2Consumer, EventType, FlowContext,
 };
+use soth_mitm::test_protocol::ApplicationProtocol;
 
 static TEMP_DIR_COUNTER: AtomicU64 = AtomicU64::new(1);
 

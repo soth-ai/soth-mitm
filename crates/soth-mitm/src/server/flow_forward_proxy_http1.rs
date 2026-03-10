@@ -1,19 +1,9 @@
-use std::io;
-use std::sync::Arc;
-use tokio::io::{AsyncRead, AsyncWrite};
-use tokio::net::TcpStream;
-use crate::engine::MitmEngine;
-use crate::observe::{EventConsumer, FlowContext};
-use crate::policy::{FlowAction, PolicyEngine};
-use crate::protocol::ApplicationProtocol;
-use crate::types::ProcessInfo;
-use super::{BufferedConn};
 use super::close_codes::CloseReasonCode;
 use super::event_emitters::emit_stream_closed;
 use super::flow_forward_proxy_http1_helpers::{
-    is_self_listener_target,
-    resolve_forward_http_route,
+    is_self_listener_target, resolve_forward_http_route,
 };
+use super::flow_hooks::FlowHooks;
 use super::flow_intercept_http1::relay_http1_mitm_loop;
 use super::flow_policy_snapshot::resolve_flow_policy_snapshot;
 use super::http_head_parser::parse_http_request_head;
@@ -23,8 +13,17 @@ use super::io_timeouts::{
 };
 use super::route_planner_model::{FlowRoutePlanner, RouteConnectIntent};
 use super::route_planner_transport::connect_via_route;
-use super::flow_hooks::FlowHooks;
 use super::runtime_governor;
+use super::BufferedConn;
+use crate::engine::MitmEngine;
+use crate::observe::{EventConsumer, FlowContext};
+use crate::policy::{FlowAction, PolicyEngine};
+use crate::protocol::ApplicationProtocol;
+use crate::types::ProcessInfo;
+use std::io;
+use std::sync::Arc;
+use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::net::TcpStream;
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn handle_forward_http1_proxy_request<P, S, D>(
@@ -105,12 +104,7 @@ where
         .map(|addr| (addr.ip().to_string(), addr.port()))
         .unwrap_or_else(|| (engine.config.listen_addr.clone(), engine.config.listen_port));
 
-    if is_self_listener_target(
-        &target.host,
-        target.port,
-        &listen_addr,
-        listen_port,
-    ) {
+    if is_self_listener_target(&target.host, target.port, &listen_addr, listen_port) {
         let context = FlowContext {
             flow_id,
             client_addr,
@@ -185,8 +179,12 @@ where
     };
 
     if policy_snapshot.action == FlowAction::Block {
-        write_forward_proxy_error_response(&mut downstream, "403 Forbidden", &policy_snapshot.reason)
-            .await?;
+        write_forward_proxy_error_response(
+            &mut downstream,
+            "403 Forbidden",
+            &policy_snapshot.reason,
+        )
+        .await?;
         emit_stream_closed(
             &engine,
             context,

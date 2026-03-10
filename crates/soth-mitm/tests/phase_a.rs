@@ -1,11 +1,11 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use soth_mitm::FlowId;
 use soth_mitm::test_engine::{ConnectParseMode, MitmConfig, MitmEngine};
 use soth_mitm::test_observe::{EventType, VecEventConsumer};
 use soth_mitm::test_policy::DefaultPolicyEngine;
 use soth_mitm::test_server::{SidecarConfig, SidecarServer};
+use soth_mitm::FlowId;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 

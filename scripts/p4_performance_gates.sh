@@ -31,14 +31,14 @@ run_case() {
 }
 
 : >"$status_tsv"
-run_case connection_churn_core cargo test -p mitm-core --test server_concurrency -q
-run_case connection_churn_sidecar cargo test -p mitm-sidecar --test phase_a concurrent_short_lived_tunnels_500 -q
-run_case long_lived_streams_websocket cargo test -p mitm-sidecar --test websocket_mitm websocket_server_initiated_turns_emit_expected_boundaries -q
-run_case long_lived_streams_sse cargo test -p mitm-sidecar --test sse_mitm parses_sse_events_incrementally_and_flushes_tail_on_stream_close -q
-run_case header_stress_oversized_h2 cargo test -p mitm-sidecar --test http2_mitm http2_oversized_headers_emit_mitm_http_error_close -q
-run_case header_stress_parallel_h2 cargo test -p mitm-sidecar --test http2_mitm http2_parallel_stream_stress_keeps_completed_close_and_byte_accounting -q
-run_case memory_ceiling_runtime_governor cargo test -p mitm-sidecar --test runtime_governor -q
-run_case memory_ceiling_decoder_budget cargo test -p mitm-sidecar --test chaos_charter infinite_sse_stream_hits_decoder_budget_and_closes_deterministically -q
+run_case connection_churn_core cargo test -p soth-mitm --test server_concurrency -q
+run_case connection_churn_sidecar cargo test -p soth-mitm --test phase_a concurrent_short_lived_tunnels_500 -q
+run_case long_lived_streams_websocket cargo test -p soth-mitm --test websocket_mitm websocket_server_initiated_turns_emit_expected_boundaries -q
+run_case long_lived_streams_sse cargo test -p soth-mitm --test sse_mitm parses_sse_events_incrementally_and_flushes_tail_on_stream_close -q
+run_case header_stress_oversized_h2 cargo test -p soth-mitm --test http2_mitm http2_oversized_headers_emit_mitm_http_error_close -q
+run_case header_stress_parallel_h2 cargo test -p soth-mitm --test http2_mitm http2_parallel_stream_stress_keeps_completed_close_and_byte_accounting -q
+run_case memory_ceiling_runtime_governor cargo test -p soth-mitm --test runtime_governor -q
+run_case memory_ceiling_decoder_budget cargo test -p soth-mitm --test chaos_charter infinite_sse_stream_hits_decoder_budget_and_closes_deterministically -q
 
 failed="$(awk '$2 != "pass" {print $1}' "$status_tsv" || true)"
 {

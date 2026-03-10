@@ -231,8 +231,8 @@ fn stream_closed_trace_enabled() -> bool {
 
 #[cfg(test)]
 mod tests {
-    use crate::protocol::ApplicationProtocol;
     use crate::observe::{Event, EventConsumer, EventEnvelope, EventType, FlowContext};
+    use crate::protocol::ApplicationProtocol;
 
     use super::ProxyMetricsStore;
 

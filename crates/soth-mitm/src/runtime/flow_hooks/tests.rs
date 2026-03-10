@@ -6,16 +6,18 @@ use super::build_handler_flow_hooks;
 use crate::config::MitmConfig;
 use crate::handler::InterceptHandler;
 use crate::metrics::ProxyMetricsStore;
+use crate::observe::FlowContext;
+use crate::protocol::ApplicationProtocol;
+use crate::server::{
+    FlowHooks, RawRequest as SidecarRawRequest, RawResponse as SidecarRawResponse,
+};
+use crate::types::FlowId;
+use crate::types::ProcessInfo as PolicyProcessInfo;
 use crate::types::{ProcessInfo, RawRequest, RawResponse};
 use crate::HandlerDecision;
 use bytes::Bytes;
 use futures::FutureExt;
 use http::HeaderMap;
-use crate::protocol::ApplicationProtocol;
-use crate::observe::FlowContext;
-use crate::types::FlowId;
-use crate::types::ProcessInfo as PolicyProcessInfo;
-use crate::server::{FlowHooks, RawRequest as SidecarRawRequest, RawResponse as SidecarRawResponse};
 use std::panic::AssertUnwindSafe;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};

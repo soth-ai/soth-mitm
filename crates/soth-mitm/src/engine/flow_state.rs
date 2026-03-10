@@ -1,8 +1,8 @@
 use std::collections::{HashMap, VecDeque};
 use std::sync::Mutex;
 
-use crate::protocol::ApplicationProtocol;
 use crate::observe::EventType;
+use crate::protocol::ApplicationProtocol;
 use crate::types::FlowId;
 
 const MAX_TRACKED_FLOW_STATES: usize = 16_384;

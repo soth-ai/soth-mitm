@@ -1,35 +1,40 @@
-use std::io;
-use std::sync::Arc;
-use bytes::Bytes;
-use tokio::io::{AsyncRead, AsyncWrite};
-use crate::actions::HandlerDecision;
-use crate::engine::{InterceptMode, MitmEngine};
-use crate::observe::{EventConsumer, EventType, FlowContext};
-use crate::policy::PolicyEngine;
-use crate::protocol::ApplicationProtocol;
-use super::{BufferedConn, HttpBodyMode};
 use super::close_codes::CloseReasonCode;
-use super::event_emitters::{emit_request_headers_event, emit_response_headers_event, emit_stream_closed};
+use super::event_emitters::{
+    emit_request_headers_event, emit_response_headers_event, emit_stream_closed,
+};
+use super::flow_forward_proxy_http1_helpers::build_upstream_http1_request_head;
 use super::flow_hook_http_helpers::{
-    build_handler_header_map, ensure_handler_host_header_from_target, is_grpc_request, mark_body_truncated, normalize_grpc_request_body_for_handler,
+    build_handler_header_map, ensure_handler_host_header_from_target, is_grpc_request,
+    mark_body_truncated, normalize_grpc_request_body_for_handler,
     normalize_request_body_for_handler, normalize_request_path_for_handler,
     relay_http_body_with_capture, sanitize_block_status,
 };
+use super::flow_hooks::{FlowHooks, RawRequest, RawResponse};
 use super::flow_intercept_http1_response::relay_http1_response_with_hooks;
 use super::http_head_parser::{
     has_header_token, has_header_value, parse_http_request_head_with_mode,
     parse_http_response_head_with_mode, read_until_pattern, read_until_pattern_no_stage_timeout,
 };
 use super::io_timeouts::{
-    copy_bidirectional_with_websocket_idle_timeout, is_idle_watchdog_timeout, is_stream_stage_timeout,
-    write_all_with_idle_timeout,
+    copy_bidirectional_with_websocket_idle_timeout, is_idle_watchdog_timeout,
+    is_stream_stage_timeout, write_all_with_idle_timeout,
 };
 use super::route_planner_model::UpstreamRequestTargetMode;
-use super::flow_forward_proxy_http1_helpers::build_upstream_http1_request_head;
-use super::websocket_handshake_validation::{validate_websocket_upgrade_request_head, validate_websocket_upgrade_response_head};
-use super::websocket_relay_support::finalize_websocket_upgrade;
 use super::runtime_governor;
-use super::flow_hooks::{FlowHooks, RawRequest, RawResponse};
+use super::websocket_handshake_validation::{
+    validate_websocket_upgrade_request_head, validate_websocket_upgrade_response_head,
+};
+use super::websocket_relay_support::finalize_websocket_upgrade;
+use super::{BufferedConn, HttpBodyMode};
+use crate::actions::HandlerDecision;
+use crate::engine::{InterceptMode, MitmEngine};
+use crate::observe::{EventConsumer, EventType, FlowContext};
+use crate::policy::PolicyEngine;
+use crate::protocol::ApplicationProtocol;
+use bytes::Bytes;
+use std::io;
+use std::sync::Arc;
+use tokio::io::{AsyncRead, AsyncWrite};
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn relay_http1_mitm_loop<P, S, D, U>(
@@ -161,9 +166,7 @@ where
                     }
                 };
             bytes_from_client += request_body_bytes;
-            if let Err(error) =
-                tokio::io::AsyncWriteExt::flush(&mut upstream_conn.stream).await
-            {
+            if let Err(error) = tokio::io::AsyncWriteExt::flush(&mut upstream_conn.stream).await {
                 emit_http1_relay_error_close(
                     &engine,
                     &http_context,
@@ -372,9 +375,7 @@ where
                     return Ok(());
                 }
             }
-            if let Err(error) =
-                tokio::io::AsyncWriteExt::flush(&mut upstream_conn.stream).await
-            {
+            if let Err(error) = tokio::io::AsyncWriteExt::flush(&mut upstream_conn.stream).await {
                 emit_http1_relay_error_close(
                     &engine,
                     &http_context,
@@ -412,9 +413,11 @@ where
             }
         };
 
-        let response =
-            match parse_http_response_head_with_mode(&response_raw, &request.method, strict_header_mode)
-            {
+        let response = match parse_http_response_head_with_mode(
+            &response_raw,
+            &request.method,
+            strict_header_mode,
+        ) {
             Ok(parsed) => parsed,
             Err(error) => {
                 emit_stream_closed(
@@ -431,17 +434,19 @@ where
             }
         };
 
-        let websocket_upgrade_request_intent = has_header_value(&request.headers, "upgrade", "websocket")
-            || has_header_token(&request.headers, "connection", "upgrade")
-            || request.headers.iter().any(|header| {
-                header.name.eq_ignore_ascii_case("sec-websocket-version")
-                    || header.name.eq_ignore_ascii_case("sec-websocket-key")
-            });
+        let websocket_upgrade_request_intent =
+            has_header_value(&request.headers, "upgrade", "websocket")
+                || has_header_token(&request.headers, "connection", "upgrade")
+                || request.headers.iter().any(|header| {
+                    header.name.eq_ignore_ascii_case("sec-websocket-version")
+                        || header.name.eq_ignore_ascii_case("sec-websocket-key")
+                });
         let websocket_upgrade_response_intent = response.status_code == 101
             || has_header_value(&response.headers, "upgrade", "websocket")
             || has_header_token(&response.headers, "connection", "upgrade");
         let request_upgrade_validation = validate_websocket_upgrade_request_head(&request);
-        let response_upgrade_validation = validate_websocket_upgrade_response_head(&request, &response);
+        let response_upgrade_validation =
+            validate_websocket_upgrade_response_head(&request, &response);
         let websocket_upgrade =
             request_upgrade_validation.is_ok() && response_upgrade_validation.is_ok();
 
@@ -710,9 +715,9 @@ fn websocket_upgrade_validation_error_detail(
     response_error: Option<io::Error>,
 ) -> String {
     match (request_error, response_error) {
-        (Some(request), Some(response)) => format!(
-            "websocket upgrade validation failed: request={request}; response={response}"
-        ),
+        (Some(request), Some(response)) => {
+            format!("websocket upgrade validation failed: request={request}; response={response}")
+        }
         (Some(request), None) => format!("websocket upgrade validation failed: request={request}"),
         (None, Some(response)) => {
             format!("websocket upgrade validation failed: response={response}")

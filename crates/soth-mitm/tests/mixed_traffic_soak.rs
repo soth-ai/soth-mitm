@@ -437,8 +437,9 @@ async fn start_tls_h2_upstream() -> (u16, tokio::task::JoinHandle<()>) {
     let listener = bind_loopback_listener_with_retry("bind TLS H2 upstream").await;
     let port = listener.local_addr().expect("TLS H2 upstream addr").port();
     let task = tokio::spawn(async move {
-        let server_config = soth_mitm::test_tls::build_http_server_config_for_host("127.0.0.1", true)
-            .expect("h2 server config");
+        let server_config =
+            soth_mitm::test_tls::build_http_server_config_for_host("127.0.0.1", true)
+                .expect("h2 server config");
         let acceptor = TlsAcceptor::from(server_config);
         let h2_accept_timeout = soak_h2_upstream_accept_timeout();
         loop {

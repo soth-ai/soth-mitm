@@ -2,9 +2,9 @@ use std::io;
 use std::time::Duration;
 
 use soth_mitm::test_engine::{MitmConfig, MitmEngine};
-use soth_mitm::test_protocol::ApplicationProtocol;
 use soth_mitm::test_observe::{Event, EventType, VecEventConsumer};
 use soth_mitm::test_policy::DefaultPolicyEngine;
+use soth_mitm::test_protocol::ApplicationProtocol;
 use soth_mitm::test_server::{SidecarConfig, SidecarServer};
 use soth_mitm::test_tls::{build_http1_client_config, build_http1_server_config_for_host};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};

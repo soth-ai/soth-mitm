@@ -1,16 +1,16 @@
-use std::io;
-use std::sync::Arc;
-use crate::observe::FlowContext;
-use crate::types::FrameKind;
-use super::runtime_governor;
+use super::flow_hook_http_helpers::{
+    build_handler_header_map_from_h2, is_grpc_content_type_value, mark_body_truncated,
+    normalize_response_body_for_handler, strip_trailer_forbidden_and_transport_headers,
+};
 use super::flow_hooks::{FlowHooks, RawResponse, StreamChunk};
-use super::io_timeouts::with_h2_body_idle_timeout;
 use super::http2_relay_support::h2_error_to_io;
 use super::http2_stream_relay_body::send_h2_data_with_backpressure;
-use super::flow_hook_http_helpers::{
-    build_handler_header_map_from_h2, normalize_response_body_for_handler, mark_body_truncated, strip_trailer_forbidden_and_transport_headers,
-    is_grpc_content_type_value,
-};
+use super::io_timeouts::with_h2_body_idle_timeout;
+use super::runtime_governor;
+use crate::observe::FlowContext;
+use crate::types::FrameKind;
+use std::io;
+use std::sync::Arc;
 
 pub(crate) struct H2CapturedBody {
     pub(crate) bytes: bytes::Bytes,
@@ -203,13 +203,7 @@ pub(crate) async fn send_h2_captured_body(
     }
 
     if !bytes.is_empty() {
-        send_h2_data_with_backpressure(
-            sink,
-            runtime_governor,
-            bytes,
-            trailers.is_none(),
-        )
-        .await?;
+        send_h2_data_with_backpressure(sink, runtime_governor, bytes, trailers.is_none()).await?;
     } else if trailers.is_none() {
         send_h2_data_with_backpressure(sink, runtime_governor, bytes::Bytes::new(), true).await?;
     }

@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 
-use crate::server::tls_revocation_metadata::insert_tls_revocation_metadata;
-use crate::protocol::ApplicationProtocol;
 use crate::observe::{EventType, FlowContext};
+use crate::protocol::ApplicationProtocol;
+use crate::server::tls_revocation_metadata::insert_tls_revocation_metadata;
 use crate::tls::classify_tls_error;
 use crate::types::FlowId;
 
@@ -154,8 +154,8 @@ pub fn adapt_mitmproxy_tls_callback(callback: &MitmproxyTlsCallback) -> Mitmprox
 #[cfg(test)]
 mod tests {
     use super::{adapt_mitmproxy_tls_callback, MitmproxyTlsCallback, MitmproxyTlsHook};
-    use crate::protocol::ApplicationProtocol;
     use crate::observe::EventType;
+    use crate::protocol::ApplicationProtocol;
 
     #[test]
     fn adapter_maps_failed_client_callback_to_tls_failed_with_taxonomy() {

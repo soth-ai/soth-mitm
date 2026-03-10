@@ -1,5 +1,5 @@
+use super::{runtime_governor, IO_CHUNK_SIZE};
 use crate::config::H2ResponseOverflowMode;
-use super::{IO_CHUNK_SIZE, runtime_governor};
 
 const IDLE_TIMEOUT_ERROR_PREFIX: &str = "idle_watchdog_timeout";
 const STREAM_STAGE_TIMEOUT_ERROR_PREFIX: &str = "stream_stage_timeout";
@@ -38,7 +38,11 @@ fn io_timeout_config() -> IoTimeoutConfig {
         .expect("io timeout config lock poisoned")
 }
 
-fn timeout_error(prefix: &str, stage: &'static str, timeout: std::time::Duration) -> std::io::Error {
+fn timeout_error(
+    prefix: &str,
+    stage: &'static str,
+    timeout: std::time::Duration,
+) -> std::io::Error {
     std::io::Error::new(
         std::io::ErrorKind::TimedOut,
         format!("{prefix}:{stage}:{}ms", timeout.as_millis()),
@@ -105,7 +109,11 @@ pub(crate) async fn connect_with_upstream_timeout(
     if is_connect_timeout_error(&connect_result) {
         runtime_governor::mark_stream_stage_timeout_global();
         runtime_governor::mark_stuck_flow_global();
-        return Err(timeout_error(STREAM_STAGE_TIMEOUT_ERROR_PREFIX, stage, timeout));
+        return Err(timeout_error(
+            STREAM_STAGE_TIMEOUT_ERROR_PREFIX,
+            stage,
+            timeout,
+        ));
     }
     connect_result
 }
@@ -161,9 +169,7 @@ async fn resolve_upstream_socket_addrs(
     Ok(addrs)
 }
 
-fn interleave_happy_eyeballs_addrs(
-    addrs: Vec<std::net::SocketAddr>,
-) -> Vec<std::net::SocketAddr> {
+fn interleave_happy_eyeballs_addrs(addrs: Vec<std::net::SocketAddr>) -> Vec<std::net::SocketAddr> {
     let mut ipv4 = std::collections::VecDeque::new();
     let mut ipv6 = std::collections::VecDeque::new();
     for addr in addrs {
@@ -266,9 +272,7 @@ async fn connect_with_happy_eyeballs_addrs(
 
 pub(crate) fn is_idle_watchdog_timeout(error: &std::io::Error) -> bool {
     error.kind() == std::io::ErrorKind::TimedOut
-        && error
-            .to_string()
-            .starts_with(IDLE_TIMEOUT_ERROR_PREFIX)
+        && error.to_string().starts_with(IDLE_TIMEOUT_ERROR_PREFIX)
 }
 
 pub(crate) fn is_stream_stage_timeout(error: &std::io::Error) -> bool {
@@ -442,27 +446,26 @@ where
     F: std::future::Future<Output = std::io::Result<T>>,
 {
     let timeout = io_timeout_config().stream_stage_timeout;
-    tokio::time::timeout(timeout, future)
-        .await
-        .map_err(|_| {
-            runtime_governor::mark_stream_stage_timeout_global();
-            runtime_governor::mark_stuck_flow_global();
-            timeout_error(STREAM_STAGE_TIMEOUT_ERROR_PREFIX, stage, timeout)
-        })?
+    tokio::time::timeout(timeout, future).await.map_err(|_| {
+        runtime_governor::mark_stream_stage_timeout_global();
+        runtime_governor::mark_stuck_flow_global();
+        timeout_error(STREAM_STAGE_TIMEOUT_ERROR_PREFIX, stage, timeout)
+    })?
 }
 
-pub(crate) async fn with_h2_body_idle_timeout<T, F>(stage: &'static str, future: F) -> std::io::Result<T>
+pub(crate) async fn with_h2_body_idle_timeout<T, F>(
+    stage: &'static str,
+    future: F,
+) -> std::io::Result<T>
 where
     F: std::future::Future<Output = std::io::Result<T>>,
 {
     let timeout = io_timeout_config().h2_body_idle_timeout;
-    tokio::time::timeout(timeout, future)
-        .await
-        .map_err(|_| {
-            runtime_governor::mark_stream_stage_timeout_global();
-            runtime_governor::mark_stuck_flow_global();
-            timeout_error(STREAM_STAGE_TIMEOUT_ERROR_PREFIX, stage, timeout)
-        })?
+    tokio::time::timeout(timeout, future).await.map_err(|_| {
+        runtime_governor::mark_stream_stage_timeout_global();
+        runtime_governor::mark_stuck_flow_global();
+        timeout_error(STREAM_STAGE_TIMEOUT_ERROR_PREFIX, stage, timeout)
+    })?
 }
 
 pub(crate) async fn copy_bidirectional_with_websocket_idle_timeout<A, B>(
@@ -507,7 +510,6 @@ where
                 }
             }
         }
-
     }
 }
 

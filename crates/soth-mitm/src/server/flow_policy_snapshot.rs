@@ -1,8 +1,8 @@
-use dashmap::DashMap;
-use crate::types::{FlowId, ProcessInfo};
 use crate::engine::MitmEngine;
-use crate::policy::{FlowAction, PolicyEngine};
 use crate::observe::EventConsumer;
+use crate::policy::{FlowAction, PolicyEngine};
+use crate::types::{FlowId, ProcessInfo};
+use dashmap::DashMap;
 
 #[derive(Debug, Clone)]
 pub(crate) struct FlowPolicySnapshot {
@@ -18,8 +18,9 @@ struct FlowPolicySnapshotKey {
     flow_id: FlowId,
 }
 
-static FLOW_POLICY_SNAPSHOTS: std::sync::OnceLock<DashMap<FlowPolicySnapshotKey, FlowPolicySnapshot>> =
-    std::sync::OnceLock::new();
+static FLOW_POLICY_SNAPSHOTS: std::sync::OnceLock<
+    DashMap<FlowPolicySnapshotKey, FlowPolicySnapshot>,
+> = std::sync::OnceLock::new();
 
 fn flow_policy_snapshots() -> &'static DashMap<FlowPolicySnapshotKey, FlowPolicySnapshot> {
     FLOW_POLICY_SNAPSHOTS.get_or_init(DashMap::new)

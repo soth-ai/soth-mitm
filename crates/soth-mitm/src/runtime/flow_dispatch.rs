@@ -121,14 +121,20 @@ impl<H: InterceptHandler> FlowDispatchers<H> {
     async fn enqueue(&self, flow_id: FlowId, work: DispatchWork) -> bool {
         let Some(sender) = self.sender_for_flow(flow_id).await else {
             self.metrics_store.record_dispatch_drop();
-            tracing::warn!(flow_id = flow_id.as_u64(), "dropped dispatch work for finalized flow");
+            tracing::warn!(
+                flow_id = flow_id.as_u64(),
+                "dropped dispatch work for finalized flow"
+            );
             return false;
         };
         match tokio::time::timeout(self.queue_send_timeout, sender.send(work)).await {
             Ok(Ok(())) => true,
             Ok(Err(_)) => {
                 self.metrics_store.record_dispatch_drop();
-                tracing::warn!(flow_id = flow_id.as_u64(), "dropped dispatch work; flow worker closed");
+                tracing::warn!(
+                    flow_id = flow_id.as_u64(),
+                    "dropped dispatch work; flow worker closed"
+                );
                 false
             }
             Err(_) => {
@@ -216,9 +222,10 @@ fn spawn_flow_dispatch_worker<H: InterceptHandler>(
                 DispatchWork::WebSocketStart(response) => {
                     let handler = Arc::clone(&handler);
                     callback_guard
-                        .run_response((), async move {
-                            handler.on_websocket_start(&response).await
-                        })
+                        .run_response(
+                            (),
+                            async move { handler.on_websocket_start(&response).await },
+                        )
                         .await;
                 }
             }

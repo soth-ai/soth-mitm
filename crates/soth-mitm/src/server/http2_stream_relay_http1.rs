@@ -1,40 +1,38 @@
-use std::io;
-use std::sync::Arc;
-use tokio::io::{AsyncRead, AsyncWrite};
-use tokio_rustls::TlsConnector;
-use crate::engine::MitmEngine;
-use crate::observe::{EventConsumer, FlowContext};
-use crate::policy::PolicyEngine;
-use crate::protocol::ApplicationProtocol;
-use crate::types::ProcessInfo;
-use super::runtime_governor;
-use super::flow_hooks::FlowHooks;
 use super::close_codes::CloseReasonCode;
 use super::event_emitters::emit_stream_closed;
+use super::flow_hook_http_helpers::{
+    ensure_handler_host_header_from_uri, strip_hop_by_hop_and_transport_headers,
+};
+use super::flow_hooks::FlowHooks;
+use super::http2_relay_support::{
+    configure_h2_server, h2_error_to_io, is_benign_h2_stream_io_error, is_h2_nonfatal_stream_error,
+};
+use super::http2_stream_hook_dispatch::H2CapturedBody;
+use super::http2_stream_relay::H2ByteCounters;
+use super::http2_stream_relay_http1_stream::relay_http2_stream_to_http1_upstream;
 use super::io_timeouts::{
     is_idle_watchdog_timeout, is_stream_stage_timeout, with_stream_stage_timeout,
 };
 use super::route_planner_model::{RouteBinding, RouteConnectIntent};
 use super::route_planner_transport::connect_via_route;
-use super::http2_relay_support::{
-    configure_h2_server,
-    is_h2_nonfatal_stream_error, is_benign_h2_stream_io_error, h2_error_to_io,
-};
-use super::http2_stream_relay::H2ByteCounters;
-use super::http2_stream_relay_http1_stream::relay_http2_stream_to_http1_upstream;
-use super::http2_stream_hook_dispatch::H2CapturedBody;
-use super::flow_hook_http_helpers::{
-    ensure_handler_host_header_from_uri, strip_hop_by_hop_and_transport_headers,
-};
+use super::runtime_governor;
+use crate::engine::MitmEngine;
+use crate::observe::{EventConsumer, FlowContext};
+use crate::policy::PolicyEngine;
+use crate::protocol::ApplicationProtocol;
+use crate::types::ProcessInfo;
+use std::io;
+use std::sync::Arc;
+use tokio::io::{AsyncRead, AsyncWrite};
+use tokio_rustls::TlsConnector;
 
 #[derive(Clone)]
 pub(crate) struct H2ToH1UpstreamFactory {
     route: RouteBinding,
     connector: TlsConnector,
     server_name: tokio_rustls::rustls::pki_types::ServerName<'static>,
-    initial_stream: Arc<
-        tokio::sync::Mutex<Option<tokio_rustls::client::TlsStream<tokio::net::TcpStream>>>,
-    >,
+    initial_stream:
+        Arc<tokio::sync::Mutex<Option<tokio_rustls::client::TlsStream<tokio::net::TcpStream>>>>,
 }
 
 pub(crate) async fn relay_http2_downstream_to_http1_upstream<P, S, D>(
@@ -214,7 +212,8 @@ pub(crate) async fn acquire_h2_h1_upstream_stream(
             .map_err(|error| io::Error::other(format!("upstream TLS handshake failed: {error}")))
     })
     .await?;
-    if matches!(stream.get_ref().1.alpn_protocol(), Some(value) if value == crate::protocol::ALPN_H2) {
+    if matches!(stream.get_ref().1.alpn_protocol(), Some(value) if value == crate::protocol::ALPN_H2)
+    {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "upstream ALPN mismatch for HTTP/2->HTTP/1 translation: negotiated h2",
@@ -268,4 +267,3 @@ pub(crate) fn build_http1_request_head_from_h2(
     request_head.extend_from_slice(b"\r\n");
     Ok(request_head)
 }
-

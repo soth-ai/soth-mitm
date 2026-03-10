@@ -3,15 +3,15 @@ use std::io::{self, Read};
 use std::net::Ipv6Addr;
 use std::sync::Arc;
 
-use bytes::Bytes;
-use http::{header::HeaderName, HeaderMap};
-use tokio::io::{AsyncRead, AsyncWrite};
+use super::http_body_relay::{relay_http_body, HttpBodyObserver};
+use super::runtime_governor;
+use super::{BufferedConn, HttpBodyMode, HttpHeader, HttpResponseHead};
 use crate::engine::MitmEngine;
 use crate::observe::{EventConsumer, EventType, FlowContext};
 use crate::policy::PolicyEngine;
-use super::{BufferedConn, HttpBodyMode, HttpHeader, HttpResponseHead};
-use super::http_body_relay::{relay_http_body, HttpBodyObserver};
-use super::runtime_governor;
+use bytes::Bytes;
+use http::{header::HeaderName, HeaderMap};
+use tokio::io::{AsyncRead, AsyncWrite};
 
 const HANDLER_STRIP_HEADERS: &[&str] = &[
     "transfer-encoding",
@@ -295,7 +295,10 @@ pub(crate) fn is_grpc_response(response: &HttpResponseHead) -> bool {
     })
 }
 
-pub(crate) fn normalize_grpc_request_body_for_handler(headers: &mut HeaderMap, body: Bytes) -> Bytes {
+pub(crate) fn normalize_grpc_request_body_for_handler(
+    headers: &mut HeaderMap,
+    body: Bytes,
+) -> Bytes {
     match strip_grpc_frame_header(body.as_ref()) {
         Ok(payload) => payload,
         Err(_) => {
@@ -504,5 +507,4 @@ mod flow_hook_http_helpers_tests {
             Some("anthropic.com")
         );
     }
-
 }

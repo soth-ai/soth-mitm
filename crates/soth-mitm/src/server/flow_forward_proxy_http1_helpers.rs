@@ -1,9 +1,9 @@
-use std::io;
-use http::Uri;
-use std::net::IpAddr;
-use super::HttpRequestHead;
 use super::http_head_parser::parse_http_request_head;
 use super::route_planner_model::{RouteTarget, UpstreamRequestTargetMode};
+use super::HttpRequestHead;
+use http::Uri;
+use std::io;
+use std::net::IpAddr;
 
 pub(crate) fn is_forward_http1_request_candidate(input: &[u8]) -> bool {
     if let Ok(request) = parse_http_request_head(input) {

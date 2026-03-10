@@ -67,9 +67,7 @@ pub fn resolve_upstream_server_name(
 ) -> Result<ServerName<'static>, TlsConfigError> {
     let _ = should_enable_sni_for_target(target_host, sni_mode)?;
     ServerName::try_from(target_host.to_string()).map_err(|_| {
-        TlsConfigError::InvalidConfiguration(format!(
-            "invalid upstream server name: {target_host}"
-        ))
+        TlsConfigError::InvalidConfiguration(format!("invalid upstream server name: {target_host}"))
     })
 }
 
@@ -258,9 +256,7 @@ impl UpstreamTlsConfigCache {
             return Ok(Arc::clone(config));
         }
         let material = match &self.client_auth_pem {
-            Some((cert, key_pem)) => {
-                Some(parse_upstream_client_auth_material(cert, key_pem)?)
-            }
+            Some((cert, key_pem)) => Some(parse_upstream_client_auth_material(cert, key_pem)?),
             None => None,
         };
         let config = build_client_config_with_resolved_sni(

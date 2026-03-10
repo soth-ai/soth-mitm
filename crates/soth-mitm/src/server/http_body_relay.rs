@@ -1,14 +1,14 @@
+use super::event_emitters::emit_body_chunk_event;
+use super::http_head_parser::read_until_pattern_no_stage_timeout;
+use super::io_timeouts::{read_with_idle_timeout, write_all_with_idle_timeout};
+use super::{runtime_governor, BufferedConn, HttpBodyMode, CHUNK_LINE_LIMIT, IO_CHUNK_SIZE};
+use crate::engine::MitmEngine;
+use crate::observe::{EventConsumer, EventType, FlowContext};
+use crate::policy::PolicyEngine;
 use std::io;
 use std::sync::Arc;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
-use crate::engine::MitmEngine;
-use crate::observe::{EventConsumer, EventType, FlowContext};
-use crate::policy::PolicyEngine;
-use super::{BufferedConn, HttpBodyMode, IO_CHUNK_SIZE, CHUNK_LINE_LIMIT, runtime_governor};
-use super::io_timeouts::{read_with_idle_timeout, write_all_with_idle_timeout};
-use super::http_head_parser::read_until_pattern_no_stage_timeout;
-use super::event_emitters::emit_body_chunk_event;
 
 pub(crate) trait HttpBodyObserver: Send {
     fn on_chunk<'a>(
@@ -42,17 +42,19 @@ where
 {
     let total = match mode {
         HttpBodyMode::None => Ok(0),
-        HttpBodyMode::ContentLength(length) => relay_exact(
-            engine,
-            context,
-            event_kind,
-            source,
-            sink,
-            length,
-            runtime_governor,
-            observer,
-        )
-        .await,
+        HttpBodyMode::ContentLength(length) => {
+            relay_exact(
+                engine,
+                context,
+                event_kind,
+                source,
+                sink,
+                length,
+                runtime_governor,
+                observer,
+            )
+            .await
+        }
         HttpBodyMode::Chunked => {
             relay_chunked(
                 engine,
@@ -66,16 +68,18 @@ where
             )
             .await
         }
-        HttpBodyMode::CloseDelimited => relay_until_eof(
-            engine,
-            context,
-            event_kind,
-            source,
-            sink,
-            runtime_governor,
-            observer,
-        )
-        .await,
+        HttpBodyMode::CloseDelimited => {
+            relay_until_eof(
+                engine,
+                context,
+                event_kind,
+                source,
+                sink,
+                runtime_governor,
+                observer,
+            )
+            .await
+        }
     }?;
     observer.on_complete().await?;
     Ok(total)
@@ -101,8 +105,8 @@ where
 
     if !source.read_buf.is_empty() && length > 0 {
         let take = std::cmp::min(length as usize, source.read_buf.len());
-        let _in_flight_lease = runtime_governor
-            .reserve_in_flight_or_error(take, "http1_body_prefetch_write")?;
+        let _in_flight_lease =
+            runtime_governor.reserve_in_flight_or_error(take, "http1_body_prefetch_write")?;
         write_all_with_idle_timeout(sink, &source.read_buf[..take], "http1_body_prefetch_write")
             .await?;
         observer.on_chunk(&source.read_buf[..take]).await?;
@@ -126,8 +130,8 @@ where
                 "connection closed before body completed",
             ));
         }
-        let _in_flight_lease = runtime_governor
-            .reserve_in_flight_or_error(read, "http1_body_chunk_write")?;
+        let _in_flight_lease =
+            runtime_governor.reserve_in_flight_or_error(read, "http1_body_chunk_write")?;
         write_all_with_idle_timeout(sink, &chunk[..read], "http1_body_chunk_write").await?;
         observer.on_chunk(&chunk[..read]).await?;
         length -= read as u64;
@@ -163,8 +167,8 @@ where
         write_all_with_idle_timeout(sink, &line, "http1_chunk_line_write").await?;
         let chunk_len = parse_chunk_len(&line)?;
         if chunk_len == 0 {
-            let trailers = read_chunked_trailers(source, max_http_head_bytes, runtime_governor)
-                .await?;
+            let trailers =
+                read_chunked_trailers(source, max_http_head_bytes, runtime_governor).await?;
             let _in_flight_lease = runtime_governor
                 .reserve_in_flight_or_error(trailers.len(), "http1_chunk_trailers_write")?;
             write_all_with_idle_timeout(sink, &trailers, "http1_chunk_trailers_write").await?;
@@ -192,12 +196,8 @@ where
         }
         let _in_flight_lease = runtime_governor
             .reserve_in_flight_or_error(chunk_terminator.len(), "http1_chunk_terminator_write")?;
-        write_all_with_idle_timeout(
-            sink,
-            &chunk_terminator,
-            "http1_chunk_terminator_write",
-        )
-        .await?;
+        write_all_with_idle_timeout(sink, &chunk_terminator, "http1_chunk_terminator_write")
+            .await?;
     }
 }
 
@@ -264,14 +264,15 @@ pub(crate) async fn read_chunk_line<S: AsyncRead + Unpin>(
     // Skip the stream stage timeout for chunk line reads: the per-read idle
     // timeout already guards against stuck connections, and the first chunk
     // from slow APIs (e.g. LLM inference) can take minutes to arrive.
-    let line = read_until_pattern_no_stage_timeout(source, b"\r\n", CHUNK_LINE_LIMIT, runtime_governor)
-        .await?
-        .ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "connection closed before chunk size line was read",
-            )
-        })?;
+    let line =
+        read_until_pattern_no_stage_timeout(source, b"\r\n", CHUNK_LINE_LIMIT, runtime_governor)
+            .await?
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "connection closed before chunk size line was read",
+                )
+            })?;
     Ok(line)
 }
 
@@ -282,16 +283,18 @@ async fn read_chunked_trailers<S: AsyncRead + Unpin>(
 ) -> io::Result<Vec<u8>> {
     let mut trailers = Vec::new();
     loop {
-        let line = read_chunk_line(source, runtime_governor).await.map_err(|error| {
-            if error.kind() == io::ErrorKind::UnexpectedEof {
-                io::Error::new(
-                    io::ErrorKind::UnexpectedEof,
-                    "connection closed before chunked trailers completed",
-                )
-            } else {
-                error
-            }
-        })?;
+        let line = read_chunk_line(source, runtime_governor)
+            .await
+            .map_err(|error| {
+                if error.kind() == io::ErrorKind::UnexpectedEof {
+                    io::Error::new(
+                        io::ErrorKind::UnexpectedEof,
+                        "connection closed before chunked trailers completed",
+                    )
+                } else {
+                    error
+                }
+            })?;
         trailers.extend_from_slice(&line);
         if trailers.len() > max_http_head_bytes {
             return Err(io::Error::new(
@@ -327,8 +330,8 @@ pub(crate) async fn read_exact_from_source<S: AsyncRead + Unpin>(
     exact_len: usize,
     runtime_governor: &Arc<runtime_governor::RuntimeGovernor>,
 ) -> io::Result<Vec<u8>> {
-    let _in_flight_lease = runtime_governor
-        .reserve_in_flight_or_error(exact_len, "http1_fixed_read_exact")?;
+    let _in_flight_lease =
+        runtime_governor.reserve_in_flight_or_error(exact_len, "http1_fixed_read_exact")?;
     while source.read_buf.len() < exact_len {
         let mut chunk = [0_u8; IO_CHUNK_SIZE];
         let read = read_with_idle_timeout(
@@ -348,7 +351,11 @@ pub(crate) async fn read_exact_from_source<S: AsyncRead + Unpin>(
     Ok(source.read_buf.drain(..exact_len).collect::<Vec<_>>())
 }
 
-pub(crate) async fn write_proxy_response(stream: &mut TcpStream, status: &str, body: &str) -> io::Result<()> {
+pub(crate) async fn write_proxy_response(
+    stream: &mut TcpStream,
+    status: &str,
+    body: &str,
+) -> io::Result<()> {
     let response = format!(
         "HTTP/1.1 {status}\r\nConnection: close\r\nContent-Type: text/plain\r\nContent-Length: {}\r\n\r\n{body}",
         body.len()

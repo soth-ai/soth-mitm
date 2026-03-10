@@ -113,7 +113,7 @@ run_case mixed_traffic_close_reason_determinism \
     SOTH_MITM_SOAK_STAGE_TIMEOUT_SECONDS="$soak_stage_timeout_seconds" \
     SOTH_MITM_SOAK_H2_RETRIES="$soak_h2_retries" \
     SOTH_MITM_SOAK_H2_UPSTREAM_ACCEPT_TIMEOUT_SECONDS="$soak_h2_upstream_accept_timeout_seconds" \
-    cargo test -p mitm-sidecar --test mixed_traffic_soak \
+    cargo test -p soth-mitm --test mixed_traffic_soak \
       mixed_traffic_close_reasons_are_deterministic -q || true
 
 run_case soth_mitm_reliability_fsm_contract \

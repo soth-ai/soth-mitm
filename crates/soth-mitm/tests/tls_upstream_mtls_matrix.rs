@@ -3,14 +3,16 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
+use rcgen::{
+    BasicConstraints, CertificateParams, DistinguishedName, DnType, ExtendedKeyUsagePurpose, IsCa,
+    Issuer, KeyPair, KeyUsagePurpose,
+};
 use soth_mitm::test_engine::{MitmConfig, MitmEngine, UpstreamClientAuthMode};
 use soth_mitm::test_observe::{EventType, VecEventConsumer};
 use soth_mitm::test_policy::DefaultPolicyEngine;
 use soth_mitm::test_server::{SidecarConfig, SidecarServer};
-use soth_mitm::test_tls::{build_http1_client_config, CertificateAuthorityConfig, MitmCertificateStore};
-use rcgen::{
-    BasicConstraints, CertificateParams, DistinguishedName, DnType, ExtendedKeyUsagePurpose, IsCa,
-    Issuer, KeyPair, KeyUsagePurpose,
+use soth_mitm::test_tls::{
+    build_http1_client_config, CertificateAuthorityConfig, MitmCertificateStore,
 };
 use tempfile::TempDir;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
@@ -242,7 +244,9 @@ async fn required_mode_without_material_fails_deterministically() {
     };
     let engine = build_engine(config, sink);
     let error = match SidecarServer::new(sidecar_config, engine) {
-        Ok(_) => panic!("SidecarServer::new should fail when required client auth material is missing"),
+        Ok(_) => {
+            panic!("SidecarServer::new should fail when required client auth material is missing")
+        }
         Err(e) => e,
     };
     let error_msg = error.to_string();

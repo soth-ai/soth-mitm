@@ -1,10 +1,10 @@
 use std::collections::BTreeMap;
 use std::fs;
 
+use serde::Deserialize;
 use soth_mitm::test_engine::{MitmConfig, MitmEngine};
 use soth_mitm::test_observe::{EventType, VecEventConsumer, EVENT_SCHEMA_VERSION};
 use soth_mitm::test_policy::{DefaultPolicyEngine, FlowAction};
-use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
 struct FixtureSuite {

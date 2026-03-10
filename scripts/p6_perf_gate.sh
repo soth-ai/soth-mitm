@@ -160,7 +160,7 @@ run_case sse_first_chunk_bench \
 
 run_case connection_scale_core_1000 \
   env MITM_CORE_CONCURRENCY="$core_scale_connections" \
-    cargo test -p mitm-core --test server_concurrency \
+    cargo test -p soth-mitm --test server_concurrency \
       flow_lifecycle_server_handles_500_parallel_short_lived_connections -q || true
 
 append_metrics forwarding_latency "$forward_result"

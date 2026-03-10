@@ -41,11 +41,11 @@ run_case() {
 : >"$status_tsv"
 
 run_case core_override_provenance \
-  cargo test -p mitm-core --lib compatibility_override_decision_emits_provenance_fields -q
+  cargo test -p soth-mitm --lib compatibility_override_decision_emits_provenance_fields -q
 run_case sidecar_disable_h2_host_override \
-  cargo test -p mitm-sidecar --test http2_mitm -q
+  cargo test -p soth-mitm --test http2_mitm -q
 run_case sidecar_skip_verify_host_override \
-  cargo test -p mitm-sidecar --test tls_profile_matrix -q
+  cargo test -p soth-mitm --test tls_profile_matrix -q
 
 failed="$(awk '$2 == "fail" {print $1}' "$status_tsv" || true)"
 {

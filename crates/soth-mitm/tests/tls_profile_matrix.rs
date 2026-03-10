@@ -1,11 +1,15 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use soth_mitm::test_engine::{CompatibilityOverrideConfig, MitmConfig, MitmEngine, TlsProfile, UpstreamSniMode};
+use soth_mitm::test_engine::{
+    CompatibilityOverrideConfig, MitmConfig, MitmEngine, TlsProfile, UpstreamSniMode,
+};
 use soth_mitm::test_observe::{EventType, VecEventConsumer};
 use soth_mitm::test_policy::DefaultPolicyEngine;
 use soth_mitm::test_server::{SidecarConfig, SidecarServer};
-use soth_mitm::test_tls::{build_http1_client_config, CertificateAuthorityConfig, MitmCertificateStore};
+use soth_mitm::test_tls::{
+    build_http1_client_config, CertificateAuthorityConfig, MitmCertificateStore,
+};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_rustls::rustls;

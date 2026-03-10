@@ -1,10 +1,8 @@
 use crate::engine::MitmEngine;
-use crate::protocol::ApplicationProtocol;
 use crate::observe::{Event, EventConsumer, FlowContext};
 use crate::policy::PolicyEngine;
-use crate::tls::{
-    CertificateAuthorityConfig, MitmCertificateStore, UpstreamTlsConfigCache,
-};
+use crate::protocol::ApplicationProtocol;
+use crate::tls::{CertificateAuthorityConfig, MitmCertificateStore, UpstreamTlsConfigCache};
 use std::io;
 use std::sync::Arc;
 use std::time::Duration;
@@ -16,30 +14,31 @@ mod tls_diagnostics;
 mod tls_learning;
 pub use crate::config::H2ResponseOverflowMode;
 pub use crate::types::FrameKind;
+use event_emitters::unknown_context;
+use event_emitters::{ingest_tls_learning_signal_with_audit, tls_error_to_io_invalid_input};
+use flow_connect_tunnel::handle_client;
 pub use flow_hooks::{FlowHooks, NoopFlowHooks, RawRequest, RawResponse, StreamChunk};
+use flow_intercept::load_upstream_client_auth_pem;
+use io_timeouts::{
+    install_io_timeout_config, shutdown_with_idle_timeout, write_all_with_idle_timeout,
+};
 pub use mitmproxy_tls_ops::{
-    adapt_mitmproxy_tls_callback, MitmproxyTlsAdapterEvent, MitmproxyTlsCallback,
-    MitmproxyTlsHook,
+    adapt_mitmproxy_tls_callback, MitmproxyTlsAdapterEvent, MitmproxyTlsCallback, MitmproxyTlsHook,
 };
 pub use runtime_governor::{RuntimeBudgetConfig, RuntimeGovernor, RuntimeObservabilitySnapshot};
-pub use tls_diagnostics::{TlsDiagnostics, TlsDiagnosticsSnapshot};
-pub use tls_learning::{
-    TlsLearningDecision, TlsLearningGuardrails, TlsLearningOutcome,
-    TlsLearningSignal, TlsLearningSnapshot,
-};
-use tls_profile_mapping::{
-    map_downstream_cert_profile, resolve_effective_upstream_tls_profile,
-    map_upstream_sni_mode, map_upstream_client_auth_mode, insert_tls_fingerprint_provenance,
-};
-use event_emitters::{tls_error_to_io_invalid_input, ingest_tls_learning_signal_with_audit};
-use io_timeouts::{install_io_timeout_config, write_all_with_idle_timeout, shutdown_with_idle_timeout};
 use socket_hardening::{
-    bind_listener_with_socket_hardening, apply_per_connection_socket_hardening,
+    apply_per_connection_socket_hardening, bind_listener_with_socket_hardening,
     is_benign_socket_close_error,
 };
-use flow_intercept::load_upstream_client_auth_pem;
-use event_emitters::unknown_context;
-use flow_connect_tunnel::handle_client;
+pub use tls_diagnostics::{TlsDiagnostics, TlsDiagnosticsSnapshot};
+pub use tls_learning::{
+    TlsLearningDecision, TlsLearningGuardrails, TlsLearningOutcome, TlsLearningSignal,
+    TlsLearningSnapshot,
+};
+use tls_profile_mapping::{
+    insert_tls_fingerprint_provenance, map_downstream_cert_profile, map_upstream_client_auth_mode,
+    map_upstream_sni_mode, resolve_effective_upstream_tls_profile,
+};
 
 pub(crate) const IO_CHUNK_SIZE: usize = 8 * 1024;
 pub(crate) const CHUNK_LINE_LIMIT: usize = 8 * 1024;
@@ -226,18 +225,17 @@ where
         let upstream_sni_mode = map_upstream_sni_mode(engine.config.upstream_sni_mode);
         let upstream_client_auth_mode =
             map_upstream_client_auth_mode(engine.config.upstream_client_auth_mode);
-        let upstream_client_auth_pem =
-            load_upstream_client_auth_pem(
-                &engine.config.upstream_client_cert_pem_path,
-                &engine.config.upstream_client_key_pem_path,
-                upstream_client_auth_mode,
+        let upstream_client_auth_pem = load_upstream_client_auth_pem(
+            &engine.config.upstream_client_cert_pem_path,
+            &engine.config.upstream_client_key_pem_path,
+            upstream_client_auth_mode,
+        )
+        .map_err(|error| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("upstream client auth material load failed: {error}"),
             )
-            .map_err(|error| {
-                io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    format!("upstream client auth material load failed: {error}"),
-                )
-            })?;
+        })?;
         let upstream_tls_cache = Arc::new(UpstreamTlsConfigCache::new(
             upstream_tls_profile,
             upstream_sni_mode,
@@ -517,60 +515,60 @@ mod listener_accept_error_tests {
 
 // HTTP parsing
 mod close_codes;
-mod http_head_parser_smuggling;
+mod http_body_relay;
 mod http_head_parser;
 mod http_head_parser_api;
-mod http_body_relay;
+mod http_head_parser_smuggling;
 // TLS helpers
-mod tls_revocation_metadata;
-mod tls_profile_mapping;
 mod downstream_tls;
+mod tls_profile_mapping;
+mod tls_revocation_metadata;
 // IO utilities
 mod io_timeouts;
-mod socket_hardening;
 mod shutdown_control;
+mod socket_hardening;
 // Routing
+mod route_planner;
 mod route_planner_model;
 mod route_planner_transport;
-mod route_planner;
 // Policy
 mod flow_policy_snapshot;
 // Events
 mod event_emitters;
 mod event_emitters_protocol;
 // Stream observers
-mod sse_stream_observer;
-mod ndjson_stream_observer;
 mod grpc_stream_observer;
+mod ndjson_stream_observer;
+mod sse_stream_observer;
 // WebSocket
 mod websocket_codec;
-mod websocket_relay_io;
-mod websocket_handshake_validation;
 mod websocket_events;
+mod websocket_handshake_validation;
 mod websocket_relay;
-mod websocket_turn_tracker;
+mod websocket_relay_io;
 mod websocket_relay_support;
+mod websocket_turn_tracker;
 // HTTP/2
 mod http2_relay_support;
-mod http2_stream_relay_body;
 mod http2_stream_hook_dispatch;
-mod http2_stream_response_relay;
+mod http2_stream_relay;
+mod http2_stream_relay_body;
+mod http2_stream_relay_http1;
 mod http2_stream_relay_http1_body;
 mod http2_stream_relay_http1_response_relay;
 mod http2_stream_relay_http1_stream;
-mod http2_stream_relay_http1;
 mod http2_stream_relay_stream;
-mod http2_stream_relay;
+mod http2_stream_response_relay;
 // HTTP flow helpers
-mod flow_hook_http_helpers;
-mod flow_connect_tunnel_support;
-mod flow_intercept_tls_failure;
-mod flow_intercept_http1_response;
-mod flow_intercept_http1;
-mod flow_intercept;
-mod flow_forward_proxy_http1_helpers;
-mod flow_forward_proxy_http1;
 mod flow_connect_tunnel;
+mod flow_connect_tunnel_support;
+mod flow_forward_proxy_http1;
+mod flow_forward_proxy_http1_helpers;
+mod flow_hook_http_helpers;
+mod flow_intercept;
+mod flow_intercept_http1;
+mod flow_intercept_http1_response;
+mod flow_intercept_tls_failure;
 // Unix local capture
 mod local_capture_unix;
 

@@ -1,16 +1,16 @@
-use std::io;
-use std::sync::Arc;
+use super::flow_hook_http_helpers::strip_trailer_forbidden_and_transport_headers;
+use super::flow_hooks::{FlowHooks, StreamChunk};
+use super::http2_relay_support::h2_error_to_io;
+use super::http2_stream_hook_dispatch::{
+    is_grpc_h2_response, is_ndjson_h2_response, is_sse_h2_response, H2CapturedBody,
+};
+use super::http2_stream_relay_body::send_h2_data_with_backpressure;
+use super::io_timeouts::with_h2_body_idle_timeout;
+use super::runtime_governor;
 use crate::observe::FlowContext;
 use crate::types::FrameKind;
-use super::runtime_governor;
-use super::flow_hooks::{FlowHooks, StreamChunk};
-use super::io_timeouts::with_h2_body_idle_timeout;
-use super::http2_relay_support::h2_error_to_io;
-use super::http2_stream_relay_body::send_h2_data_with_backpressure;
-use super::http2_stream_hook_dispatch::{
-    H2CapturedBody, is_sse_h2_response, is_ndjson_h2_response, is_grpc_h2_response,
-};
-use super::flow_hook_http_helpers::strip_trailer_forbidden_and_transport_headers;
+use std::io;
+use std::sync::Arc;
 
 pub(crate) enum H2ResponseStreamHookDispatcher {
     Sse {
@@ -133,7 +133,11 @@ impl H2ResponseStreamHookDispatcher {
         }
     }
 
-    pub(crate) async fn finish(&mut self, flow_hooks: &Arc<dyn FlowHooks>, stream_context: &FlowContext) {
+    pub(crate) async fn finish(
+        &mut self,
+        flow_hooks: &Arc<dyn FlowHooks>,
+        stream_context: &FlowContext,
+    ) {
         match self {
             Self::Sse {
                 parser,
@@ -256,7 +260,8 @@ pub(crate) async fn relay_h2_response_body_with_incremental_forwarding(
     })
     .await?
     {
-        let data = next_data.map_err(|error| h2_error_to_io("reading HTTP/2 body frame failed", error))?;
+        let data =
+            next_data.map_err(|error| h2_error_to_io("reading HTTP/2 body frame failed", error))?;
         let frame_len = data.len();
         if frame_len == 0 {
             if upstream_response_body.is_end_stream() {
@@ -292,7 +297,8 @@ pub(crate) async fn relay_h2_response_body_with_incremental_forwarding(
             .flow_control()
             .release_capacity(frame_len)
             .map_err(|error| h2_error_to_io("releasing HTTP/2 receive capacity failed", error))?;
-        send_h2_data_with_backpressure(downstream_response_stream, runtime_governor, data, false).await?;
+        send_h2_data_with_backpressure(downstream_response_stream, runtime_governor, data, false)
+            .await?;
         if let (Some(dispatcher), Some(chunk)) = (stream_dispatcher.as_mut(), hook_chunk.as_ref()) {
             dispatcher
                 .on_chunk(flow_hooks, stream_context, chunk.as_ref())

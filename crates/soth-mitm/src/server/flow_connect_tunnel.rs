@@ -1,19 +1,11 @@
-use std::io;
-use std::sync::Arc;
-use tokio::net::TcpStream;
-use crate::engine::{ConnectParseError, MitmEngine, parse_connect_request_head_with_mode};
-use crate::observe::{EventConsumer, FlowContext};
-use crate::policy::{FlowAction, PolicyEngine};
-use crate::protocol::ApplicationProtocol;
-use crate::types::ProcessInfo;
-use super::RuntimeHandles;
 use super::close_codes::{CloseReasonCode, ParseFailureCode};
-use super::event_emitters::{
-    emit_connect_parse_failed, emit_stream_closed, unknown_context,
-};
+use super::event_emitters::{emit_connect_parse_failed, emit_stream_closed, unknown_context};
 use super::event_emitters_protocol::emit_http3_passthrough_event;
 use super::flow_connect_tunnel_support::{flow_action_label, parse_http3_passthrough_hint};
 use super::flow_forward_proxy_http1::handle_forward_http1_proxy_request;
+use super::flow_forward_proxy_http1_helpers::{
+    is_forward_http1_request_candidate, is_self_listener_target,
+};
 use super::flow_intercept::intercept_http_connection;
 use super::flow_policy_snapshot::{clear_flow_policy_snapshot, resolve_flow_policy_snapshot};
 use super::http_body_relay::write_proxy_response;
@@ -23,8 +15,16 @@ use super::io_timeouts::{
     is_stream_stage_timeout, write_all_with_idle_timeout,
 };
 use super::route_planner_model::{FlowRoutePlanner, RouteBinding, RouteConnectIntent, RouteTarget};
-use super::flow_forward_proxy_http1_helpers::{is_forward_http1_request_candidate, is_self_listener_target};
 use super::route_planner_transport::connect_via_route;
+use super::RuntimeHandles;
+use crate::engine::{parse_connect_request_head_with_mode, ConnectParseError, MitmEngine};
+use crate::observe::{EventConsumer, FlowContext};
+use crate::policy::{FlowAction, PolicyEngine};
+use crate::protocol::ApplicationProtocol;
+use crate::types::ProcessInfo;
+use std::io;
+use std::sync::Arc;
+use tokio::net::TcpStream;
 
 pub(crate) async fn handle_client<P, S>(
     runtime: RuntimeHandles<P, S>,
@@ -271,8 +271,8 @@ where
             );
         }
     }
-    let mut action =
-        if http3_requested_by.is_some() && policy_snapshot.action != FlowAction::Block {
+    let mut action = if http3_requested_by.is_some() && policy_snapshot.action != FlowAction::Block
+    {
         FlowAction::Tunnel
     } else {
         policy_snapshot.action
@@ -329,7 +329,6 @@ where
         }
     }
 }
-
 
 async fn tunnel_connection<P, S>(
     engine: Arc<MitmEngine<P, S>>,

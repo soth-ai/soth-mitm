@@ -551,7 +551,7 @@ with open(summary_md, "w", encoding="utf-8") as out:
     out.write("\n\n")
 
     out.write("## Notes\n\n")
-    out.write("- `soth-lean` uses `mitm-sidecar` with `NoopFlowHooks` + `NoopEventConsumer` to isolate dataplane baseline.\n")
+    out.write("- `soth-lean` uses `soth-mitm` with `NoopFlowHooks` + `NoopEventConsumer` to isolate dataplane baseline.\n")
     out.write("- This benchmark captures TLS-relevant paths: CONNECT tunnel, full MITM, and SSE over MITM.\n")
     out.write("- Results are environment-sensitive and should be re-run on target deployment hardware.\n")
     out.write(f"- Raw runs TSV: `{runs_tsv}`\n")

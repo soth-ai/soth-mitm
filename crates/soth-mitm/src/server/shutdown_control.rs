@@ -1,7 +1,7 @@
-use std::io;
+use super::SidecarServer;
 use crate::observe::EventConsumer;
 use crate::policy::PolicyEngine;
-use super::SidecarServer;
+use std::io;
 
 impl<P, S> SidecarServer<P, S>
 where

@@ -9,17 +9,17 @@ use soth_mitm::test_engine::{
     CompatibilityOverrideConfig, InterceptMode, MitmConfig, MitmEngine, RouteEndpointConfig,
     RouteMode,
 };
-use soth_mitm::test_protocol::ApplicationProtocol;
 use soth_mitm::test_observe::{Event, EventType, FlowContext, VecEventConsumer};
 use soth_mitm::test_policy::DefaultPolicyEngine;
+use soth_mitm::test_protocol::ApplicationProtocol;
 use soth_mitm::test_server::{
     FlowHooks, H2ResponseOverflowMode, RawRequest as HookRawRequest,
     RawResponse as HookRawResponse, SidecarConfig, SidecarServer,
 };
-use soth_mitm::HandlerDecision;
 use soth_mitm::test_tls::{
     build_http1_server_config_for_host, build_http_client_config, build_http_server_config_for_host,
 };
+use soth_mitm::HandlerDecision;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_rustls::rustls::pki_types::ServerName;

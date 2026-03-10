@@ -89,7 +89,7 @@ for iteration in $(seq 1 "$iterations"); do
   log_file="$report_dir/iteration_${iteration}.log"
   start_epoch_ms="$(($(date +%s) * 1000))"
   env SOTH_MITM_WS_CHAOS_CLIENTS="$clients" \
-    cargo test -p mitm-sidecar --test websocket_reliability_soak \
+    cargo test -p soth-mitm --test websocket_reliability_soak \
       websocket_chaos_soak_mixed_lanes_settle_without_stuck_flows -q \
     >"$log_file" 2>&1 &
   test_pid=$!

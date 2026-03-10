@@ -77,10 +77,10 @@ ac_run_case "$status_tsv" body_limit_runtime_mapping_contract \
 ac_run_case "$status_tsv" decoder_budget_clamp_contract \
   cargo test -p soth-mitm decoder_budget_is_clamped_by_body_size_limit -q
 ac_run_case_with_socket_permission_fallback "$status_tsv" oversized_sse_decoder_budget_contract "$strict_tools" \
-  cargo test -p mitm-sidecar --test chaos_charter \
+  cargo test -p soth-mitm --test chaos_charter \
     infinite_sse_stream_hits_decoder_budget_and_closes_deterministically -q
 ac_run_case_with_socket_permission_fallback "$status_tsv" oversized_h2_header_rejection_contract "$strict_tools" \
-  cargo test -p mitm-sidecar --test http2_mitm \
+  cargo test -p soth-mitm --test http2_mitm \
     http2_oversized_headers_emit_mitm_http_error_close -q
 
 config_md=$'- strict_tools: '"${strict_tools}"$'\n- long_run: '"${long_run}"$'\n- scope: config/body budget validation and deterministic oversized payload/header rejection paths'

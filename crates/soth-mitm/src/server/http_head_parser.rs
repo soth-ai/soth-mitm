@@ -1,9 +1,14 @@
+use super::http_head_parser_smuggling::{
+    canonicalize_http_headers, parse_content_length, parse_transfer_encoding,
+};
+use super::io_timeouts::{read_with_idle_timeout, with_stream_stage_timeout};
+use super::{
+    runtime_governor, BufferedConn, HttpBodyMode, HttpHeader, HttpRequestHead, HttpResponseHead,
+    HttpVersion, IO_CHUNK_SIZE,
+};
 use std::io;
 use std::sync::Arc;
 use tokio::io::AsyncRead;
-use super::{BufferedConn, HttpBodyMode, HttpHeader, HttpRequestHead, HttpResponseHead, HttpVersion, IO_CHUNK_SIZE, runtime_governor};
-use super::io_timeouts::{read_with_idle_timeout, with_stream_stage_timeout};
-use super::http_head_parser_smuggling::{canonicalize_http_headers, parse_transfer_encoding, parse_content_length};
 
 pub(crate) async fn read_connect_head<S>(
     stream: &mut S,
@@ -220,7 +225,10 @@ pub(crate) fn parse_http_request_head_with_mode(
     Ok(parsed)
 }
 
-pub(crate) fn parse_http_response_head(raw: &[u8], request_method: &str) -> io::Result<HttpResponseHead> {
+pub(crate) fn parse_http_response_head(
+    raw: &[u8],
+    request_method: &str,
+) -> io::Result<HttpResponseHead> {
     let text = std::str::from_utf8(raw).map_err(|_| {
         io::Error::new(
             io::ErrorKind::InvalidData,

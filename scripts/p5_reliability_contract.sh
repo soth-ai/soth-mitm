@@ -36,32 +36,32 @@ run_case() {
 
 {
   run_case flow_fsm_transition_validator \
-    cargo test -p mitm-core invalid_transition_terminalizes_without_panic_and_allows_close -q
+    cargo test -p soth-mitm invalid_transition_terminalizes_without_panic_and_allows_close -q
   run_case single_stream_closed_guardrail \
-    cargo test -p mitm-core suppresses_duplicate_stream_closed_for_same_flow -q
+    cargo test -p soth-mitm suppresses_duplicate_stream_closed_for_same_flow -q
   run_case runtime_budget_metrics \
-    cargo test -p mitm-sidecar --test runtime_governor \
+    cargo test -p soth-mitm --test runtime_governor \
       runtime_governor_enforces_concurrent_flow_limit_and_records_metrics -q
   run_case idle_watchdog_metrics \
-    cargo test -p mitm-sidecar --test runtime_governor \
+    cargo test -p soth-mitm --test runtime_governor \
       idle_watchdog_timeout_closes_stuck_tunnel_and_records_metrics -q
   run_case h2_stage_budget_metrics \
-    cargo test -p mitm-sidecar --test mixed_traffic_soak \
+    cargo test -p soth-mitm --test mixed_traffic_soak \
       tls_h2_exchange_harness_path_succeeds -q
   run_case codex_intercept_terminalization_contract \
-    cargo test -p mitm-sidecar --test http2_mitm \
+    cargo test -p soth-mitm --test http2_mitm \
       intercept_http2_ai_host_request_hooks_receive_host_header_for_capture -q
   run_case h2_long_exchange_reliability \
-    cargo test -p mitm-sidecar --test mixed_traffic_soak \
+    cargo test -p soth-mitm --test mixed_traffic_soak \
       tls_h2_long_exchange_harness_path_succeeds -q -- --ignored
   run_case mixed_long_h2_stream_reliability \
-    cargo test -p mitm-sidecar --test mixed_traffic_soak \
+    cargo test -p soth-mitm --test mixed_traffic_soak \
       mixed_traffic_concurrent_long_h2_stream_settles_without_stuck_flows -q -- --ignored
   run_case h2_strict_overflow_rollback_switch \
-    cargo test -p mitm-sidecar --test http2_mitm \
+    cargo test -p soth-mitm --test http2_mitm \
       http2_response_body_over_budget_strict_fail_aborts_stream_and_emits_error_close -q
   run_case h2_to_h1_strict_overflow_rollback_switch \
-    cargo test -p mitm-sidecar --test http2_mitm \
+    cargo test -p soth-mitm --test http2_mitm \
       h2_to_h1_response_body_over_budget_strict_fail_aborts_stream_and_emits_error_close -q
 } >"$run_log" 2>&1 || true
 

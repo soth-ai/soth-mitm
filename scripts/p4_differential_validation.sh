@@ -31,9 +31,9 @@ run_case() {
 }
 
 : >"$status_tsv"
-run_case core_conformance cargo test -p mitm-core --test conformance_golden -q
-run_case mitmproxy_tls_taxonomy cargo test -p mitm-sidecar --test mitmproxy_tls_adapter -q
-run_case tls_learning_guardrails cargo test -p mitm-sidecar --test tls_learning_guardrails -q
+run_case core_conformance cargo test -p soth-mitm --test conformance_golden -q
+run_case mitmproxy_tls_taxonomy cargo test -p soth-mitm --test mitmproxy_tls_adapter -q
+run_case tls_learning_guardrails cargo test -p soth-mitm --test tls_learning_guardrails -q
 run_case hudsucker_supported_surface_scope ./scripts/check_hudsucker_differential_scope.sh
 run_case replay_drift_report ./scripts/p4_differential_replay.sh --report-dir "$report_dir/replay" --strict-input
 

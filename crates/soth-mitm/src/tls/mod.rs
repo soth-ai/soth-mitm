@@ -313,15 +313,9 @@ mod tls_profile_policy;
 include!("certificate_store_impl.rs");
 
 pub use tls_profile_policy::{
-    build_http_client_config_with_policy,
-    build_http_client_config_with_policy_and_client_auth,
-    parse_upstream_client_auth_material,
-    resolve_upstream_server_name,
-    DownstreamCertProfile,
-    UpstreamClientAuthMode,
-    UpstreamTlsConfigCache,
-    UpstreamTlsProfile,
-    UpstreamTlsSniMode,
+    build_http_client_config_with_policy, build_http_client_config_with_policy_and_client_auth,
+    parse_upstream_client_auth_material, resolve_upstream_server_name, DownstreamCertProfile,
+    UpstreamClientAuthMode, UpstreamTlsConfigCache, UpstreamTlsProfile, UpstreamTlsSniMode,
 };
 
 #[cfg(test)]

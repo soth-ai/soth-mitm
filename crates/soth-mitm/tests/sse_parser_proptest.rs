@@ -1,5 +1,5 @@
-use soth_mitm::test_protocol::SseParser;
 use proptest::prelude::*;
+use soth_mitm::test_protocol::SseParser;
 
 fn line_strategy() -> impl Strategy<Value = String> {
     proptest::string::string_regex("[a-z0-9]{0,12}").expect("line regex")

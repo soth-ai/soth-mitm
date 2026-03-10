@@ -1,11 +1,13 @@
 use std::collections::BTreeMap;
 
-use soth_mitm::FlowId;
 use soth_mitm::test_engine::{MitmConfig, MitmEngine};
-use soth_mitm::test_protocol::ApplicationProtocol;
 use soth_mitm::test_observe::{EventType, VecEventConsumer};
 use soth_mitm::test_policy::DefaultPolicyEngine;
-use soth_mitm::test_server::{MitmproxyTlsCallback, MitmproxyTlsHook, SidecarConfig, SidecarServer};
+use soth_mitm::test_protocol::ApplicationProtocol;
+use soth_mitm::test_server::{
+    MitmproxyTlsCallback, MitmproxyTlsHook, SidecarConfig, SidecarServer,
+};
+use soth_mitm::FlowId;
 
 fn build_engine(
     config: MitmConfig,
@@ -21,7 +23,10 @@ fn build_sidecar(sink: VecEventConsumer) -> SidecarServer<DefaultPolicyEngine, V
     SidecarServer::new(SidecarConfig::default(), engine).expect("build sidecar")
 }
 
-fn metadata_for_flow(events: &[soth_mitm::test_observe::Event], flow_id: FlowId) -> BTreeMap<String, String> {
+fn metadata_for_flow(
+    events: &[soth_mitm::test_observe::Event],
+    flow_id: FlowId,
+) -> BTreeMap<String, String> {
     events
         .iter()
         .find(|event| {

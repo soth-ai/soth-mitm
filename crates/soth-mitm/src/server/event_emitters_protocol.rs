@@ -1,7 +1,7 @@
+use super::http2_relay_support::GrpcRequestObservation;
 use crate::engine::MitmEngine;
 use crate::observe::{Event, EventConsumer, EventType, FlowContext};
 use crate::policy::PolicyEngine;
-use super::http2_relay_support::GrpcRequestObservation;
 
 pub(crate) fn emit_sse_event<P, S>(
     engine: &MitmEngine<P, S>,
@@ -86,7 +86,9 @@ pub(crate) fn emit_grpc_request_headers_event<P, S>(
         event.attributes.insert("te".to_string(), te);
     }
     if let Some(user_agent) = header_value(headers, "user-agent") {
-        event.attributes.insert("user_agent".to_string(), user_agent);
+        event
+            .attributes
+            .insert("user_agent".to_string(), user_agent);
     }
     engine.emit_event(event);
 }
@@ -135,10 +137,9 @@ pub(crate) fn emit_grpc_response_trailers_event<P, S>(
     event
         .attributes
         .insert("grpc_event_sequence".to_string(), "3".to_string());
-    event.attributes.insert(
-        "trailer_count".to_string(),
-        trailers.len().to_string(),
-    );
+    event
+        .attributes
+        .insert("trailer_count".to_string(), trailers.len().to_string());
     if let Some(grpc_status) = header_value(trailers, "grpc-status") {
         event
             .attributes
@@ -171,9 +172,10 @@ fn insert_grpc_common_attrs(event: &mut Event, observation: &GrpcRequestObservat
             .insert("grpc_method".to_string(), method.clone());
     }
     if let Some(content_type) = &observation.content_type {
-        event
-            .attributes
-            .insert("grpc_request_content_type".to_string(), content_type.clone());
+        event.attributes.insert(
+            "grpc_request_content_type".to_string(),
+            content_type.clone(),
+        );
     }
 }
 

@@ -29,7 +29,9 @@ pub(crate) fn decode_websocket_header_soketto(
 ) -> io::Result<WebSocketHeaderDecodeResult> {
     const BASE_HEADER_LEN: usize = 2;
     if bytes.len() < BASE_HEADER_LEN {
-        return Ok(WebSocketHeaderDecodeResult::NeedMore(BASE_HEADER_LEN - bytes.len()));
+        return Ok(WebSocketHeaderDecodeResult::NeedMore(
+            BASE_HEADER_LEN - bytes.len(),
+        ));
     }
 
     let first = bytes[0];
@@ -43,17 +45,18 @@ pub(crate) fn decode_websocket_header_soketto(
         126 => {
             let required = 4;
             if bytes.len() < required {
-                return Ok(WebSocketHeaderDecodeResult::NeedMore(required - bytes.len()));
+                return Ok(WebSocketHeaderDecodeResult::NeedMore(
+                    required - bytes.len(),
+                ));
             }
-            (
-                u16::from_be_bytes([bytes[2], bytes[3]]) as usize,
-                required,
-            )
+            (u16::from_be_bytes([bytes[2], bytes[3]]) as usize, required)
         }
         127 => {
             let required = 10;
             if bytes.len() < required {
-                return Ok(WebSocketHeaderDecodeResult::NeedMore(required - bytes.len()));
+                return Ok(WebSocketHeaderDecodeResult::NeedMore(
+                    required - bytes.len(),
+                ));
             }
             let parsed = u64::from_be_bytes([
                 bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7], bytes[8], bytes[9],
@@ -72,7 +75,9 @@ pub(crate) fn decode_websocket_header_soketto(
     let mask = if masked {
         let required = header_len + 4;
         if bytes.len() < required {
-            return Ok(WebSocketHeaderDecodeResult::NeedMore(required - bytes.len()));
+            return Ok(WebSocketHeaderDecodeResult::NeedMore(
+                required - bytes.len(),
+            ));
         }
         header_len = required;
         Some(u32::from_be_bytes([
@@ -221,13 +226,15 @@ mod websocket_codec_tests {
 
     use super::{
         decode_websocket_header_soketto, encode_websocket_header_soketto,
-        parse_websocket_close_payload, validate_websocket_mask_direction, WebSocketHeaderDecodeResult,
+        parse_websocket_close_payload, validate_websocket_mask_direction,
+        WebSocketHeaderDecodeResult,
     };
 
     #[test]
     fn decode_header_reports_need_more_for_incomplete_header() {
         let codec = soketto::base::Codec::new();
-        let decoded = decode_websocket_header_soketto(&codec, &[0x81]).expect("decode should succeed");
+        let decoded =
+            decode_websocket_header_soketto(&codec, &[0x81]).expect("decode should succeed");
         assert_eq!(decoded, WebSocketHeaderDecodeResult::NeedMore(1));
     }
 
@@ -308,8 +315,8 @@ mod websocket_codec_tests {
 
     #[test]
     fn encode_header_rejects_missing_mask_key() {
-        let error = encode_websocket_header_soketto(true, 0x1, true, None, 5)
-            .expect_err("must fail");
+        let error =
+            encode_websocket_header_soketto(true, 0x1, true, None, 5).expect_err("must fail");
         assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
         assert!(error.to_string().contains("missing_mask_key"));
     }
@@ -352,8 +359,8 @@ mod websocket_codec_tests {
 
     #[test]
     fn parse_close_payload_parses_valid_code_and_reason() {
-        let payload = parse_websocket_close_payload(&[0x03, 0xE8, b'o', b'k'])
-            .expect("parse should succeed");
+        let payload =
+            parse_websocket_close_payload(&[0x03, 0xE8, b'o', b'k']).expect("parse should succeed");
         assert_eq!(payload.code, Some(1000));
         assert_eq!(payload.reason.as_deref(), Some("ok"));
     }

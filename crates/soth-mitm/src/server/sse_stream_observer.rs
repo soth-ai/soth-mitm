@@ -1,13 +1,13 @@
-use std::io;
-use std::sync::Arc;
+use super::event_emitters_protocol::emit_sse_event;
+use super::flow_hooks::{FlowHooks, StreamChunk};
+use super::http_body_relay::HttpBodyObserver;
+use super::runtime_governor;
 use crate::engine::MitmEngine;
 use crate::observe::{EventConsumer, FlowContext};
 use crate::policy::PolicyEngine;
 use crate::types::FrameKind;
-use super::http_body_relay::HttpBodyObserver;
-use super::runtime_governor;
-use super::flow_hooks::{FlowHooks, StreamChunk};
-use super::event_emitters_protocol::emit_sse_event;
+use std::io;
+use std::sync::Arc;
 
 pub(crate) struct SseStreamObserver<P, S>
 where

@@ -3,14 +3,14 @@ use crate::policy::{FlowAction, PolicyDecision, PolicyOverrideState};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-mod config_route;
 mod config_compat;
+mod config_route;
 
-pub use config_route::{RouteMode, RouteEndpointConfig};
 pub use config_compat::CompatibilityOverrideConfig;
+pub use config_route::{RouteEndpointConfig, RouteMode};
 
+use config_compat::{host_matches_pattern, validate_compatibility_overrides};
 use config_route::{validate_route_endpoint, validate_route_mode_bindings};
-use config_compat::{validate_compatibility_overrides, host_matches_pattern};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

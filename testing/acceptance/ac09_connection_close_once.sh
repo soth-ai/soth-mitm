@@ -45,12 +45,12 @@ ac_run_case "$status_tsv" close_stats_finalization_contract \
   cargo test -p soth-mitm connection_stats_complete_on_close -q || true
 ac_run_case "$status_tsv" close_once_10k_connection_scale \
   env MITM_CORE_CONCURRENCY="$connection_count" \
-    cargo test -p mitm-core --test server_concurrency \
+    cargo test -p soth-mitm --test server_concurrency \
       flow_lifecycle_server_handles_500_parallel_short_lived_connections -q || true
 ac_run_case "$status_tsv" close_reason_block_path \
-  cargo test -p mitm-sidecar --test phase_a blocked_host_never_opens_upstream_socket -q || true
+  cargo test -p soth-mitm --test phase_a blocked_host_never_opens_upstream_socket -q || true
 ac_run_case "$status_tsv" close_reason_graceful_path \
-  cargo test -p mitm-sidecar --test phase_a tunnel_action_relays_data_end_to_end -q || true
+  cargo test -p soth-mitm --test phase_a tunnel_action_relays_data_end_to_end -q || true
 ac_run_case "$status_tsv" close_reason_downstream_disconnect_path \
   cargo test -p soth-mitm downstream_disconnect_aborts_upstream_and_releases_resources -q || true
 

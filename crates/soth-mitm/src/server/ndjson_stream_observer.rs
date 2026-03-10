@@ -1,11 +1,11 @@
-use std::io;
-use std::sync::Arc;
+use super::flow_hooks::{FlowHooks, StreamChunk};
+use super::http_body_relay::HttpBodyObserver;
+use super::runtime_governor;
 use crate::observe::{EventConsumer, FlowContext};
 use crate::policy::PolicyEngine;
 use crate::types::FrameKind;
-use super::http_body_relay::HttpBodyObserver;
-use super::runtime_governor;
-use super::flow_hooks::{FlowHooks, StreamChunk};
+use std::io;
+use std::sync::Arc;
 
 pub(crate) struct NdjsonStreamObserver<P, S>
 where

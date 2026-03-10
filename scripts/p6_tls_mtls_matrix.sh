@@ -38,10 +38,10 @@ run_case() {
 : >"$status_tsv"
 
 run_case tls_upstream_mtls_matrix \
-  cargo test -p mitm-sidecar --test tls_upstream_mtls_matrix -q || true
+  cargo test -p soth-mitm --test tls_upstream_mtls_matrix -q || true
 
 run_case tls_profile_matrix \
-  cargo test -p mitm-sidecar --test tls_profile_matrix -q || true
+  cargo test -p soth-mitm --test tls_profile_matrix -q || true
 
 failed="$(awk '$2 != "pass" {print $1}' "$status_tsv" || true)"
 {

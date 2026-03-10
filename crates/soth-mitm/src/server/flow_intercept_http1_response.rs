@@ -1,26 +1,26 @@
-use std::sync::Arc;
-use tokio::io::{AsyncRead, AsyncWrite};
+use super::flow_hook_http_helpers::{
+    build_handler_header_map, is_grpc_response, is_ndjson_response, mark_body_truncated,
+    normalize_response_body_for_handler, relay_http_body_with_capture,
+};
+use super::flow_hooks::{FlowHooks, RawResponse};
+use super::flow_intercept_http1::emit_http1_relay_error_close;
+use super::grpc_stream_observer::GrpcStreamObserver;
+use super::http2_stream_hook_dispatch::{
+    dispatch_grpc_chunks_from_buffer, dispatch_ndjson_chunks_from_buffer,
+    dispatch_sse_chunks_from_buffer,
+};
+use super::http_body_relay::relay_http_body;
+use super::http_head_parser::is_sse_response;
+use super::ndjson_stream_observer::NdjsonStreamObserver;
+use super::runtime_governor;
+use super::sse_stream_observer::SseStreamObserver;
+use super::{BufferedConn, HttpResponseHead};
 use crate::engine::MitmEngine;
 use crate::observe::{EventConsumer, EventType, FlowContext};
 use crate::policy::PolicyEngine;
 use crate::protocol::ApplicationProtocol;
-use super::{BufferedConn, HttpResponseHead};
-use super::flow_hook_http_helpers::{
-    build_handler_header_map, mark_body_truncated, normalize_response_body_for_handler,
-    relay_http_body_with_capture,
-    is_ndjson_response, is_grpc_response,
-};
-use super::http2_stream_hook_dispatch::{
-    dispatch_sse_chunks_from_buffer, dispatch_ndjson_chunks_from_buffer, dispatch_grpc_chunks_from_buffer,
-};
-use super::flow_intercept_http1::emit_http1_relay_error_close;
-use super::grpc_stream_observer::GrpcStreamObserver;
-use super::http_body_relay::relay_http_body;
-use super::http_head_parser::is_sse_response;
-use super::ndjson_stream_observer::NdjsonStreamObserver;
-use super::sse_stream_observer::SseStreamObserver;
-use super::runtime_governor;
-use super::flow_hooks::{FlowHooks, RawResponse};
+use std::sync::Arc;
+use tokio::io::{AsyncRead, AsyncWrite};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Http1StreamingKind {

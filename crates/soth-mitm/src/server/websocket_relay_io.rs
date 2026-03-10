@@ -1,10 +1,13 @@
+use super::io_timeouts::{read_with_websocket_idle_timeout, write_all_with_websocket_idle_timeout};
+use super::runtime_governor;
+use super::websocket_codec::{
+    decode_websocket_header_soketto, websocket_payload_len_within_limit,
+    WebSocketHeaderDecodeResult, WebSocketHeaderView,
+};
+use super::websocket_relay::WS_FRAME_COPY_CHUNK_SIZE;
 use std::io;
 use std::sync::Arc;
 use tokio::io::{AsyncRead, AsyncWrite};
-use super::runtime_governor;
-use super::io_timeouts::{read_with_websocket_idle_timeout, write_all_with_websocket_idle_timeout};
-use super::websocket_codec::{WebSocketHeaderView, WebSocketHeaderDecodeResult, decode_websocket_header_soketto, websocket_payload_len_within_limit};
-use super::websocket_relay::WS_FRAME_COPY_CHUNK_SIZE;
 
 pub(crate) struct PrefixedReader<R> {
     prefix: Vec<u8>,
@@ -88,9 +91,7 @@ where
                 if frame_header.len() >= WS_MAX_FRAME_HEADER_BYTES {
                     return Err(io::Error::new(
                         io::ErrorKind::InvalidData,
-                        format!(
-                            "websocket frame header exceeds {WS_MAX_FRAME_HEADER_BYTES} bytes"
-                        ),
+                        format!("websocket frame header exceeds {WS_MAX_FRAME_HEADER_BYTES} bytes"),
                     ));
                 }
                 let mut next_byte = [0_u8; 1];
@@ -106,7 +107,10 @@ where
                 frame_header.push(next_byte[0]);
             }
             WebSocketHeaderDecodeResult::Complete(header_view) => {
-                websocket_payload_len_within_limit(header_view.payload_len, max_frame_payload_bytes)?;
+                websocket_payload_len_within_limit(
+                    header_view.payload_len,
+                    max_frame_payload_bytes,
+                )?;
                 if header_view.header_len != frame_header.len() {
                     return Err(io::Error::new(
                         io::ErrorKind::InvalidData,

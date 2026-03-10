@@ -1,6 +1,7 @@
 use crate::config::MitmConfig;
 use crate::handler::InterceptHandler;
 use crate::metrics::ProxyMetricsStore;
+use crate::observe::FlowContext;
 use crate::process::{PlatformProcessAttributor, ProcessCachePath, ProcessLookupService};
 use crate::runtime::connection_id::connection_id_for_flow_id;
 use crate::runtime::connection_meta::{
@@ -11,16 +12,15 @@ use crate::runtime::flow_dispatch::FlowDispatchers;
 use crate::runtime::flow_lifecycle::{finalize_flow, schedule_stale_flow_reap, FlowStateContext};
 use crate::runtime::handler_guard::HandlerCallbackGuard;
 use crate::runtime::tls_intercept_backoff::TlsInterceptBackoff;
+use crate::server::{
+    FlowHooks, RawRequest as SidecarRawRequest, RawResponse as SidecarRawResponse,
+    StreamChunk as SidecarStreamChunk,
+};
 use crate::types::{RawRequest, RawResponse, StreamChunk};
 use crate::HandlerDecision;
 use bytes::Bytes;
 use dashmap::{DashMap, DashSet};
 use lru::LruCache;
-use crate::observe::FlowContext;
-use crate::server::{
-    FlowHooks, RawRequest as SidecarRawRequest, RawResponse as SidecarRawResponse,
-    StreamChunk as SidecarStreamChunk,
-};
 use std::future::Future;
 use std::num::NonZeroUsize;
 use std::pin::Pin;
@@ -151,10 +151,7 @@ impl<H: InterceptHandler> FlowHooks for HandlerFlowHooks<H> {
             }
             flow_state.closed_flow_live.remove(&context.flow_id);
             flow_state.tls_intercepted_flow_ids.remove(&context.flow_id);
-            let connection_meta = connection_meta_from_accept_context(
-                &context,
-                process_info,
-            );
+            let connection_meta = connection_meta_from_accept_context(&context, process_info);
             let connection_meta = Arc::new(connection_meta);
             flow_state
                 .connection_meta_by_flow

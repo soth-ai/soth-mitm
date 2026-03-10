@@ -71,16 +71,16 @@ ac_run_case_with_socket_permission_fallback() {
 }
 
 ac_run_case_with_socket_permission_fallback "$status_tsv" h1_http10_absolute_form_contract "$strict_tools" \
-  cargo test -p mitm-sidecar --test http1_mitm \
+  cargo test -p soth-mitm --test http1_mitm \
     forward_http10_absolute_form_request_relays_without_connect -q || true
 ac_run_case_with_socket_permission_fallback "$status_tsv" h1_ai_capture_hook_host "$strict_tools" \
-  cargo test -p mitm-sidecar --test http1_mitm \
+  cargo test -p soth-mitm --test http1_mitm \
     intercept_http11_request_hooks_receive_ai_host_header_for_capture -q || true
 ac_run_case_with_socket_permission_fallback "$status_tsv" h2_ai_capture_hook_host "$strict_tools" \
-  cargo test -p mitm-sidecar --test http2_mitm \
+  cargo test -p soth-mitm --test http2_mitm \
     intercept_http2_ai_host_request_hooks_receive_host_header_for_capture -q || true
 ac_run_case_with_socket_permission_fallback "$status_tsv" h2_ai_tunnel_passthrough_guardrail "$strict_tools" \
-  cargo test -p mitm-sidecar --test http2_mitm \
+  cargo test -p soth-mitm --test http2_mitm \
     ignored_ai_host_h2_tunnel_passthrough_relays_without_mitm_hooks -q || true
 
 config_md=$'- strict_tools: '"${strict_tools}"$'\n- long_run: '"${long_run}"$'\n- scope: HTTP/1.0 baseline plus AI host capture parity and ignored-host HTTP/2 tunnel passthrough invariants'

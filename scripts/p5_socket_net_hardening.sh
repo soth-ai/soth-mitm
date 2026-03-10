@@ -41,11 +41,11 @@ run_case() {
 : >"$status_tsv"
 
 run_case sidecar_socket_hardening_ipv6 \
-  cargo test -p mitm-sidecar --test socket_hardening -q
+  cargo test -p soth-mitm --test socket_hardening -q
 run_case route_matrix_socket_path \
-  cargo test -p mitm-sidecar --test route_mode_matrix upstream_socks5_mode_honors_ignore_host_and_relays_tunnel -q
+  cargo test -p soth-mitm --test route_mode_matrix upstream_socks5_mode_honors_ignore_host_and_relays_tunnel -q
 run_case runtime_pressure_instrumentation \
-  cargo test -p mitm-sidecar --test runtime_governor \
+  cargo test -p soth-mitm --test runtime_governor \
     runtime_governor_enforces_concurrent_flow_limit_and_records_metrics -q
 
 failed="$(awk '$2 == "fail" {print $1}' "$status_tsv" || true)"

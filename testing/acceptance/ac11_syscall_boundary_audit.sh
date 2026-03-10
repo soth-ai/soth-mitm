@@ -96,7 +96,7 @@ fi
 if [[ "$enable_live_trace" == "1" ]]; then
   if [[ "$(uname -s)" == "Linux" ]] && command -v strace >/dev/null 2>&1; then
     if strace -ff -o "$report_dir/live_trace" -e trace=network \
-      cargo test -p mitm-sidecar --test phase_a tunnel_action_relays_data_end_to_end -q >/dev/null 2>&1; then
+      cargo test -p soth-mitm --test phase_a tunnel_action_relays_data_end_to_end -q >/dev/null 2>&1; then
       ac_record_status "$status_tsv" live_trace_capture pass generated
     else
       if [[ "$strict_tools" -eq 1 ]]; then

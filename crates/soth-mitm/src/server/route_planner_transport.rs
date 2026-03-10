@@ -2,16 +2,22 @@ use std::io;
 use tokio::net::TcpStream;
 
 const MAX_PROXY_HEAD_BYTES: usize = 64 * 1024;
-use super::route_planner_model::{RouteBinding, RouteConnectIntent};
 use super::io_timeouts::{
-    connect_with_upstream_timeout, write_all_with_idle_timeout, read_with_idle_timeout,
+    connect_with_upstream_timeout, read_with_idle_timeout, write_all_with_idle_timeout,
 };
+use super::route_planner_model::{RouteBinding, RouteConnectIntent};
 use super::socket_hardening::apply_per_connection_socket_hardening;
 
-pub(crate) async fn connect_via_route(route: &RouteBinding, intent: RouteConnectIntent) -> io::Result<TcpStream> {
-    let mut stream =
-        connect_with_upstream_timeout(&route.next_hop_host, route.next_hop_port, "upstream_connect")
-            .await?;
+pub(crate) async fn connect_via_route(
+    route: &RouteBinding,
+    intent: RouteConnectIntent,
+) -> io::Result<TcpStream> {
+    let mut stream = connect_with_upstream_timeout(
+        &route.next_hop_host,
+        route.next_hop_port,
+        "upstream_connect",
+    )
+    .await?;
     apply_per_connection_socket_hardening(&stream);
     match route.mode {
         crate::engine::RouteMode::Direct | crate::engine::RouteMode::Reverse => Ok(stream),
@@ -63,21 +69,31 @@ async fn establish_socks5_connect_tunnel(
     stream: &mut TcpStream,
     route: &RouteBinding,
 ) -> io::Result<()> {
-    write_all_with_idle_timeout(stream, &[0x05, 0x01, 0x00], "upstream_socks5_greeting_write")
-        .await?;
+    write_all_with_idle_timeout(
+        stream,
+        &[0x05, 0x01, 0x00],
+        "upstream_socks5_greeting_write",
+    )
+    .await?;
 
     let mut greeting = [0_u8; 2];
     read_exact_with_idle_timeout(stream, &mut greeting, "upstream_socks5_greeting_read").await?;
     if greeting[0] != 0x05 {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
-            format!("upstream SOCKS5 replied with invalid version {}", greeting[0]),
+            format!(
+                "upstream SOCKS5 replied with invalid version {}",
+                greeting[0]
+            ),
         ));
     }
     if greeting[1] != 0x00 {
         return Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
-            format!("upstream SOCKS5 requires unsupported auth method {}", greeting[1]),
+            format!(
+                "upstream SOCKS5 requires unsupported auth method {}",
+                greeting[1]
+            ),
         ));
     }
 
@@ -201,10 +217,16 @@ fn parse_proxy_status_code(head: &[u8]) -> io::Result<u16> {
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "proxy response was empty"))?;
     let mut parts = line.split_whitespace();
     let _http_version = parts.next().ok_or_else(|| {
-        io::Error::new(io::ErrorKind::InvalidData, "proxy status line missing version")
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "proxy status line missing version",
+        )
     })?;
     let status = parts.next().ok_or_else(|| {
-        io::Error::new(io::ErrorKind::InvalidData, "proxy status line missing status")
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "proxy status line missing status",
+        )
     })?;
     status.parse::<u16>().map_err(|_| {
         io::Error::new(

@@ -1,13 +1,13 @@
-use std::io;
-use std::sync::Arc;
+use super::close_codes::CloseReasonCode;
+use super::event_emitters::{emit_stream_closed, emit_tls_event_with_detail};
+use super::flow_hooks::FlowHooks;
+use super::tls_diagnostics::TlsDiagnostics;
+use super::tls_learning::TlsLearningGuardrails;
 use crate::engine::MitmEngine;
 use crate::observe::{EventConsumer, EventType, FlowContext};
 use crate::policy::PolicyEngine;
-use super::close_codes::CloseReasonCode;
-use super::event_emitters::{emit_stream_closed, emit_tls_event_with_detail};
-use super::tls_diagnostics::TlsDiagnostics;
-use super::tls_learning::TlsLearningGuardrails;
-use super::flow_hooks::FlowHooks;
+use std::io;
+use std::sync::Arc;
 
 pub(crate) async fn fail_tls_and_close<P, S>(
     engine: &Arc<MitmEngine<P, S>>,

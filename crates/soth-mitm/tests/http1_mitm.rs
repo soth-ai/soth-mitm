@@ -3,15 +3,17 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
-use soth_mitm::test_engine::{InterceptMode, MitmConfig, MitmEngine, RouteEndpointConfig, RouteMode};
+use soth_mitm::test_engine::{
+    InterceptMode, MitmConfig, MitmEngine, RouteEndpointConfig, RouteMode,
+};
 use soth_mitm::test_observe::{EventType, FlowContext, VecEventConsumer};
 use soth_mitm::test_policy::DefaultPolicyEngine;
 use soth_mitm::test_server::{
-    FlowHooks, RawRequest as HookRawRequest, SidecarConfig, SidecarServer,
-    TlsDiagnostics, TlsLearningGuardrails,
+    FlowHooks, RawRequest as HookRawRequest, SidecarConfig, SidecarServer, TlsDiagnostics,
+    TlsLearningGuardrails,
 };
-use soth_mitm::HandlerDecision;
 use soth_mitm::test_tls::{build_http1_client_config, build_http1_server_config_for_host};
+use soth_mitm::HandlerDecision;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_rustls::rustls::pki_types::ServerName;

@@ -1,17 +1,17 @@
-use std::io;
-use std::sync::Arc;
-use tokio::io::{AsyncRead, AsyncWrite};
+use super::close_codes::CloseReasonCode;
+use super::event_emitters::emit_stream_closed;
+use super::flow_hooks::FlowHooks;
+use super::io_timeouts::{is_idle_watchdog_timeout, is_stream_stage_timeout};
+use super::runtime_governor;
+use super::websocket_relay::relay_websocket_connection;
+use super::BufferedConn;
 use crate::engine::MitmEngine;
 use crate::observe::{EventConsumer, FlowContext};
 use crate::policy::PolicyEngine;
 use crate::protocol::ApplicationProtocol;
-use super::{BufferedConn};
-use super::runtime_governor;
-use super::flow_hooks::FlowHooks;
-use super::close_codes::CloseReasonCode;
-use super::event_emitters::emit_stream_closed;
-use super::io_timeouts::{is_idle_watchdog_timeout, is_stream_stage_timeout};
-use super::websocket_relay::relay_websocket_connection;
+use std::io;
+use std::sync::Arc;
+use tokio::io::{AsyncRead, AsyncWrite};
 
 pub(crate) async fn finalize_websocket_upgrade<P, S, D, U>(
     engine: Arc<MitmEngine<P, S>>,
@@ -75,4 +75,3 @@ where
     }
     Ok(())
 }
-

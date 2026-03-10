@@ -131,7 +131,9 @@ mod tests {
         );
 
         assert_eq!(
-            attrs.get("upstream_ocsp_staple_present").map(String::as_str),
+            attrs
+                .get("upstream_ocsp_staple_present")
+                .map(String::as_str),
             Some("false")
         );
         assert_eq!(
@@ -158,7 +160,9 @@ mod tests {
         );
 
         assert_eq!(
-            attrs.get("upstream_ocsp_staple_present").map(String::as_str),
+            attrs
+                .get("upstream_ocsp_staple_present")
+                .map(String::as_str),
             Some("true")
         );
         assert_eq!(
@@ -181,7 +185,9 @@ mod tests {
         );
 
         assert_eq!(
-            attrs.get("upstream_ocsp_staple_present").map(String::as_str),
+            attrs
+                .get("upstream_ocsp_staple_present")
+                .map(String::as_str),
             Some("not_applicable")
         );
         assert_eq!(

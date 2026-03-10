@@ -28,7 +28,7 @@ fi
 # Use deterministic decoder-chain regression tests there instead.
 case "$(uname -s)" in
   MINGW*|MSYS*|CYGWIN*)
-    cargo test -p mitm-http --test decoder_chain -q
+    cargo test -p soth-mitm --test decoder_chain -q
     exit 0
     ;;
 esac

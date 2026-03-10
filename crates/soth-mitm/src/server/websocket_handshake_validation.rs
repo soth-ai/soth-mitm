@@ -1,6 +1,6 @@
-use std::io;
-use super::{HttpHeader, HttpRequestHead, HttpResponseHead};
 use super::http_head_parser::{has_header_token, has_header_value};
+use super::{HttpHeader, HttpRequestHead, HttpResponseHead};
+use std::io;
 
 pub(crate) fn validate_websocket_upgrade_request_head(request: &HttpRequestHead) -> io::Result<()> {
     if !request.method.eq_ignore_ascii_case("GET") {
@@ -22,12 +22,13 @@ pub(crate) fn validate_websocket_upgrade_request_head(request: &HttpRequestHead)
         ));
     }
 
-    let version = first_header_value(&request.headers, "sec-websocket-version").ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "websocket_upgrade_request:missing_sec_websocket_version",
-        )
-    })?;
+    let version =
+        first_header_value(&request.headers, "sec-websocket-version").ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "websocket_upgrade_request:missing_sec_websocket_version",
+            )
+        })?;
     if version.trim() != "13" {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -86,8 +87,7 @@ pub(crate) fn validate_websocket_upgrade_response_head(
         .map(|value| value.trim())
         .unwrap_or("");
     let expected_accept = compute_websocket_accept(client_key);
-    let actual_accept =
-        first_header_value(&response.headers, "sec-websocket-accept").unwrap_or("");
+    let actual_accept = first_header_value(&response.headers, "sec-websocket-accept").unwrap_or("");
     if actual_accept.trim() != expected_accept {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -217,11 +217,9 @@ mod websocket_handshake_validation_tests {
         };
         let error = validate_websocket_upgrade_request_head(&request).expect_err("must fail");
         assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
-        assert!(
-            error
-                .to_string()
-                .contains("unsupported_sec_websocket_version")
-        );
+        assert!(error
+            .to_string()
+            .contains("unsupported_sec_websocket_version"));
     }
 
     #[test]
@@ -275,9 +273,7 @@ mod websocket_handshake_validation_tests {
             validate_websocket_upgrade_response_head(&request, &response).expect_err("must fail");
         assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
         assert!(
-            error
-                .to_string()
-                .contains("invalid_sec_websocket_accept"),
+            error.to_string().contains("invalid_sec_websocket_accept"),
             "{}",
             error
         );
@@ -308,9 +304,7 @@ mod websocket_handshake_validation_tests {
         let error =
             validate_websocket_upgrade_response_head(&request, &response).expect_err("must fail");
         assert!(
-            error
-                .to_string()
-                .contains("invalid_sec_websocket_accept"),
+            error.to_string().contains("invalid_sec_websocket_accept"),
             "{}",
             error
         );

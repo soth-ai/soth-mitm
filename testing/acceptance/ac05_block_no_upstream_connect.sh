@@ -38,7 +38,7 @@ printf 'check\tstatus\tdetail\n' >"$status_tsv"
 ac_run_case "$status_tsv" block_unit_contract \
   cargo test -p soth-mitm block_prevents_any_upstream_connect -q || true
 ac_run_case "$status_tsv" block_integration_no_upstream_socket \
-  cargo test -p mitm-sidecar --test phase_a blocked_host_never_opens_upstream_socket -q || true
+  cargo test -p soth-mitm --test phase_a blocked_host_never_opens_upstream_socket -q || true
 
 config_md=$'- strict_tools: '"${strict_tools}"$'\n- verification: local upstream assertion (no upstream accept)'
 

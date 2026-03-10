@@ -52,7 +52,7 @@ if [[ "$publish_exit" -eq 0 ]]; then
   printf '%s\tpass\n' publish_dry_run >>"$status_tsv"
 else
   if grep -n -E -i \
-    "could not resolve host|couldn't connect to server|download of config.json failed|failed to download|no matching package named .*mitm-core.* found|failed to get .*mitm-core.* as a dependency|failed to prepare local package for uploading" \
+    "could not resolve host|couldn't connect to server|download of config.json failed|failed to download|no matching package named .*soth-mitm.* found|failed to get .*soth-mitm.* as a dependency|failed to prepare local package for uploading" \
     "$publish_log" >/dev/null 2>&1; then
     if "${publish_fallback_cmd[@]}" >/dev/null 2>&1; then
       printf '%s\tpass\n' publish_dry_run >>"$status_tsv"

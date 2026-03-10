@@ -74,15 +74,15 @@ check_or_skip_tool() {
 : >"$status_tsv"
 
 run_case profile_schema_guardrails \
-  cargo test -p mitm-core strict_tls_profile_rejects_disabled_sni_mode -q
+  cargo test -p soth-mitm strict_tls_profile_rejects_disabled_sni_mode -q
 run_case tls_profile_client_matrix \
-  cargo test -p mitm-tls strict_profile_builds_tls13_only_client_with_required_sni -q
+  cargo test -p soth-mitm strict_profile_builds_tls13_only_client_with_required_sni -q
 run_case tls_profile_cipher_matrix \
-  cargo test -p mitm-tls compat_profile_reorders_cipher_suites_for_tls12_first -q
+  cargo test -p soth-mitm compat_profile_reorders_cipher_suites_for_tls12_first -q
 run_case cert_profile_fixture_chain \
-  cargo test -p mitm-tls cert_store_compat_profile_issues_compatible_leaf_public_keys -q
+  cargo test -p soth-mitm cert_store_compat_profile_issues_compatible_leaf_public_keys -q
 run_case tls_profile_handshake_matrix \
-  cargo test -p mitm-sidecar --test tls_profile_matrix -q
+  cargo test -p soth-mitm --test tls_profile_matrix -q
 
 check_or_skip_tool openssl_probe openssl "openssl version"
 

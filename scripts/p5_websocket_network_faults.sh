@@ -44,11 +44,11 @@ run_case() {
 : >"$status_tsv"
 run_case websocket_netfault_profiles \
   env SOTH_MITM_WS_NETFAULT_CLIENTS="$netfault_clients" \
-  cargo test -p mitm-sidecar --test websocket_reliability_soak \
+  cargo test -p soth-mitm --test websocket_reliability_soak \
     websocket_network_fault_lane_settles_without_stuck_flows -q || true
 run_case websocket_chaos_reference \
   env SOTH_MITM_WS_CHAOS_CLIENTS="$chaos_clients" \
-  cargo test -p mitm-sidecar --test websocket_reliability_soak \
+  cargo test -p soth-mitm --test websocket_reliability_soak \
     websocket_chaos_soak_mixed_lanes_settle_without_stuck_flows -q || true
 
 failed="$(awk '$2 != "pass" {print $1}' "$status_tsv" || true)"

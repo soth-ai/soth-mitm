@@ -55,7 +55,11 @@ pub(super) fn validate_route_mode_bindings(config: &MitmConfig) -> Result<(), Mi
     match config.route_mode {
         RouteMode::Direct => {
             require_absent(config.reverse_upstream.as_ref(), mode, "reverse_upstream")?;
-            require_absent(config.upstream_http_proxy.as_ref(), mode, "upstream_http_proxy")?;
+            require_absent(
+                config.upstream_http_proxy.as_ref(),
+                mode,
+                "upstream_http_proxy",
+            )?;
             require_absent(
                 config.upstream_socks5_proxy.as_ref(),
                 mode,
@@ -64,7 +68,11 @@ pub(super) fn validate_route_mode_bindings(config: &MitmConfig) -> Result<(), Mi
         }
         RouteMode::Reverse => {
             require_present(config.reverse_upstream.as_ref(), mode, "reverse_upstream")?;
-            require_absent(config.upstream_http_proxy.as_ref(), mode, "upstream_http_proxy")?;
+            require_absent(
+                config.upstream_http_proxy.as_ref(),
+                mode,
+                "upstream_http_proxy",
+            )?;
             require_absent(
                 config.upstream_socks5_proxy.as_ref(),
                 mode,
@@ -86,7 +94,11 @@ pub(super) fn validate_route_mode_bindings(config: &MitmConfig) -> Result<(), Mi
         }
         RouteMode::UpstreamSocks5 => {
             require_absent(config.reverse_upstream.as_ref(), mode, "reverse_upstream")?;
-            require_absent(config.upstream_http_proxy.as_ref(), mode, "upstream_http_proxy")?;
+            require_absent(
+                config.upstream_http_proxy.as_ref(),
+                mode,
+                "upstream_http_proxy",
+            )?;
             require_present(
                 config.upstream_socks5_proxy.as_ref(),
                 mode,

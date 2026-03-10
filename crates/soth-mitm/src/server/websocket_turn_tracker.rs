@@ -1,17 +1,18 @@
-use std::io;
-use std::sync::Arc;
+use super::flow_hooks::{FlowHooks, StreamChunk};
+use super::websocket_events::{
+    emit_websocket_frame_event, emit_websocket_turn_completed_event,
+    emit_websocket_turn_started_event,
+};
+use super::websocket_relay::{
+    WebSocketFrameObservation, WebSocketObserverMessage, WebSocketTurnTrackerState,
+    WS_OPCODE_CLOSE, WS_TURN_IDLE_TIMEOUT,
+};
 use crate::engine::MitmEngine;
 use crate::observe::{EventConsumer, FlowContext};
 use crate::policy::PolicyEngine;
 use crate::types::FrameKind;
-use super::flow_hooks::{FlowHooks, StreamChunk};
-use super::websocket_relay::{
-    WS_TURN_IDLE_TIMEOUT, WS_OPCODE_CLOSE, WebSocketObserverMessage, WebSocketFrameObservation,
-    WebSocketTurnTrackerState,
-};
-use super::websocket_events::{
-    emit_websocket_frame_event, emit_websocket_turn_started_event, emit_websocket_turn_completed_event,
-};
+use std::io;
+use std::sync::Arc;
 
 pub(crate) async fn observe_websocket_frames<P, S>(
     engine: Arc<MitmEngine<P, S>>,
@@ -178,12 +179,20 @@ async fn track_websocket_frame<P, S>(
             } else {
                 assembler.frame_kind = Some(frame_kind);
                 assembler.payload.clear();
-                append_with_cap(&mut assembler.payload, frame.payload.as_ref(), max_message_bytes);
+                append_with_cap(
+                    &mut assembler.payload,
+                    frame.payload.as_ref(),
+                    max_message_bytes,
+                );
             }
         }
         0x0 => {
             if let Some(frame_kind) = assembler.frame_kind {
-                append_with_cap(&mut assembler.payload, frame.payload.as_ref(), max_message_bytes);
+                append_with_cap(
+                    &mut assembler.payload,
+                    frame.payload.as_ref(),
+                    max_message_bytes,
+                );
                 if frame.fin {
                     let sequence = turn_state.next_chunk_sequence;
                     turn_state.next_chunk_sequence += 1;

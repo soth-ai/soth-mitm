@@ -92,7 +92,7 @@ ac_run_case "$status_tsv" mixed_traffic_soak_30m \
     SOTH_MITM_SOAK_EXCHANGE_TIMEOUT_SECONDS="$soak_exchange_timeout_seconds" \
     SOTH_MITM_SOAK_H2_RETRIES="$soak_h2_retries" \
     SOTH_MITM_SOAK_H2_UPSTREAM_ACCEPT_TIMEOUT_SECONDS="$soak_h2_upstream_accept_timeout_seconds" \
-    cargo test -p mitm-sidecar --test mixed_traffic_soak \
+    cargo test -p soth-mitm --test mixed_traffic_soak \
       mixed_traffic_soak_respects_runtime_budget_envelope -q || true
 
 if command -v heaptrack >/dev/null 2>&1 || command -v valgrind >/dev/null 2>&1; then

@@ -117,7 +117,7 @@ if [[ "$strict_config_ok" -eq 1 ]]; then
       SOTH_MITM_SOAK_SECONDS="$duration_seconds" \
       SOTH_MITM_SOAK_MIN_ITERATIONS="$min_iterations" \
       SOTH_MITM_SOAK_EXCHANGES="$soak_exchanges" \
-      cargo test -p mitm-sidecar --test mixed_traffic_soak \
+      cargo test -p soth-mitm --test mixed_traffic_soak \
         mixed_traffic_soak_respects_runtime_budget_envelope -q \
     >"$run_log" 2>&1; then
     true

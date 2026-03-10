@@ -1,35 +1,36 @@
-use std::io;
-use std::sync::Arc;
-use tokio::net::TcpStream;
+use super::close_codes::CloseReasonCode;
+use super::downstream_tls::accept_downstream_tls;
+use super::event_emitters::{
+    emit_stream_closed, emit_tls_event, emit_tls_event_with_cache,
+    emit_tls_event_with_negotiated_alpn,
+};
+use super::flow_hooks::FlowHooks;
+use super::flow_intercept_http1::relay_http1_mitm_loop;
+use super::flow_intercept_tls_failure::fail_tls_and_close;
+use super::http2_stream_relay::relay_http2_connection;
+use super::http2_stream_relay_http1::relay_http2_downstream_to_http1_upstream;
+use super::http_body_relay::write_proxy_response;
+use super::io_timeouts::write_all_with_idle_timeout;
+use super::route_planner_model::{RouteBinding, RouteConnectIntent, UpstreamRequestTargetMode};
+use super::route_planner_transport::connect_via_route;
+use super::runtime_governor;
+use super::tls_diagnostics::TlsDiagnostics;
+use super::tls_learning::TlsLearningGuardrails;
+use super::tls_profile_mapping::map_upstream_sni_mode;
+use super::BufferedConn;
 use crate::engine::MitmEngine;
 use crate::observe::{EventConsumer, EventType, FlowContext};
 use crate::policy::PolicyEngine;
 use crate::protocol::{protocol_from_negotiated_alpn, ApplicationProtocol};
 use crate::tls::{
-    MitmCertificateStore, UpstreamClientAuthMode as TlsUpstreamClientAuthMode,
-    UpstreamTlsConfigCache, resolve_upstream_server_name,
+    resolve_upstream_server_name, MitmCertificateStore,
+    UpstreamClientAuthMode as TlsUpstreamClientAuthMode, UpstreamTlsConfigCache,
 };
 use crate::types::ProcessInfo;
+use std::io;
+use std::sync::Arc;
+use tokio::net::TcpStream;
 use tokio_rustls::TlsConnector;
-use super::{BufferedConn};
-use super::close_codes::CloseReasonCode;
-use super::downstream_tls::accept_downstream_tls;
-use super::event_emitters::{
-    emit_stream_closed, emit_tls_event, emit_tls_event_with_cache, emit_tls_event_with_negotiated_alpn,
-};
-use super::flow_intercept_http1::relay_http1_mitm_loop;
-use super::flow_intercept_tls_failure::fail_tls_and_close;
-use super::http_body_relay::write_proxy_response;
-use super::http2_stream_relay::relay_http2_connection;
-use super::http2_stream_relay_http1::relay_http2_downstream_to_http1_upstream;
-use super::route_planner_model::{RouteBinding, RouteConnectIntent, UpstreamRequestTargetMode};
-use super::route_planner_transport::connect_via_route;
-use super::tls_diagnostics::TlsDiagnostics;
-use super::tls_learning::TlsLearningGuardrails;
-use super::tls_profile_mapping::map_upstream_sni_mode;
-use super::runtime_governor;
-use super::flow_hooks::FlowHooks;
-use super::io_timeouts::write_all_with_idle_timeout;
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn intercept_http_connection<P, S>(
@@ -51,10 +52,9 @@ where
     P: PolicyEngine + Send + Sync + 'static,
     S: EventConsumer + Send + Sync + 'static,
 {
-    let http2_enabled_for_flow =
-        engine.config.http2_enabled && !policy_override_state.disable_h2;
-    let skip_upstream_verify_for_flow =
-        engine.config.upstream_tls_insecure_skip_verify || policy_override_state.skip_upstream_verify;
+    let http2_enabled_for_flow = engine.config.http2_enabled && !policy_override_state.disable_h2;
+    let skip_upstream_verify_for_flow = engine.config.upstream_tls_insecure_skip_verify
+        || policy_override_state.skip_upstream_verify;
     let upstream_tcp = match connect_via_route(&route, RouteConnectIntent::TargetTunnel).await {
         Ok(stream) => stream,
         Err(error) => {
@@ -87,30 +87,27 @@ where
         ..tunnel_context.clone()
     };
     let upstream_sni_mode = map_upstream_sni_mode(engine.config.upstream_sni_mode);
-    let server_name = match resolve_upstream_server_name(
-        &handshake_context.server_host,
-        upstream_sni_mode,
-    ) {
-        Ok(value) => value,
-        Err(error) => {
-            let detail = format!("invalid server name for upstream TLS: {error}");
-            return fail_tls_and_close(
-                &engine,
-                &flow_hooks,
-                &tls_diagnostics,
-                &tls_learning,
-                handshake_context.clone(),
-                tunnel_context,
-                "upstream",
-                detail,
-            )
-            .await;
-        }
-    };
-    let issued_server_config = match cert_store.server_config_for_host_with_http2(
-        &handshake_context.server_host,
-        http2_enabled_for_flow,
-    ) {
+    let server_name =
+        match resolve_upstream_server_name(&handshake_context.server_host, upstream_sni_mode) {
+            Ok(value) => value,
+            Err(error) => {
+                let detail = format!("invalid server name for upstream TLS: {error}");
+                return fail_tls_and_close(
+                    &engine,
+                    &flow_hooks,
+                    &tls_diagnostics,
+                    &tls_learning,
+                    handshake_context.clone(),
+                    tunnel_context,
+                    "upstream",
+                    detail,
+                )
+                .await;
+            }
+        };
+    let issued_server_config = match cert_store
+        .server_config_for_host_with_http2(&handshake_context.server_host, http2_enabled_for_flow)
+    {
         Ok(config) => config,
         Err(error) => {
             return fail_tls_and_close(

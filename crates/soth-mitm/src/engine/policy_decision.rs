@@ -19,8 +19,12 @@ where
             FlowAction::Tunnel => "tunnel",
             FlowAction::Block => "block",
         };
-        event.attributes.insert("reason".to_string(), decision.reason.clone());
-        event.attributes.insert("action".to_string(), action.to_string());
+        event
+            .attributes
+            .insert("reason".to_string(), decision.reason.clone());
+        event
+            .attributes
+            .insert("action".to_string(), action.to_string());
         if decision.override_state.applied {
             event.attributes.insert(
                 "override_rule_id".to_string(),

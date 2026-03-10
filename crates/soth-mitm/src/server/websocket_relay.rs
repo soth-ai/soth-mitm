@@ -1,19 +1,21 @@
-use std::io;
-use std::sync::Arc;
-use tokio::io::{AsyncRead, AsyncWrite};
+use super::flow_hooks::FlowHooks;
+use super::io_timeouts::{
+    flush_with_websocket_idle_timeout, shutdown_with_websocket_idle_timeout,
+    write_all_with_websocket_idle_timeout,
+};
+use super::runtime_governor;
+use super::websocket_codec::validate_websocket_mask_direction;
+use super::websocket_events::{emit_websocket_closed_event, emit_websocket_opened_event};
+use super::websocket_relay_io::{
+    read_websocket_frame_header, relay_websocket_payload, PrefixedReader,
+};
+use super::BufferedConn;
 use crate::engine::MitmEngine;
 use crate::observe::{EventConsumer, FlowContext};
 use crate::policy::PolicyEngine;
-use super::{BufferedConn};
-use super::runtime_governor;
-use super::flow_hooks::FlowHooks;
-use super::io_timeouts::{
-    write_all_with_websocket_idle_timeout, flush_with_websocket_idle_timeout,
-    shutdown_with_websocket_idle_timeout,
-};
-use super::websocket_relay_io::{PrefixedReader, read_websocket_frame_header, relay_websocket_payload};
-use super::websocket_codec::validate_websocket_mask_direction;
-use super::websocket_events::{emit_websocket_opened_event, emit_websocket_closed_event};
+use std::io;
+use std::sync::Arc;
+use tokio::io::{AsyncRead, AsyncWrite};
 
 pub(crate) const WS_FRAME_COPY_CHUNK_SIZE: usize = 8 * 1024;
 pub(crate) const WS_OPCODE_CLOSE: u8 = 0x8;
@@ -207,13 +209,11 @@ where
 {
     let mut bytes_forwarded = 0_u64;
     let mut frame_codec = soketto::base::Codec::new();
-        frame_codec.set_max_data_size(max_frame_payload_bytes);
+    frame_codec.set_max_data_size(max_frame_payload_bytes);
     loop {
         let next_frame =
-            read_websocket_frame_header(&mut source, &frame_codec, max_frame_payload_bytes)
-                .await?;
-        let Some((frame_header, header_view)) = next_frame
-        else {
+            read_websocket_frame_header(&mut source, &frame_codec, max_frame_payload_bytes).await?;
+        let Some((frame_header, header_view)) = next_frame else {
             let mut sink = forward_sink.lock().await;
             shutdown_with_websocket_idle_timeout(&mut *sink, "websocket_sink_shutdown").await?;
             return Ok(WebSocketDirectionOutcome {
@@ -229,10 +229,8 @@ where
         let masking_key = header_view.mask.map(|value| value.to_be_bytes());
 
         {
-            let _in_flight_lease = runtime_governor.reserve_in_flight_or_error(
-                frame_header.len(),
-                "websocket_frame_header_write",
-            )?;
+            let _in_flight_lease = runtime_governor
+                .reserve_in_flight_or_error(frame_header.len(), "websocket_frame_header_write")?;
             let mut sink = forward_sink.lock().await;
             write_all_with_websocket_idle_timeout(
                 &mut *sink,

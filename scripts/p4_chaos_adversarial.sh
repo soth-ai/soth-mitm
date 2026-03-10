@@ -31,12 +31,12 @@ run_case() {
 }
 
 : >"$status_tsv"
-run_case connect_and_lifecycle cargo test -p mitm-sidecar --test phase_a -q
-run_case charter_chaos_cases cargo test -p mitm-sidecar --test chaos_charter -q
-run_case http2_adversarial cargo test -p mitm-sidecar --test http2_mitm -q
-run_case grpc_split_frames_parser cargo test -p mitm-http -q
-run_case sse_incremental cargo test -p mitm-sidecar --test sse_mitm -q
-run_case parser_safety cargo test -p mitm-http -q
+run_case connect_and_lifecycle cargo test -p soth-mitm --test phase_a -q
+run_case charter_chaos_cases cargo test -p soth-mitm --test chaos_charter -q
+run_case http2_adversarial cargo test -p soth-mitm --test http2_mitm -q
+run_case grpc_split_frames_parser cargo test -p soth-mitm -q
+run_case sse_incremental cargo test -p soth-mitm --test sse_mitm -q
+run_case parser_safety cargo test -p soth-mitm -q
 run_case layered_decoder_fuzz_regression ./scripts/fuzz_decoder_layering_regression.sh --runs 64
 run_case fuzz_harness_build cargo check --manifest-path fuzz/Cargo.toml
 

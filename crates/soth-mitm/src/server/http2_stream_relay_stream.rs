@@ -1,34 +1,38 @@
-use std::io;
-use std::sync::Arc;
-use std::sync::atomic::Ordering;
+use super::event_emitters_protocol::{
+    emit_grpc_request_headers_event, emit_grpc_response_headers_event,
+    emit_grpc_response_trailers_event,
+};
+use super::flow_hook_http_helpers::{
+    build_handler_header_map_from_h2, ensure_handler_host_header_from_uri, mark_body_truncated,
+    normalize_grpc_request_body_for_handler, normalize_h2_path_for_handler,
+    normalize_request_body_for_handler, sanitize_block_status,
+    strip_hop_by_hop_and_transport_headers,
+};
+use super::flow_hooks::{FlowHooks, RawRequest};
+use super::http2_relay_support::{
+    detect_grpc_request, enforce_h2_request_header_limit, enforce_h2_response_header_limit,
+    h2_error_to_io, h2_reason_for_downstream_reset, is_h2_nonfatal_stream_error,
+    GrpcRequestObservation,
+};
+use super::http2_stream_hook_dispatch::{
+    capture_h2_body, dispatch_h2_response_hooks, is_grpc_h2_response, is_ndjson_h2_response,
+    is_sse_h2_response, send_h2_captured_body, tee_h2_request_body, H2CapturedBody,
+};
+use super::http2_stream_relay::{h2_relay_debug, H2ByteCounters};
+use super::http2_stream_relay_body::send_h2_data_with_backpressure;
+use super::http2_stream_response_relay::{
+    h2_response_stream_hook_dispatcher, relay_h2_response_body_with_incremental_forwarding,
+};
+use super::io_timeouts::with_stream_stage_timeout;
+use super::runtime_governor;
+use crate::actions::HandlerDecision;
+use crate::config::InterceptMode;
 use crate::engine::MitmEngine;
 use crate::observe::{EventConsumer, FlowContext};
 use crate::policy::PolicyEngine;
-use crate::config::InterceptMode;
-use super::runtime_governor;
-use crate::actions::HandlerDecision;
-use super::flow_hooks::{FlowHooks, RawRequest};
-use super::io_timeouts::with_stream_stage_timeout;
-use super::http2_relay_support::{
-    GrpcRequestObservation, enforce_h2_request_header_limit, enforce_h2_response_header_limit,
-    h2_error_to_io, is_h2_nonfatal_stream_error, h2_reason_for_downstream_reset, detect_grpc_request,
-};
-use super::http2_stream_relay::{H2ByteCounters, h2_relay_debug};
-use super::http2_stream_relay_body::send_h2_data_with_backpressure;
-use super::http2_stream_hook_dispatch::{
-    H2CapturedBody, capture_h2_body, tee_h2_request_body, dispatch_h2_response_hooks,
-    send_h2_captured_body, is_sse_h2_response, is_ndjson_h2_response, is_grpc_h2_response,
-};
-use super::http2_stream_response_relay::{
-    relay_h2_response_body_with_incremental_forwarding, h2_response_stream_hook_dispatcher,
-};
-use super::event_emitters_protocol::{emit_grpc_request_headers_event, emit_grpc_response_headers_event, emit_grpc_response_trailers_event};
-use super::flow_hook_http_helpers::{
-    build_handler_header_map_from_h2, ensure_handler_host_header_from_uri,
-    normalize_h2_path_for_handler, normalize_grpc_request_body_for_handler,
-    normalize_request_body_for_handler, mark_body_truncated, sanitize_block_status,
-    strip_hop_by_hop_and_transport_headers,
-};
+use std::io;
+use std::sync::atomic::Ordering;
+use std::sync::Arc;
 
 pub(crate) async fn relay_http2_stream<P, S>(
     engine: Arc<MitmEngine<P, S>>,
@@ -284,9 +288,9 @@ where
         let mut builder = http::Response::builder().status(413);
         builder = builder.header("content-type", "text/plain");
         builder = builder.header("content-length", body.len().to_string());
-        let response = builder
-            .body(())
-            .map_err(|error| io::Error::other(format!("build oversized HTTP/2 response: {error}")))?;
+        let response = builder.body(()).map_err(|error| {
+            io::Error::other(format!("build oversized HTTP/2 response: {error}"))
+        })?;
         let mut stream = downstream_respond
             .send_response(response, body.is_empty())
             .map_err(|error| h2_error_to_io("sending oversized HTTP/2 response failed", error))?;
@@ -351,12 +355,9 @@ where
             })?;
             let mut stream = downstream_respond
                 .send_response(block_response, body.is_empty())
-                .map_err(|error| {
-                    h2_error_to_io("sending blocked HTTP/2 response failed", error)
-                })?;
+                .map_err(|error| h2_error_to_io("sending blocked HTTP/2 response failed", error))?;
             if !body.is_empty() {
-                send_h2_data_with_backpressure(&mut stream, &runtime_governor, body, true)
-                    .await?;
+                send_h2_data_with_backpressure(&mut stream, &runtime_governor, body, true).await?;
             }
             flow_hooks.on_stream_end(stream_context).await;
             return Ok(());
@@ -439,7 +440,12 @@ where
     }
 
     if let Some(observation) = grpc_observation.as_ref() {
-        emit_grpc_response_headers_event(engine, stream_context.clone(), observation, &response_parts);
+        emit_grpc_response_headers_event(
+            engine,
+            stream_context.clone(),
+            observation,
+            &response_parts,
+        );
     }
 
     let mut stream_dispatcher = h2_response_stream_hook_dispatcher(&response_parts);
@@ -524,7 +530,12 @@ where
     }
 
     if let Some(observation) = grpc_observation.as_ref() {
-        emit_grpc_response_headers_event(engine, stream_context.clone(), observation, &response_parts);
+        emit_grpc_response_headers_event(
+            engine,
+            stream_context.clone(),
+            observation,
+            &response_parts,
+        );
     }
 
     let has_body = !captured_response.bytes.is_empty() || captured_response.trailers.is_some();
@@ -561,11 +572,15 @@ where
         )
         .await?;
 
-        if let (Some(observation), Some(trailers)) = (
-            grpc_observation.as_ref(),
-            observed_trailers.as_ref(),
-        ) {
-            emit_grpc_response_trailers_event(engine, stream_context.clone(), observation, trailers);
+        if let (Some(observation), Some(trailers)) =
+            (grpc_observation.as_ref(), observed_trailers.as_ref())
+        {
+            emit_grpc_response_trailers_event(
+                engine,
+                stream_context.clone(),
+                observation,
+                trailers,
+            );
         }
     }
 

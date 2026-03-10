@@ -2,9 +2,9 @@ use std::collections::BTreeMap;
 use std::io;
 use std::sync::Arc;
 
-use crate::protocol::ApplicationProtocol;
 use crate::observe::{Event, EventConsumer, EventType, FlowContext};
 use crate::policy::PolicyEngine;
+use crate::protocol::ApplicationProtocol;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
 use tokio::task::JoinSet;

@@ -1,22 +1,22 @@
+use super::flow_hook_http_helpers::strip_trailer_forbidden_and_transport_headers;
+use super::flow_hooks::FlowHooks;
+use super::http2_relay_support::h2_error_to_io;
+use super::http2_stream_hook_dispatch::H2CapturedBody;
+use super::http2_stream_relay_body::send_h2_data_with_backpressure;
+use super::http2_stream_relay_http1_body::{
+    read_http1_chunked_trailers_as_header_map, read_http1_response_chunk_allow_eof,
+    read_http1_response_chunk_non_eof,
+};
+use super::http2_stream_response_relay::H2ResponseStreamHookDispatcher;
+use super::http_body_relay::{parse_chunk_len, read_chunk_line, read_exact_from_source};
+use super::io_timeouts::with_h2_body_idle_timeout;
+use super::runtime_governor;
+use super::{BufferedConn, HttpBodyMode, IO_CHUNK_SIZE};
+use crate::config::H2ResponseOverflowMode;
+use crate::observe::FlowContext;
 use std::io;
 use std::sync::Arc;
 use tokio::io::AsyncRead;
-use crate::config::H2ResponseOverflowMode;
-use crate::observe::FlowContext;
-use super::{BufferedConn, HttpBodyMode, IO_CHUNK_SIZE};
-use super::runtime_governor;
-use super::flow_hooks::FlowHooks;
-use super::io_timeouts::with_h2_body_idle_timeout;
-use super::http2_relay_support::h2_error_to_io;
-use super::http2_stream_relay_body::send_h2_data_with_backpressure;
-use super::http2_stream_relay_http1_body::{
-    read_http1_response_chunk_non_eof, read_http1_response_chunk_allow_eof,
-    read_http1_chunked_trailers_as_header_map,
-};
-use super::http_body_relay::{read_chunk_line, parse_chunk_len, read_exact_from_source};
-use super::http2_stream_hook_dispatch::H2CapturedBody;
-use super::http2_stream_response_relay::H2ResponseStreamHookDispatcher;
-use super::flow_hook_http_helpers::strip_trailer_forbidden_and_transport_headers;
 
 pub(crate) struct Http1ToH2ResponseRelayOutcome {
     pub(crate) captured: H2CapturedBody,
@@ -234,11 +234,10 @@ where
     U: AsyncRead + Unpin,
 {
     loop {
-        let line =
-            with_h2_body_idle_timeout("http2_to_http1_response_body_chunk_line", async {
-                read_chunk_line(source, runtime_governor).await
-            })
-            .await?;
+        let line = with_h2_body_idle_timeout("http2_to_http1_response_body_chunk_line", async {
+            read_chunk_line(source, runtime_governor).await
+        })
+        .await?;
         let chunk_len = parse_chunk_len(&line)?;
         if chunk_len == 0 {
             return read_http1_chunked_trailers_as_header_map(
@@ -367,7 +366,8 @@ async fn forward_http1_response_chunk(
     }
     let chunk = bytes::Bytes::from(chunk);
     let hook_chunk = stream_dispatcher.as_ref().map(|_| chunk.clone());
-    send_h2_data_with_backpressure(downstream_response_stream, runtime_governor, chunk, false).await?;
+    send_h2_data_with_backpressure(downstream_response_stream, runtime_governor, chunk, false)
+        .await?;
     if let (Some(dispatcher), Some(chunk)) = (stream_dispatcher.as_mut(), hook_chunk.as_ref()) {
         dispatcher
             .on_chunk(flow_hooks, stream_context, chunk.as_ref())

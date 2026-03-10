@@ -1,5 +1,5 @@
-use soth_mitm::test_tls::{classify_tls_error, TlsFailureReason};
 use proptest::prelude::*;
+use soth_mitm::test_tls::{classify_tls_error, TlsFailureReason};
 
 fn text_strategy() -> impl Strategy<Value = String> {
     proptest::string::string_regex("[A-Za-z0-9 _:/.-]{0,128}").expect("text regex")

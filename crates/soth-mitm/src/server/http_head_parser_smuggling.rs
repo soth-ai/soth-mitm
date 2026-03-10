@@ -1,5 +1,5 @@
-use std::io;
 use super::HttpHeader;
+use std::io;
 
 pub(crate) fn canonicalize_http_headers(headers: Vec<HttpHeader>) -> io::Result<Vec<HttpHeader>> {
     let mut canonical = Vec::with_capacity(headers.len());
@@ -102,7 +102,9 @@ pub(crate) struct ParsedTransferEncoding {
     pub(crate) chunked: bool,
 }
 
-pub(crate) fn parse_transfer_encoding(headers: &[HttpHeader]) -> io::Result<ParsedTransferEncoding> {
+pub(crate) fn parse_transfer_encoding(
+    headers: &[HttpHeader],
+) -> io::Result<ParsedTransferEncoding> {
     let mut parsed = ParsedTransferEncoding { chunked: false };
     for header in headers {
         if !header.name.eq_ignore_ascii_case("transfer-encoding") {

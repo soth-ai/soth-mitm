@@ -1,36 +1,45 @@
-use std::io;
-use std::sync::Arc;
+use super::event_emitters_protocol::{
+    emit_grpc_request_headers_event, emit_grpc_response_headers_event,
+    emit_grpc_response_trailers_event,
+};
+use super::flow_hook_http_helpers::{
+    build_handler_header_map_from_h2, ensure_handler_host_header_from_uri, mark_body_truncated,
+    normalize_grpc_request_body_for_handler, normalize_h2_path_for_handler,
+    normalize_request_body_for_handler, sanitize_block_status,
+};
+use super::flow_hooks::{FlowHooks, RawRequest};
+use super::http2_relay_support::{
+    detect_grpc_request, enforce_h2_request_header_limit, enforce_h2_response_header_limit,
+    h2_error_to_io, is_h2_nonfatal_stream_error,
+};
+use super::http2_stream_hook_dispatch::{
+    capture_h2_body, dispatch_h2_response_hooks, H2CapturedBody,
+};
+use super::http2_stream_relay::{h2_relay_debug, H2ByteCounters};
+use super::http2_stream_relay_http1::{
+    acquire_h2_h1_upstream_stream, build_http1_request_head_from_h2, H2ToH1UpstreamFactory,
+};
+use super::http2_stream_relay_http1_body::{
+    build_h2_response_parts_from_http1, respond_h2_error_and_end, send_h2_text_response,
+    write_http1_request_body_from_h2_capture,
+};
+use super::http2_stream_relay_http1_response_relay::relay_http1_response_body_with_incremental_forwarding;
+use super::http2_stream_response_relay::h2_response_stream_hook_dispatcher;
+use super::http_head_parser::{
+    parse_http_response_head_with_mode, read_until_pattern_no_stage_timeout,
+};
+use super::io_timeouts::{
+    flush_with_idle_timeout, with_stream_stage_timeout, write_all_with_idle_timeout,
+};
+use super::runtime_governor;
+use super::{BufferedConn, HttpBodyMode};
+use crate::actions::HandlerDecision;
+use crate::config::InterceptMode;
 use crate::engine::MitmEngine;
 use crate::observe::{EventConsumer, FlowContext};
 use crate::policy::PolicyEngine;
-use super::{BufferedConn, HttpBodyMode};
-use super::runtime_governor;
-use crate::actions::HandlerDecision;
-use super::flow_hooks::{FlowHooks, RawRequest};
-use super::io_timeouts::{
-    write_all_with_idle_timeout, flush_with_idle_timeout, with_stream_stage_timeout,
-};
-use super::http2_relay_support::{
-    enforce_h2_request_header_limit, enforce_h2_response_header_limit,
-    h2_error_to_io, is_h2_nonfatal_stream_error, detect_grpc_request,
-};
-use super::http2_stream_relay::{H2ByteCounters, h2_relay_debug};
-use super::http2_stream_relay_http1::{H2ToH1UpstreamFactory, acquire_h2_h1_upstream_stream, build_http1_request_head_from_h2};
-use super::http2_stream_relay_http1_body::{
-    build_h2_response_parts_from_http1, write_http1_request_body_from_h2_capture,
-    send_h2_text_response, respond_h2_error_and_end,
-};
-use super::http2_stream_relay_http1_response_relay::relay_http1_response_body_with_incremental_forwarding;
-use super::http2_stream_hook_dispatch::{H2CapturedBody, capture_h2_body, dispatch_h2_response_hooks};
-use super::http2_stream_response_relay::h2_response_stream_hook_dispatcher;
-use super::http_head_parser::{read_until_pattern_no_stage_timeout, parse_http_response_head_with_mode};
-use super::event_emitters_protocol::{emit_grpc_request_headers_event, emit_grpc_response_headers_event, emit_grpc_response_trailers_event};
-use super::flow_hook_http_helpers::{
-    build_handler_header_map_from_h2, ensure_handler_host_header_from_uri,
-    normalize_grpc_request_body_for_handler, normalize_request_body_for_handler,
-    normalize_h2_path_for_handler, mark_body_truncated, sanitize_block_status,
-};
-use crate::config::InterceptMode;
+use std::io;
+use std::sync::Arc;
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn relay_http2_stream_to_http1_upstream<P, S>(
@@ -184,24 +193,28 @@ where
     };
     let mut upstream_conn = BufferedConn::new(upstream_stream);
 
-    let upstream_request_head =
-        match build_http1_request_head_from_h2(&request_parts, &stream_context, &request_captured)
-        {
-            Ok(value) => value,
-            Err(error) => {
-                h2_relay_debug(format!("[h2-h1:request] request head build failed: {error}"));
-                respond_h2_error_and_end(
-                    &flow_hooks,
-                    stream_context,
-                    &mut downstream_respond,
-                    &runtime_governor,
-                    400,
-                    "downstream request could not be translated",
-                )
-                .await?;
-                return Ok(());
-            }
-        };
+    let upstream_request_head = match build_http1_request_head_from_h2(
+        &request_parts,
+        &stream_context,
+        &request_captured,
+    ) {
+        Ok(value) => value,
+        Err(error) => {
+            h2_relay_debug(format!(
+                "[h2-h1:request] request head build failed: {error}"
+            ));
+            respond_h2_error_and_end(
+                &flow_hooks,
+                stream_context,
+                &mut downstream_respond,
+                &runtime_governor,
+                400,
+                "downstream request could not be translated",
+            )
+            .await?;
+            return Ok(());
+        }
+    };
     if let Err(error) = write_all_with_idle_timeout(
         &mut upstream_conn.stream,
         &upstream_request_head,
@@ -209,7 +222,9 @@ where
     )
     .await
     {
-        h2_relay_debug(format!("[h2-h1:upstream] request head write failed: {error}"));
+        h2_relay_debug(format!(
+            "[h2-h1:upstream] request head write failed: {error}"
+        ));
         respond_h2_error_and_end(
             &flow_hooks,
             stream_context,
@@ -232,7 +247,9 @@ where
     })
     .await
     {
-        h2_relay_debug(format!("[h2-h1:upstream] request body forward failed: {error}"));
+        h2_relay_debug(format!(
+            "[h2-h1:upstream] request body forward failed: {error}"
+        ));
         respond_h2_error_and_end(
             &flow_hooks,
             stream_context,
@@ -254,7 +271,9 @@ where
     .await
     {
         Err(error) => {
-            h2_relay_debug(format!("[h2-h1:response] response head read failed: {error}"));
+            h2_relay_debug(format!(
+                "[h2-h1:response] response head read failed: {error}"
+            ));
             respond_h2_error_and_end(
                 &flow_hooks,
                 stream_context,
@@ -287,7 +306,8 @@ where
     ) {
         Ok(parsed) => parsed,
         Err(error) => {
-            let detail = format!("response parse error (strict_header_mode={strict_header_mode}): {error}");
+            let detail =
+                format!("response parse error (strict_header_mode={strict_header_mode}): {error}");
             h2_relay_debug(format!("[h2-h1:response] {detail}"));
             respond_h2_error_and_end(
                 &flow_hooks,
@@ -317,7 +337,9 @@ where
     let response_parts = match build_h2_response_parts_from_http1(&upstream_response) {
         Ok(parts) => parts,
         Err(error) => {
-            h2_relay_debug(format!("[h2-h1:response] response head translate failed: {error}"));
+            h2_relay_debug(format!(
+                "[h2-h1:response] response head translate failed: {error}"
+            ));
             respond_h2_error_and_end(
                 &flow_hooks,
                 stream_context,
@@ -411,12 +433,7 @@ where
         grpc_observation.as_ref(),
         relay_outcome.observed_trailers.as_ref(),
     ) {
-        emit_grpc_response_trailers_event(
-            &engine,
-            stream_context.clone(),
-            observation,
-            trailers,
-        );
+        emit_grpc_response_trailers_event(&engine, stream_context.clone(), observation, trailers);
     }
 
     if stream_dispatcher.is_none() {
@@ -431,4 +448,3 @@ where
     }
     Ok(())
 }
-

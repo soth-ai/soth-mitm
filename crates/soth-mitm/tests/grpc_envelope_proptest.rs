@@ -1,5 +1,5 @@
-use soth_mitm::test_protocol::{GrpcEnvelopeMalformedCode, GrpcEnvelopeParser, GrpcEnvelopeRecord};
 use proptest::prelude::*;
+use soth_mitm::test_protocol::{GrpcEnvelopeMalformedCode, GrpcEnvelopeParser, GrpcEnvelopeRecord};
 
 fn frame(compressed_flag: u8, payload: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(5 + payload.len());

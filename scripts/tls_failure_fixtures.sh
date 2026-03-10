@@ -32,9 +32,9 @@ run_case() {
 
 : >"$status_tsv"
 run_case unknown_ca_native_path \
-  cargo test -p mitm-sidecar --test http1_mitm intercept_upstream_tls_failure_emits_taxonomy_reason -q
+  cargo test -p soth-mitm --test http1_mitm intercept_upstream_tls_failure_emits_taxonomy_reason -q
 run_case timeout_reset_invalid_chain_authoritative_path \
-  cargo test -p mitm-sidecar --test mitmproxy_tls_adapter replayed_mitmproxy_failed_callbacks_match_native_taxonomy -q
+  cargo test -p soth-mitm --test mitmproxy_tls_adapter replayed_mitmproxy_failed_callbacks_match_native_taxonomy -q
 
 failed="$(awk '$2 != "pass" {print $1}' "$status_tsv" || true)"
 {

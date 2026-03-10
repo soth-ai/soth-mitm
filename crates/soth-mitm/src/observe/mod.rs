@@ -184,8 +184,8 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use super::{
-        ApplicationProtocol, Event, EventConsumer, EventEnvelope, EventType, FlowContext,
-        FlowId, NoopEventConsumer, VecEventConsumer, EVENT_SCHEMA_VERSION,
+        ApplicationProtocol, Event, EventConsumer, EventEnvelope, EventType, FlowContext, FlowId,
+        NoopEventConsumer, VecEventConsumer, EVENT_SCHEMA_VERSION,
     };
 
     #[derive(Debug, Default, Clone)]

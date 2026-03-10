@@ -1,6 +1,5 @@
 use std::io;
 
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum UpstreamRequestTargetMode {
     OriginForm,
@@ -92,7 +91,10 @@ impl FlowRoutePlanner {
     }
 }
 
-pub(crate) fn plan_route(config: &crate::engine::MitmConfig, target: RouteTarget) -> io::Result<RouteBinding> {
+pub(crate) fn plan_route(
+    config: &crate::engine::MitmConfig,
+    target: RouteTarget,
+) -> io::Result<RouteBinding> {
     match config.route_mode {
         crate::engine::RouteMode::Direct => Ok(RouteBinding {
             mode: config.route_mode,
@@ -171,7 +173,10 @@ mod route_planner_tests {
         .expect("plan route");
         assert_eq!(route.next_hop_host, "api.example.com");
         assert_eq!(route.next_hop_port, 443);
-        assert_eq!(route.request_target_mode, UpstreamRequestTargetMode::OriginForm);
+        assert_eq!(
+            route.request_target_mode,
+            UpstreamRequestTargetMode::OriginForm
+        );
     }
 
     #[test]
@@ -191,7 +196,10 @@ mod route_planner_tests {
         .expect("plan route");
         assert_eq!(route.next_hop_host, "reverse.local");
         assert_eq!(route.next_hop_port, 9443);
-        assert_eq!(route.request_target_mode, UpstreamRequestTargetMode::OriginForm);
+        assert_eq!(
+            route.request_target_mode,
+            UpstreamRequestTargetMode::OriginForm
+        );
     }
 
     #[test]
@@ -234,7 +242,10 @@ mod route_planner_tests {
         .expect("plan route");
         assert_eq!(route.next_hop_host, "socks.local");
         assert_eq!(route.next_hop_port, 1080);
-        assert_eq!(route.request_target_mode, UpstreamRequestTargetMode::OriginForm);
+        assert_eq!(
+            route.request_target_mode,
+            UpstreamRequestTargetMode::OriginForm
+        );
     }
 
     #[test]

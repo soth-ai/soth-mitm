@@ -52,13 +52,11 @@ run_cargo_suite() {
   fi
 }
 
-run_cargo_suite mitm_core -p mitm-core
-run_cargo_suite mitm_tls -p mitm-tls
-run_cargo_suite mitm_sidecar_lib -p mitm-sidecar --lib
-run_cargo_suite phase_a_fixture -p mitm-sidecar --test phase_a
-run_cargo_suite http1_mitm_fixture -p mitm-sidecar --test http1_mitm
-run_cargo_suite tls_learning_guardrails_fixture -p mitm-sidecar --test tls_learning_guardrails
-run_cargo_suite mitmproxy_tls_adapter_fixture -p mitm-sidecar --test mitmproxy_tls_adapter
+run_cargo_suite soth_mitm_lib -p soth-mitm --lib
+run_cargo_suite phase_a_fixture -p soth-mitm --test phase_a
+run_cargo_suite http1_mitm_fixture -p soth-mitm --test http1_mitm
+run_cargo_suite tls_learning_guardrails_fixture -p soth-mitm --test tls_learning_guardrails
+run_cargo_suite mitmproxy_tls_adapter_fixture -p soth-mitm --test mitmproxy_tls_adapter
 
 if [[ "${#failures[@]}" -gt 0 ]]; then
   {

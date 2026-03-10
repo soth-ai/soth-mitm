@@ -1,8 +1,8 @@
+use super::http2_relay_support::{h2_error_to_io, H2_FORWARD_CHUNK_LIMIT};
+use super::io_timeouts::with_h2_body_idle_timeout;
+use super::runtime_governor;
 use std::io;
 use std::sync::Arc;
-use super::runtime_governor;
-use super::io_timeouts::with_h2_body_idle_timeout;
-use super::http2_relay_support::{H2_FORWARD_CHUNK_LIMIT, h2_error_to_io};
 
 pub(crate) async fn send_h2_data_with_backpressure(
     sink: &mut h2::SendStream<bytes::Bytes>,
@@ -21,13 +21,15 @@ pub(crate) async fn send_h2_data_with_backpressure(
         // waiting for a full remaining-window grant before sending the first frame.
         let desired_capacity = data.len().min(H2_FORWARD_CHUNK_LIMIT);
         let available_capacity = wait_for_h2_capacity(sink, desired_capacity).await?;
-        let send_len = available_capacity.min(data.len()).min(H2_FORWARD_CHUNK_LIMIT);
+        let send_len = available_capacity
+            .min(data.len())
+            .min(H2_FORWARD_CHUNK_LIMIT);
         if send_len == 0 {
             continue;
         }
         let chunk = data.split_to(send_len);
-        let _in_flight_lease = runtime_governor
-            .reserve_in_flight_or_error(send_len, "http2_data_frame_write")?;
+        let _in_flight_lease =
+            runtime_governor.reserve_in_flight_or_error(send_len, "http2_data_frame_write")?;
         let is_last = data.is_empty();
         sink.send_data(chunk, end_stream && is_last)
             .map_err(|error| h2_error_to_io("sending HTTP/2 data frame failed", error))?;
@@ -51,10 +53,7 @@ async fn wait_for_h2_capacity(
                     continue;
                 }
                 Some(Err(error)) => {
-                    return Err(h2_error_to_io(
-                        "polling HTTP/2 send capacity failed",
-                        error,
-                    ));
+                    return Err(h2_error_to_io("polling HTTP/2 send capacity failed", error));
                 }
                 None => {
                     return Err(io::Error::new(

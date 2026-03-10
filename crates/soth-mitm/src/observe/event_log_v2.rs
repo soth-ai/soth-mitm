@@ -276,7 +276,6 @@ fn create_truncated_file(path: &Path) -> io::Result<File> {
         .open(path)
 }
 
-
 fn event_stream_key(event: &Event) -> String {
     if let Some(stream_id) = event.attributes.get("http2_stream_id") {
         return format!("h2:{stream_id}");

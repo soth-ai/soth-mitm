@@ -1,8 +1,10 @@
+use super::SidecarConfig;
 use std::io;
 use tokio::net::{TcpListener, TcpStream};
-use super::SidecarConfig;
 
-pub(crate) async fn bind_listener_with_socket_hardening(config: &SidecarConfig) -> io::Result<TcpListener> {
+pub(crate) async fn bind_listener_with_socket_hardening(
+    config: &SidecarConfig,
+) -> io::Result<TcpListener> {
     const LISTENER_BIND_RETRY_ATTEMPTS: u32 = 8;
 
     let resolved = tokio::net::lookup_host((config.listen_addr.as_str(), config.listen_port))

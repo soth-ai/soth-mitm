@@ -1,5 +1,5 @@
-use std::io;
 use super::http_head_parser::{parse_http_request_head, parse_http_response_head};
+use std::io;
 
 pub fn parse_http1_request_head_bytes(raw: &[u8]) -> io::Result<()> {
     parse_http_request_head(raw).map(|_| ())
@@ -11,10 +11,10 @@ pub fn parse_http1_response_head_bytes(raw: &[u8], request_method: &str) -> io::
 
 #[cfg(test)]
 mod http_head_parser_api_tests {
-    use super::{parse_http1_request_head_bytes, parse_http1_response_head_bytes};
     use super::super::http_head_parser::{
         parse_http_request_head_with_mode, parse_http_response_head_with_mode,
     };
+    use super::{parse_http1_request_head_bytes, parse_http1_response_head_bytes};
 
     #[test]
     fn request_head_api_accepts_basic_head() {
@@ -24,8 +24,7 @@ mod http_head_parser_api_tests {
 
     #[test]
     fn request_head_api_preserves_absolute_form_proxy_target() {
-        let raw =
-            b"GET http://example.com/path?q=1 HTTP/1.1\r\nHost: example.com\r\n\r\n";
+        let raw = b"GET http://example.com/path?q=1 HTTP/1.1\r\nHost: example.com\r\n\r\n";
         parse_http1_request_head_bytes(raw).expect("absolute-form request head should parse");
     }
 
@@ -66,7 +65,9 @@ mod http_head_parser_api_tests {
     fn request_rejects_duplicate_chunked_transfer_encoding() {
         let raw = b"POST /upload HTTP/1.1\r\nHost: example.com\r\nTransfer-Encoding: chunked, chunked\r\n\r\n";
         let error = parse_http1_request_head_bytes(raw).expect_err("request should fail");
-        assert!(error.to_string().contains("invalid Transfer-Encoding value"));
+        assert!(error
+            .to_string()
+            .contains("invalid Transfer-Encoding value"));
     }
 
     #[test]
@@ -99,8 +100,7 @@ mod http_head_parser_api_tests {
 
     #[test]
     fn response_rejects_transfer_encoding_content_length_conflict() {
-        let raw =
-            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nContent-Length: 10\r\n\r\n";
+        let raw = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nContent-Length: 10\r\n\r\n";
         let error = parse_http1_response_head_bytes(raw, "GET").expect_err("response should fail");
         assert!(error.to_string().contains("conflicting Transfer-Encoding"));
     }
@@ -116,11 +116,9 @@ mod http_head_parser_api_tests {
     fn strict_header_mode_rejects_http10_request_version() {
         let raw = b"GET /legacy HTTP/1.0\r\nHost: example.com\r\n\r\n";
         let error = parse_http_request_head_with_mode(raw, true).expect_err("request should fail");
-        assert!(
-            error
-                .to_string()
-                .contains("strict_header_mode requires HTTP/1.1 request version")
-        );
+        assert!(error
+            .to_string()
+            .contains("strict_header_mode requires HTTP/1.1 request version"));
     }
 
     #[test]
@@ -128,10 +126,8 @@ mod http_head_parser_api_tests {
         let raw = b"HTTP/1.0 200 OK\r\nContent-Length: 0\r\n\r\n";
         let error =
             parse_http_response_head_with_mode(raw, "GET", true).expect_err("response should fail");
-        assert!(
-            error
-                .to_string()
-                .contains("strict_header_mode requires HTTP/1.1 response version")
-        );
+        assert!(error
+            .to_string()
+            .contains("strict_header_mode requires HTTP/1.1 response version"));
     }
 }

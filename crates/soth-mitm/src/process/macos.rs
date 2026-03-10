@@ -487,7 +487,10 @@ mod tests {
     fn codesign_identity_extracts_from_signed_system_binary() {
         let path = PathBuf::from("/usr/bin/curl");
         if let Some(identity) = lookup_codesign_identity(&path) {
-            assert!(identity.contains('.'), "expected reverse-dns identity: {identity}");
+            assert!(
+                identity.contains('.'),
+                "expected reverse-dns identity: {identity}"
+            );
         }
     }
 }

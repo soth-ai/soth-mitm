@@ -41,12 +41,12 @@ run_case() {
 : >"$status_tsv"
 
 run_case observe_v2_deterministic_record \
-  cargo test -p mitm-observe --test event_log_v2 deterministic_record_v2_ -q
+  cargo test -p soth-mitm --test event_log_v2 deterministic_record_v2_ -q
 run_case observe_v2_rotation_index \
-  cargo test -p mitm-observe --test event_log_v2 \
+  cargo test -p soth-mitm --test event_log_v2 \
     event_log_v2_consumer_writes_index_and_rotates_segments -q
 run_case sidecar_automation_exit_contract \
-  cargo test -p mitm-sidecar --test automation_contract -q
+  cargo test -p soth-mitm --test automation_contract -q
 run_case differential_replay_v2_fixture_contract \
   ./scripts/p4_differential_replay.sh --report-dir "$report_dir/differential-replay" --strict-input
 

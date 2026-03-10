@@ -1,23 +1,23 @@
-use std::io;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::OnceLock;
-use tokio::io::{AsyncRead, AsyncWrite};
+use super::close_codes::CloseReasonCode;
+use super::event_emitters::emit_stream_closed;
+use super::flow_hooks::FlowHooks;
+use super::http2_relay_support::{
+    configure_h2_client, configure_h2_server, h2_error_to_io, is_benign_h2_stream_io_error,
+    is_h2_nonfatal_stream_error,
+};
+use super::http2_stream_relay_stream::relay_http2_stream;
+use super::io_timeouts::{is_idle_watchdog_timeout, is_stream_stage_timeout};
+use super::runtime_governor;
 use crate::engine::MitmEngine;
 use crate::observe::{EventConsumer, FlowContext};
 use crate::policy::PolicyEngine;
 use crate::protocol::ApplicationProtocol;
 use crate::types::ProcessInfo;
-use super::runtime_governor;
-use super::flow_hooks::FlowHooks;
-use super::close_codes::CloseReasonCode;
-use super::event_emitters::emit_stream_closed;
-use super::io_timeouts::{is_idle_watchdog_timeout, is_stream_stage_timeout};
-use super::http2_relay_support::{
-    configure_h2_server, configure_h2_client,
-    is_h2_nonfatal_stream_error, is_benign_h2_stream_io_error, h2_error_to_io,
-};
-use super::http2_stream_relay_stream::relay_http2_stream;
+use std::io;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+use std::sync::OnceLock;
+use tokio::io::{AsyncRead, AsyncWrite};
 
 static H2_RELAY_DEBUG_ENABLED: OnceLock<bool> = OnceLock::new();
 
@@ -80,23 +80,24 @@ where
 
     let mut upstream_builder = h2::client::Builder::new();
     configure_h2_client(&mut upstream_builder, max_header_list_size);
-    let (upstream_sender, upstream_connection) = match upstream_builder.handshake(upstream_tls).await {
-        Ok(connection_parts) => connection_parts,
-        Err(error) => {
-            emit_stream_closed(
-                &engine,
-                FlowContext {
-                    protocol: ApplicationProtocol::Http2,
-                    ..tunnel_context
-                },
-                CloseReasonCode::MitmHttpError,
-                Some(format!("upstream HTTP/2 handshake failed: {error}")),
-                None,
-                None,
-            );
-            return Ok(());
-        }
-    };
+    let (upstream_sender, upstream_connection) =
+        match upstream_builder.handshake(upstream_tls).await {
+            Ok(connection_parts) => connection_parts,
+            Err(error) => {
+                emit_stream_closed(
+                    &engine,
+                    FlowContext {
+                        protocol: ApplicationProtocol::Http2,
+                        ..tunnel_context
+                    },
+                    CloseReasonCode::MitmHttpError,
+                    Some(format!("upstream HTTP/2 handshake failed: {error}")),
+                    None,
+                    None,
+                );
+                return Ok(());
+            }
+        };
     let upstream_connection_task = tokio::spawn(upstream_connection);
 
     let http2_context = FlowContext {
@@ -230,4 +231,3 @@ where
 
     Ok(())
 }
-

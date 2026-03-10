@@ -36,20 +36,20 @@ run_case() {
 
 {
   run_case http1_parser_api_smuggling_guards \
-    cargo test -p mitm-sidecar http_head_parser_api_tests -q
+    cargo test -p soth-mitm http_head_parser_api_tests -q
   run_case http1_smuggling_fixture_corpus \
-    cargo test -p mitm-sidecar --test http1_head_corpus -q
+    cargo test -p soth-mitm --test http1_head_corpus -q
   run_case http1_forward_absolute_form_proxy_semantics \
-    cargo test -p mitm-sidecar --test http1_mitm \
+    cargo test -p soth-mitm --test http1_mitm \
       forward_http_absolute_form_request_relays_without_connect -q
   run_case http1_forward_te_cl_smuggling_rejected \
-    cargo test -p mitm-sidecar --test http1_mitm \
+    cargo test -p soth-mitm --test http1_mitm \
       forward_proxy_rejects_te_cl_smuggling_request_with_deterministic_400 -q
   run_case http1_forward_https_absolute_form_rejected \
-    cargo test -p mitm-sidecar --test http1_mitm \
+    cargo test -p soth-mitm --test http1_mitm \
       forward_proxy_rejects_https_absolute_form_with_deterministic_400 -q
   run_case http1_intercept_te_cl_smuggling_rejected \
-    cargo test -p mitm-sidecar --test http1_mitm \
+    cargo test -p soth-mitm --test http1_mitm \
       intercept_path_rejects_te_cl_smuggling_before_upstream_http_bytes -q
 } >"$run_log" 2>&1 || true
 

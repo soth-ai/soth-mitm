@@ -157,29 +157,26 @@ fn build_openssl_acceptor(
     issued: &IssuedServerConfig,
     http2_enabled: bool,
 ) -> io::Result<SslAcceptor> {
-    let mut builder = SslAcceptor::mozilla_intermediate(SslMethod::tls()).map_err(|error| {
-        io::Error::other(format!("build openssl acceptor failed: {error}"))
-    })?;
+    let mut builder = SslAcceptor::mozilla_intermediate(SslMethod::tls())
+        .map_err(|error| io::Error::other(format!("build openssl acceptor failed: {error}")))?;
     builder.set_verify(SslVerifyMode::NONE);
 
-    let leaf_cert = X509::from_pem(issued.leaf_identity.leaf_cert_pem.as_bytes()).map_err(|error| {
-        io::Error::other(format!("parse leaf certificate PEM failed: {error}"))
-    })?;
+    let leaf_cert = X509::from_pem(issued.leaf_identity.leaf_cert_pem.as_bytes())
+        .map_err(|error| io::Error::other(format!("parse leaf certificate PEM failed: {error}")))?;
     let leaf_key = PKey::private_key_from_pem(issued.leaf_identity.leaf_key_pem.as_bytes())
         .map_err(|error| io::Error::other(format!("parse leaf key PEM failed: {error}")))?;
-    let ca_cert = X509::from_pem(issued.leaf_identity.ca_cert_pem.as_bytes()).map_err(|error| {
-        io::Error::other(format!("parse CA certificate PEM failed: {error}"))
-    })?;
+    let ca_cert = X509::from_pem(issued.leaf_identity.ca_cert_pem.as_bytes())
+        .map_err(|error| io::Error::other(format!("parse CA certificate PEM failed: {error}")))?;
 
     builder
         .set_private_key(&leaf_key)
         .map_err(|error| io::Error::other(format!("set openssl private key failed: {error}")))?;
-    builder
-        .set_certificate(&leaf_cert)
-        .map_err(|error| io::Error::other(format!("set openssl leaf certificate failed: {error}")))?;
-    builder
-        .add_extra_chain_cert(ca_cert)
-        .map_err(|error| io::Error::other(format!("set openssl chain certificate failed: {error}")))?;
+    builder.set_certificate(&leaf_cert).map_err(|error| {
+        io::Error::other(format!("set openssl leaf certificate failed: {error}"))
+    })?;
+    builder.add_extra_chain_cert(ca_cert).map_err(|error| {
+        io::Error::other(format!("set openssl chain certificate failed: {error}"))
+    })?;
     builder
         .check_private_key()
         .map_err(|error| io::Error::other(format!("openssl private key check failed: {error}")))?;

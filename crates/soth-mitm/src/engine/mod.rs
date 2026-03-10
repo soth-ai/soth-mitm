@@ -4,11 +4,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::Instant;
 
-use crate::protocol::ApplicationProtocol;
 use crate::observe::{Event, EventConsumer, EventEnvelope, EventType, FlowContext};
-use crate::policy::{
-    FlowAction, PolicyEngine, PolicyInput, PolicyOverrideState,
-};
+use crate::policy::{FlowAction, PolicyEngine, PolicyInput, PolicyOverrideState};
+use crate::protocol::ApplicationProtocol;
 use crate::types::{FlowId, ProcessInfo};
 
 mod config;
@@ -17,9 +15,8 @@ pub mod server;
 pub use crate::config::InterceptMode;
 pub use config::{
     CompatibilityOverrideConfig, ConnectParseMode, DownstreamCertProfile, DownstreamTlsBackend,
-    EventSinkConfig, EventSinkKind, MitmConfig, MitmConfigError,
-    RouteEndpointConfig, RouteMode, TlsFingerprintClass, TlsFingerprintMode, TlsProfile,
-    UpstreamClientAuthMode, UpstreamSniMode,
+    EventSinkConfig, EventSinkKind, MitmConfig, MitmConfigError, RouteEndpointConfig, RouteMode,
+    TlsFingerprintClass, TlsFingerprintMode, TlsProfile, UpstreamClientAuthMode, UpstreamSniMode,
 };
 use flow_state::FlowStateTracker;
 

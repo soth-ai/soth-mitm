@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use dashmap::{DashMap, DashSet};
 use crate::observe::FlowContext;
+use dashmap::{DashMap, DashSet};
 
 use crate::runtime::connection_meta::tls_info_from_intercept_decision;
 use crate::types::{ConnectionMeta, FlowId};

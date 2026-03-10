@@ -1,8 +1,8 @@
+use proptest::prelude::*;
 use soth_mitm::test_engine::{
     parse_connect_request_head_with_mode, parse_connect_request_line_with_mode, ConnectParseError,
     ConnectParseMode,
 };
-use proptest::prelude::*;
 
 fn host_strategy() -> impl Strategy<Value = String> {
     proptest::string::string_regex("[a-z0-9](?:[a-z0-9.-]{0,30}[a-z0-9])?")

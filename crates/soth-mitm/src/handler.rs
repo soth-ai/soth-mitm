@@ -19,10 +19,7 @@ pub trait InterceptHandler: Send + Sync + 'static {
     /// The `response` carries the 101 status and upgrade headers (empty body).
     /// Fires after `on_request` and before the first `on_stream_chunk`.
     /// Ordering is guaranteed by the per-flow dispatch queue.
-    fn on_websocket_start(
-        &self,
-        _response: &RawResponse,
-    ) -> impl Future<Output = ()> + Send {
+    fn on_websocket_start(&self, _response: &RawResponse) -> impl Future<Output = ()> + Send {
         async {}
     }
 

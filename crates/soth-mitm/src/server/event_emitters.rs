@@ -1,15 +1,17 @@
-use std::io;
+use super::close_codes::{CloseReasonCode, ParseFailureCode};
+use super::runtime_governor;
+use super::tls_learning::{
+    TlsLearningDecision, TlsLearningGuardrails, TlsLearningOutcome, TlsLearningSignal,
+};
+use super::tls_profile_mapping::insert_tls_fingerprint_provenance;
+use super::tls_revocation_metadata::insert_tls_revocation_metadata;
+use super::{HttpRequestHead, HttpResponseHead, TlsDiagnostics, TLS_OPS_PROVIDER};
 use crate::engine::MitmEngine;
 use crate::observe::{Event, EventConsumer, EventType, FlowContext};
 use crate::policy::PolicyEngine;
 use crate::protocol::{negotiated_alpn_label, ApplicationProtocol};
 use crate::tls::{classify_tls_error, TlsConfigError};
-use super::{HttpRequestHead, HttpResponseHead, TLS_OPS_PROVIDER, TlsDiagnostics};
-use super::tls_profile_mapping::insert_tls_fingerprint_provenance;
-use super::tls_revocation_metadata::insert_tls_revocation_metadata;
-use super::tls_learning::{TlsLearningDecision, TlsLearningGuardrails, TlsLearningOutcome, TlsLearningSignal};
-use super::close_codes::{CloseReasonCode, ParseFailureCode};
-use super::runtime_governor;
+use std::io;
 
 pub(crate) fn emit_request_headers_event<P, S>(
     engine: &MitmEngine<P, S>,
@@ -198,7 +200,9 @@ pub(crate) fn emit_tls_event_with_detail<P, S>(
         engine.config.tls_fingerprint_mode,
         engine.config.tls_fingerprint_class,
     );
-    event.attributes.insert("detail".to_string(), detail.clone());
+    event
+        .attributes
+        .insert("detail".to_string(), detail.clone());
     if let Some((reason, source, provider, counters, learning_outcome)) = failure_metadata {
         event
             .attributes

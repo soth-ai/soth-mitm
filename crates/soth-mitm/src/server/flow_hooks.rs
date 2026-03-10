@@ -1,11 +1,11 @@
 use std::future::Future;
 use std::pin::Pin;
 
-use bytes::Bytes;
-use http::HeaderMap;
 use crate::actions::HandlerDecision;
 use crate::observe::FlowContext;
 use crate::types::{FrameKind, ProcessInfo};
+use bytes::Bytes;
+use http::HeaderMap;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RawRequest {

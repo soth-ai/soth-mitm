@@ -31,13 +31,13 @@ run_case() {
 }
 
 : >"$status_tsv"
-run_case connect_policy_and_lifecycle cargo test -p mitm-sidecar --test phase_a -q
-run_case http1_fixture cargo test -p mitm-sidecar --test http1_mitm intercept_get_over_tls_forwards_and_emits_http_events -q
-run_case http2_fixture cargo test -p mitm-sidecar --test http2_mitm intercept_http2_over_tls_relays_and_marks_protocol -q
-run_case websocket_fixture cargo test -p mitm-sidecar --test websocket_mitm websocket_upgrade_relays_text_and_binary_frames_without_corruption -q
-run_case sse_fixture cargo test -p mitm-sidecar --test sse_mitm parses_sse_events_incrementally_and_flushes_tail_on_stream_close -q
-run_case grpc_fixture_parser cargo test -p mitm-http --lib -q
-run_case http3_passthrough_fixture cargo test -p mitm-sidecar --test http3_passthrough_mitm http3_hint_forces_tunnel_passthrough_and_emits_telemetry -q
+run_case connect_policy_and_lifecycle cargo test -p soth-mitm --test phase_a -q
+run_case http1_fixture cargo test -p soth-mitm --test http1_mitm intercept_get_over_tls_forwards_and_emits_http_events -q
+run_case http2_fixture cargo test -p soth-mitm --test http2_mitm intercept_http2_over_tls_relays_and_marks_protocol -q
+run_case websocket_fixture cargo test -p soth-mitm --test websocket_mitm websocket_upgrade_relays_text_and_binary_frames_without_corruption -q
+run_case sse_fixture cargo test -p soth-mitm --test sse_mitm parses_sse_events_incrementally_and_flushes_tail_on_stream_close -q
+run_case grpc_fixture_parser cargo test -p soth-mitm --lib -q
+run_case http3_passthrough_fixture cargo test -p soth-mitm --test http3_passthrough_mitm http3_hint_forces_tunnel_passthrough_and_emits_telemetry -q
 run_case tls_fixture_matrix ./scripts/tls_failure_fixtures.sh --report-dir "$report_dir/tls-fixtures"
 
 failed="$(awk '$2 != "pass" {print $1}' "$status_tsv" || true)"
