@@ -83,17 +83,17 @@ async fn read_response_head(stream: &mut TcpStream) -> String {
     String::from_utf8_lossy(&data).to_string()
 }
 
-async fn read_http_head<S: AsyncRead + Unpin>(stream: &mut S) -> Vec<u8> {
+async fn read_http_head<S: AsyncRead + Unpin>(stream: &mut S) -> io::Result<Vec<u8>> {
     let mut data = Vec::new();
     let mut buffer = [0_u8; 1024];
     while !data.windows(4).any(|window| window == b"\r\n\r\n") {
-        let read = stream.read(&mut buffer).await.expect("read HTTP head");
+        let read = stream.read(&mut buffer).await?;
         if read == 0 {
             break;
         }
         data.extend_from_slice(&buffer[..read]);
     }
-    data
+    Ok(data)
 }
 
 async fn write_ws_frame_with_fin<S: AsyncWrite + Unpin>(
@@ -230,7 +230,7 @@ async fn try_connect_websocket_via_proxy(
     tls.write_all(upgrade_request.as_bytes()).await?;
     tls.flush().await?;
 
-    let upgrade_response = read_http_head(&mut tls).await;
+    let upgrade_response = read_http_head(&mut tls).await?;
     let upgrade_text = String::from_utf8_lossy(&upgrade_response);
     if !upgrade_text.starts_with("HTTP/1.1 101 Switching Protocols") {
         return Err(io::Error::new(
