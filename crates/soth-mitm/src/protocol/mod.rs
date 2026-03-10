@@ -3,8 +3,19 @@ mod decoder_chain;
 mod grpc_envelope;
 mod sse_parser;
 
-pub use decoder_chain::{DecoderFrame, DecoderStageProcessor, StageProcessOutcome};
+pub use decoder_chain::{
+    DecoderFrame, DecoderStageProcessor, StageProcessOutcome,
+    DecoderStage, DecoderFailureCode, DecoderStageStatus, DecoderPipelineResult,
+    DecoderPipelineRegistry, LayeredDecoderPipeline, validate_stage_order,
+};
 pub use sse_parser::{SseEvent, SseParser};
+pub use anti_hijack::{
+    AntiHijackSanitizationStage, SANITIZED_ATTRIBUTE, SANITIZED_PREFIX_ATTRIBUTE,
+    SANITIZED_PROVENANCE_ATTRIBUTE,
+};
+pub use grpc_envelope::{
+    GrpcEnvelopeMalformedCode, GrpcEnvelopeParser, GrpcEnvelopeRecord,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ApplicationProtocol {

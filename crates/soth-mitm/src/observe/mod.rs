@@ -4,7 +4,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::protocol::ApplicationProtocol;
 
-mod event_log_v2;
+pub(crate) mod event_log_v2;
 
 // Event log v2 types available for intra-crate use via observe::event_log_v2::
 

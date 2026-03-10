@@ -31,6 +31,7 @@ pub use flow_hooks::{
 };
 pub use mitmproxy_tls_ops::{
     adapt_mitmproxy_tls_callback, MitmproxyTlsAdapterEvent, MitmproxyTlsCallback,
+    MitmproxyTlsHook,
 };
 pub use runtime_governor::{RuntimeBudgetConfig, RuntimeGovernor, RuntimeObservabilitySnapshot};
 pub use tls_diagnostics::{TlsDiagnostics, TlsDiagnosticsSnapshot};
