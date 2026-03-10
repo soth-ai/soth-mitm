@@ -44,7 +44,5 @@ pub trait InterceptHandler: Send + Sync + 'static {
     /// connection-scoped cleanup (session unbinding, pending state removal).
     /// For HTTP/2 multiplexed connections, `on_stream_end` fires per-stream
     /// while `on_connection_close` fires once for the connection.
-    fn on_connection_close(&self, _connection_id: Uuid) -> impl Future<Output = ()> + Send {
-        async {}
-    }
+    fn on_connection_close(&self, _connection_id: Uuid) {}
 }
