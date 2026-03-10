@@ -22,31 +22,11 @@ pub enum UpstreamTlsSniMode {
     Disabled,
 }
 
-impl UpstreamTlsSniMode {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Required => "required",
-            Self::Auto => "auto",
-            Self::Disabled => "disabled",
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UpstreamClientAuthMode {
     Never,
     IfRequested,
     Required,
-}
-
-impl UpstreamClientAuthMode {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Never => "never",
-            Self::IfRequested => "if_requested",
-            Self::Required => "required",
-        }
-    }
 }
 
 #[derive(Debug)]

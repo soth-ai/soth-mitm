@@ -37,10 +37,4 @@ pub trait InterceptHandler: Send + Sync + 'static {
     fn on_response(&self, _response: &RawResponse) -> impl Future<Output = ()> + Send {
         async {}
     }
-
-    #[allow(dead_code)]
-    fn on_connection_open(&self, _meta: &crate::ConnectionMeta) {}
-
-    #[allow(dead_code)]
-    fn on_connection_close(&self, _connection_id: Uuid) {}
 }
