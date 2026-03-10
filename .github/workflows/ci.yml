@@ -49,9 +49,9 @@ jobs:
         if: runner.os != 'Windows'
         run: cargo check --workspace --all-features
 
-      - name: Check all feature set (Windows sans OpenSSL backend)
+      - name: Check default feature set (Windows, no OpenSSL backend)
         if: runner.os == 'Windows'
-        run: cargo check --workspace --all-features --exclude soth-mitm
+        run: cargo check --workspace
 
       - name: Check OpenSSL backend feature path (non-Windows)
         if: runner.os != 'Windows'
