@@ -64,7 +64,7 @@ http = "1"
 bytes = "1"
 soketto = { workspace = true }
 pin-project-lite = "0.2"
-socket2 = "0.5"
+socket2 = "0.6"
 
 # Compression
 brotli = "8.0.2"
