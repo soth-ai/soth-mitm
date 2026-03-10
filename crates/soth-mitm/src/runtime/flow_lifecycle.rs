@@ -134,4 +134,12 @@ pub(super) async fn finalize_flow<H: InterceptHandler>(
             handler_for_end.on_stream_end(connection_id).await
         })
         .await;
+
+    let handler_for_close = Arc::clone(&flow_state.handler);
+    flow_state
+        .callback_guard
+        .run_response((), async move {
+            handler_for_close.on_connection_close(connection_id).await
+        })
+        .await;
 }

@@ -673,9 +673,14 @@ impl InterceptHandler for StreamLifecycleHandler {
 
     fn on_stream_end(&self, _connection_id: Uuid) -> impl std::future::Future<Output = ()> + Send {
         let stream_end_count = Arc::clone(&self.stream_end_count);
-        let close_count = Arc::clone(&self.close_count);
         async move {
             stream_end_count.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    fn on_connection_close(&self, _connection_id: Uuid) -> impl std::future::Future<Output = ()> + Send {
+        let close_count = Arc::clone(&self.close_count);
+        async move {
             close_count.fetch_add(1, Ordering::Relaxed);
         }
     }
@@ -695,7 +700,7 @@ impl InterceptHandler for SlowLifecycleCloseHandler {
         async { HandlerDecision::Allow }
     }
 
-    fn on_stream_end(&self, _connection_id: Uuid) -> impl std::future::Future<Output = ()> + Send {
+    fn on_connection_close(&self, _connection_id: Uuid) -> impl std::future::Future<Output = ()> + Send {
         let close_delay = self.close_delay;
         let close_count = Arc::clone(&self.close_count);
         async move {

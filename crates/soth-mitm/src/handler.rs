@@ -37,4 +37,14 @@ pub trait InterceptHandler: Send + Sync + 'static {
     fn on_response(&self, _response: &RawResponse) -> impl Future<Output = ()> + Send {
         async {}
     }
+
+    /// Called exactly once when the underlying connection is torn down.
+    ///
+    /// This fires *after* `on_stream_end` and is the correct place for
+    /// connection-scoped cleanup (session unbinding, pending state removal).
+    /// For HTTP/2 multiplexed connections, `on_stream_end` fires per-stream
+    /// while `on_connection_close` fires once for the connection.
+    fn on_connection_close(&self, _connection_id: Uuid) -> impl Future<Output = ()> + Send {
+        async {}
+    }
 }
