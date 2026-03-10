@@ -27,6 +27,25 @@ pub enum ApplicationProtocol {
     Tunnel,
 }
 
+impl ApplicationProtocol {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Http1 => "http1",
+            Self::Http2 => "http2",
+            Self::WebSocket => "websocket",
+            Self::Sse => "sse",
+            Self::StreamableHttp => "streamable_http",
+            Self::Tunnel => "tunnel",
+        }
+    }
+}
+
+impl std::fmt::Display for ApplicationProtocol {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 pub const ALPN_HTTP_11: &[u8] = b"http/1.1";
 pub const ALPN_H2: &[u8] = b"h2";
 
@@ -80,10 +99,40 @@ pub enum WsDirection {
     ServerToClient,
 }
 
+impl WsDirection {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::ClientToServer => "client_to_server",
+            Self::ServerToClient => "server_to_client",
+        }
+    }
+}
+
+impl std::fmt::Display for WsDirection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WsFrameKind {
     Data,
     Control,
+}
+
+impl WsFrameKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Data => "data",
+            Self::Control => "control",
+        }
+    }
+}
+
+impl std::fmt::Display for WsFrameKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

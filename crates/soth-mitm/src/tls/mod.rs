@@ -1,5 +1,4 @@
 use std::collections::{HashMap, VecDeque};
-use std::error::Error as StdError;
 use std::fmt;
 use std::fs;
 use std::net::IpAddr;
@@ -38,6 +37,12 @@ impl TlsFailureReason {
             Self::EofOrReset => "eof_or_reset",
             Self::Other => "other",
         }
+    }
+}
+
+impl fmt::Display for TlsFailureReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.code())
     }
 }
 
@@ -126,47 +131,18 @@ fn contains_any(haystack: &str, needles: &[&str]) -> bool {
     needles.iter().any(|needle| haystack.contains(needle))
 }
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum TlsConfigError {
-    CertificateGeneration(rcgen::Error),
-    ConfigBuild(rustls::Error),
-    Io(std::io::Error),
+    #[error("certificate generation failed: {0}")]
+    CertificateGeneration(#[from] rcgen::Error),
+    #[error("TLS config build failed: {0}")]
+    ConfigBuild(#[from] rustls::Error),
+    #[error("I/O error: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("certificate store lock poisoned")]
     LockPoisoned,
+    #[error("invalid TLS configuration: {0}")]
     InvalidConfiguration(String),
-}
-
-impl fmt::Display for TlsConfigError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::CertificateGeneration(error) => {
-                write!(f, "certificate generation failed: {error}")
-            }
-            Self::ConfigBuild(error) => write!(f, "TLS config build failed: {error}"),
-            Self::Io(error) => write!(f, "I/O error: {error}"),
-            Self::LockPoisoned => write!(f, "certificate store lock poisoned"),
-            Self::InvalidConfiguration(reason) => write!(f, "invalid TLS configuration: {reason}"),
-        }
-    }
-}
-
-impl StdError for TlsConfigError {}
-
-impl From<rcgen::Error> for TlsConfigError {
-    fn from(value: rcgen::Error) -> Self {
-        Self::CertificateGeneration(value)
-    }
-}
-
-impl From<rustls::Error> for TlsConfigError {
-    fn from(value: rustls::Error) -> Self {
-        Self::ConfigBuild(value)
-    }
-}
-
-impl From<std::io::Error> for TlsConfigError {
-    fn from(value: std::io::Error) -> Self {
-        Self::Io(value)
-    }
 }
 
 pub fn build_http1_server_config_for_host(host: &str) -> Result<Arc<ServerConfig>, TlsConfigError> {
