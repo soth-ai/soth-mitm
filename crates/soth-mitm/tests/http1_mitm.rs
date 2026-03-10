@@ -7,9 +7,10 @@ use soth_mitm::test_engine::{InterceptMode, MitmConfig, MitmEngine, RouteEndpoin
 use soth_mitm::test_observe::{EventType, FlowContext, VecEventConsumer};
 use soth_mitm::test_policy::DefaultPolicyEngine;
 use soth_mitm::test_server::{
-    FlowHooks, RawRequest as HookRawRequest, RequestDecision, SidecarConfig, SidecarServer,
+    FlowHooks, RawRequest as HookRawRequest, SidecarConfig, SidecarServer,
     TlsDiagnostics, TlsLearningGuardrails,
 };
+use soth_mitm::HandlerDecision;
 use soth_mitm::test_tls::{build_http1_client_config, build_http1_server_config_for_host};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -111,7 +112,7 @@ impl FlowHooks for RequestHostCaptureHooks {
         &self,
         _context: FlowContext,
         request: HookRawRequest,
-    ) -> Pin<Box<dyn Future<Output = RequestDecision> + Send>> {
+    ) -> Pin<Box<dyn Future<Output = HandlerDecision> + Send>> {
         let seen_host = Arc::clone(&self.seen_host);
         Box::pin(async move {
             let host = request
@@ -120,7 +121,7 @@ impl FlowHooks for RequestHostCaptureHooks {
                 .and_then(|value| value.to_str().ok())
                 .map(ToOwned::to_owned);
             *seen_host.lock().await = host;
-            RequestDecision::Allow
+            HandlerDecision::Allow
         })
     }
 }

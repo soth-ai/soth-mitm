@@ -283,7 +283,7 @@ async fn dispatch_sse_chunks_from_buffer(
                 StreamChunk {
                     payload: bytes::Bytes::from(event.data),
                     sequence,
-                    frame_kind: StreamFrameKind::SseData,
+                    frame_kind: FrameKind::SseData,
                 },
             )
             .await;
@@ -301,7 +301,7 @@ async fn dispatch_sse_chunks_from_buffer(
                 StreamChunk {
                     payload: bytes::Bytes::from(event.data),
                     sequence,
-                    frame_kind: StreamFrameKind::SseData,
+                    frame_kind: FrameKind::SseData,
                 },
             )
             .await;
@@ -334,7 +334,7 @@ async fn dispatch_ndjson_chunks_from_buffer(
                 StreamChunk {
                     payload,
                     sequence,
-                    frame_kind: StreamFrameKind::NdjsonLine,
+                    frame_kind: FrameKind::NdjsonLine,
                 },
             )
             .await;
@@ -367,7 +367,7 @@ async fn dispatch_grpc_chunks_from_buffer(
                 StreamChunk {
                     payload,
                     sequence,
-                    frame_kind: StreamFrameKind::GrpcMessage,
+                    frame_kind: FrameKind::GrpcMessage,
                 },
             )
             .await;

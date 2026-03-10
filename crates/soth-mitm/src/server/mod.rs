@@ -25,10 +25,10 @@ mod mitmproxy_tls_ops;
 mod runtime_governor;
 mod tls_diagnostics;
 mod tls_learning;
-pub use flow_hooks::{
-    FlowHooks, NoopFlowHooks, RawRequest, RawResponse, RequestDecision, StreamChunk,
-    StreamFrameKind,
-};
+pub use crate::actions::HandlerDecision;
+pub use crate::config::H2ResponseOverflowMode;
+pub use crate::types::{FrameKind, ProcessInfo};
+pub use flow_hooks::{FlowHooks, NoopFlowHooks, RawRequest, RawResponse, StreamChunk};
 pub use mitmproxy_tls_ops::{
     adapt_mitmproxy_tls_callback, MitmproxyTlsAdapterEvent, MitmproxyTlsCallback,
     MitmproxyTlsHook,
@@ -43,12 +43,6 @@ const IO_CHUNK_SIZE: usize = 8 * 1024;
 const CHUNK_LINE_LIMIT: usize = 8 * 1024;
 const TLS_OPS_PROVIDER: &str = "rustls";
 const DEFAULT_LISTENER_ACCEPT_RETRY_BACKOFF_MS: u64 = 100;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum H2ResponseOverflowMode {
-    TruncateContinue,
-    StrictFail,
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SidecarConfig {

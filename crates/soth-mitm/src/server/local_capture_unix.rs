@@ -209,7 +209,7 @@ async fn handle_local_unix_client<P, S>(
     downstream: tokio::net::UnixStream,
     client_addr: String,
     flow_id: u64,
-    process_info: Option<crate::policy::ProcessInfo>,
+    process_info: Option<ProcessInfo>,
     max_connect_head_bytes: usize,
     max_http_head_bytes: usize,
 ) -> io::Result<()>
@@ -241,7 +241,7 @@ async fn handle_local_unix_client_inner<P, S>(
     mut downstream: tokio::net::UnixStream,
     client_addr: String,
     flow_id: u64,
-    process_info: Option<crate::policy::ProcessInfo>,
+    process_info: Option<ProcessInfo>,
     max_connect_head_bytes: usize,
     max_http_head_bytes: usize,
 ) -> io::Result<()>

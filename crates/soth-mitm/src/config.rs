@@ -6,7 +6,8 @@ use crate::MitmError;
 use crate::TlsVersion;
 
 /// Controls whether the proxy runs in observe-only or store-and-forward mode.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum InterceptMode {
     /// Streaming tee: forward request to upstream immediately while capturing
     /// a copy for the handler. Handler observes but cannot block.

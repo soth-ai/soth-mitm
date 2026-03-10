@@ -270,7 +270,7 @@ where
                     },
                 )
                 .await;
-            if let RequestDecision::Block { status, body } = request_decision {
+            if let HandlerDecision::Block { status, body } = request_decision {
                 let status = sanitize_block_status(status);
                 let status_line = format!("{status} Blocked");
                 let response_head = format!(

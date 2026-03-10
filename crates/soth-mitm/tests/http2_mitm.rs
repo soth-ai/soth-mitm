@@ -14,8 +14,9 @@ use soth_mitm::test_observe::{Event, EventType, FlowContext, VecEventConsumer};
 use soth_mitm::test_policy::DefaultPolicyEngine;
 use soth_mitm::test_server::{
     FlowHooks, H2ResponseOverflowMode, RawRequest as HookRawRequest,
-    RawResponse as HookRawResponse, RequestDecision, SidecarConfig, SidecarServer,
+    RawResponse as HookRawResponse, SidecarConfig, SidecarServer,
 };
+use soth_mitm::HandlerDecision;
 use soth_mitm::test_tls::{
     build_http1_server_config_for_host, build_http_client_config, build_http_server_config_for_host,
 };
@@ -169,7 +170,7 @@ impl FlowHooks for RequestHostCaptureHooks {
         &self,
         _context: FlowContext,
         request: HookRawRequest,
-    ) -> Pin<Box<dyn Future<Output = RequestDecision> + Send>> {
+    ) -> Pin<Box<dyn Future<Output = HandlerDecision> + Send>> {
         let seen_host = Arc::clone(&self.seen_host);
         let request_count = Arc::clone(&self.request_count);
         Box::pin(async move {
@@ -180,7 +181,7 @@ impl FlowHooks for RequestHostCaptureHooks {
                 .map(ToOwned::to_owned);
             *seen_host.lock().await = host;
             request_count.fetch_add(1, Ordering::Relaxed);
-            RequestDecision::Allow
+            HandlerDecision::Allow
         })
     }
 

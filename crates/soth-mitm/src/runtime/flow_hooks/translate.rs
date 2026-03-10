@@ -2,21 +2,9 @@ use std::sync::Arc;
 
 use dashmap::{DashMap, DashSet};
 use crate::observe::FlowContext;
-use crate::server::StreamFrameKind;
 
 use crate::runtime::connection_meta::tls_info_from_intercept_decision;
-use crate::types::{ConnectionMeta, FrameKind};
-
-pub(super) fn map_stream_frame_kind(kind: StreamFrameKind) -> Option<FrameKind> {
-    match kind {
-        StreamFrameKind::SseData => Some(FrameKind::SseData),
-        StreamFrameKind::NdjsonLine => Some(FrameKind::NdjsonLine),
-        StreamFrameKind::GrpcMessage => Some(FrameKind::GrpcMessage),
-        StreamFrameKind::WebSocketText => Some(FrameKind::WebSocketText),
-        StreamFrameKind::WebSocketBinary => Some(FrameKind::WebSocketBinary),
-        StreamFrameKind::WebSocketClose => Some(FrameKind::WebSocketClose),
-    }
-}
+use crate::types::ConnectionMeta;
 
 pub(super) async fn connection_meta_for_context(
     context: &FlowContext,

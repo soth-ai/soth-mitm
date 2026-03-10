@@ -8,15 +8,16 @@ use crate::protocol::ApplicationProtocol;
 use crate::observe::{Event, EventConsumer, EventEnvelope, EventType, FlowContext};
 use crate::policy::{
     FlowAction, PolicyDecision, PolicyEngine, PolicyInput, PolicyOverrideState,
-    ProcessInfo as PolicyProcessInfo,
 };
+use crate::types::ProcessInfo;
 
 mod config;
 mod flow_state;
 pub mod server;
+pub use crate::config::InterceptMode;
 pub use config::{
     CompatibilityOverrideConfig, ConnectParseMode, DownstreamCertProfile, DownstreamTlsBackend,
-    EventSinkConfig, EventSinkKind, InterceptMode, MitmConfig, MitmConfigError,
+    EventSinkConfig, EventSinkKind, MitmConfig, MitmConfigError,
     RouteEndpointConfig, RouteMode, TlsFingerprintClass, TlsFingerprintMode, TlsProfile,
     UpstreamClientAuthMode, UpstreamSniMode,
 };
@@ -282,7 +283,7 @@ where
         server_host: impl Into<String>,
         server_port: u16,
         path: Option<String>,
-        process_info: Option<PolicyProcessInfo>,
+        process_info: Option<ProcessInfo>,
     ) -> ConnectOutcome {
         let client_addr = client_addr.into();
         let server_host = server_host.into();

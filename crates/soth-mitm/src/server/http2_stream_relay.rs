@@ -34,7 +34,7 @@ async fn relay_http2_connection<P, S, D, U>(
     runtime_governor: Arc<runtime_governor::RuntimeGovernor>,
     flow_hooks: Arc<dyn FlowHooks>,
     tunnel_context: FlowContext,
-    process_info: Option<crate::policy::ProcessInfo>,
+    process_info: Option<ProcessInfo>,
     downstream_tls: D,
     upstream_tls: U,
     max_header_list_size: u32,

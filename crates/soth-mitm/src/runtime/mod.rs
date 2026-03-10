@@ -2,12 +2,9 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::engine::{InterceptMode as CoreInterceptMode, MitmConfig as CoreMitmConfig, MitmEngine};
+use crate::engine::{MitmConfig as CoreMitmConfig, MitmEngine};
 use crate::policy::{FlowAction, PolicyDecision, PolicyEngine, PolicyInput, PolicyOverrideState};
-use crate::server::{
-    FlowHooks, H2ResponseOverflowMode as SidecarH2ResponseOverflowMode, SidecarConfig,
-    SidecarServer,
-};
+use crate::server::{FlowHooks, SidecarConfig, SidecarServer};
 use parking_lot::RwLock;
 
 use crate::config::{InterceptionScope, MitmConfig};
@@ -63,14 +60,7 @@ pub(crate) fn build_runtime_server<H: InterceptHandler>(
             config.upstream.h2_header_stage_timeout_ms.max(1),
         ),
         h2_body_idle_timeout: Duration::from_millis(config.upstream.h2_body_idle_timeout_ms.max(1)),
-        h2_response_overflow_mode: match config.upstream.h2_response_overflow_mode {
-            crate::config::H2ResponseOverflowMode::TruncateContinue => {
-                SidecarH2ResponseOverflowMode::TruncateContinue
-            }
-            crate::config::H2ResponseOverflowMode::StrictFail => {
-                SidecarH2ResponseOverflowMode::StrictFail
-            }
-        },
+        h2_response_overflow_mode: config.upstream.h2_response_overflow_mode,
         unix_socket_path: config
             .unix_socket_path
             .as_ref()
@@ -105,10 +95,7 @@ fn map_core_config(config: &MitmConfig) -> CoreMitmConfig {
     core.max_in_flight_bytes = config.max_in_flight_bytes.max(1);
     core.max_concurrent_flows = config.max_concurrent_flows.max(1);
     core.upstream_tls_insecure_skip_verify = !config.upstream.verify_upstream_tls;
-    core.intercept_mode = match config.intercept_mode {
-        crate::config::InterceptMode::Monitor => CoreInterceptMode::Monitor,
-        crate::config::InterceptMode::Enforce => CoreInterceptMode::Enforce,
-    };
+    core.intercept_mode = config.intercept_mode;
     core.h2_response_overflow_strict = matches!(
         config.upstream.h2_response_overflow_mode,
         crate::config::H2ResponseOverflowMode::StrictFail

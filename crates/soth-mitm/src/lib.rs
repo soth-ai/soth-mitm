@@ -99,9 +99,9 @@ pub mod test_observe {
 #[doc(hidden)]
 pub mod test_server {
     pub use crate::server::{
-        FlowHooks, H2ResponseOverflowMode, MitmproxyTlsCallback, MitmproxyTlsHook,
-        NoopFlowHooks, RawRequest, RawResponse, RequestDecision, RuntimeGovernor,
-        SidecarConfig, SidecarServer, StreamChunk, StreamFrameKind,
+        FlowHooks, FrameKind, H2ResponseOverflowMode, MitmproxyTlsCallback, MitmproxyTlsHook,
+        NoopFlowHooks, RawRequest, RawResponse, RuntimeGovernor,
+        SidecarConfig, SidecarServer, StreamChunk,
         TlsDiagnostics, TlsDiagnosticsSnapshot,
         TlsLearningDecision, TlsLearningGuardrails, TlsLearningOutcome,
         TlsLearningSignal, TlsLearningSnapshot,

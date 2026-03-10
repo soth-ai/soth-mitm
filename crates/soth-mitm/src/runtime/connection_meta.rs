@@ -146,37 +146,6 @@ fn normalize_sni(server_host: &str) -> Option<String> {
     }
 }
 
-pub(crate) fn policy_process_info_from_runtime(
-    process_info: &ProcessInfo,
-) -> crate::policy::ProcessInfo {
-    let process_name = process_info.exe_name.clone().or_else(|| {
-        process_info
-            .exe_path
-            .as_ref()
-            .and_then(|path| path.file_name())
-            .and_then(|name| name.to_str())
-            .map(|value| value.to_string())
-    });
-    crate::policy::ProcessInfo {
-        pid: process_info.pid,
-        bundle_id: process_info.bundle_id.clone(),
-        process_name,
-    }
-}
-
-pub(crate) fn runtime_process_info_from_policy(
-    process_info: crate::policy::ProcessInfo,
-) -> ProcessInfo {
-    ProcessInfo {
-        pid: process_info.pid,
-        bundle_id: process_info.bundle_id,
-        exe_name: process_info.process_name,
-        exe_path: None,
-        parent_pid: None,
-        parent_process_name: None,
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct UnixClientAddrMeta {
     pub(crate) pid: Option<u32>,

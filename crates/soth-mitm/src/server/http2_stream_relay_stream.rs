@@ -309,7 +309,7 @@ where
                 },
             )
             .await;
-        if let RequestDecision::Block { status, body } = request_decision {
+        if let HandlerDecision::Block { status, body } = request_decision {
             let status = sanitize_block_status(status);
             let mut builder = http::Response::builder().status(status);
             builder = builder.header("content-type", "text/plain");

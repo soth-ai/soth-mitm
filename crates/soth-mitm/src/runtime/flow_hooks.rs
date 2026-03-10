@@ -5,8 +5,7 @@ use crate::process::{PlatformProcessAttributor, ProcessCachePath, ProcessLookupS
 use crate::runtime::connection_id::connection_id_for_flow_id;
 use crate::runtime::connection_meta::{
     connection_meta_from_accept_context, lookup_connection_info_from_flow_context,
-    policy_process_info_from_runtime, process_info_from_unix_client_addr,
-    runtime_process_info_from_policy,
+    process_info_from_unix_client_addr,
 };
 use crate::runtime::flow_dispatch::FlowDispatchers;
 use crate::runtime::flow_lifecycle::{finalize_flow, schedule_stale_flow_reap, FlowStateContext};
@@ -19,7 +18,7 @@ use dashmap::{DashMap, DashSet};
 use lru::LruCache;
 use crate::observe::FlowContext;
 use crate::server::{
-    FlowHooks, RawRequest as SidecarRawRequest, RawResponse as SidecarRawResponse, RequestDecision,
+    FlowHooks, RawRequest as SidecarRawRequest, RawResponse as SidecarRawResponse,
     StreamChunk as SidecarStreamChunk,
 };
 use std::future::Future;
@@ -29,7 +28,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 mod translate;
-use self::translate::{connection_meta_for_context, map_stream_frame_kind};
+use self::translate::connection_meta_for_context;
 #[derive(Debug)]
 struct HandlerFlowHooks<H: InterceptHandler> {
     flow_state: Arc<FlowStateContext<H>>,
@@ -96,7 +95,7 @@ impl<H: InterceptHandler> FlowHooks for HandlerFlowHooks<H> {
     fn resolve_process_info(
         &self,
         context: FlowContext,
-    ) -> Pin<Box<dyn Future<Output = Option<crate::policy::ProcessInfo>> + Send>> {
+    ) -> Pin<Box<dyn Future<Output = Option<crate::types::ProcessInfo>> + Send>> {
         let process_lookup = self.flow_state.process_lookup.clone();
         let metrics_store = Arc::clone(&self.flow_state.metrics_store);
         Box::pin(async move {
@@ -105,7 +104,7 @@ impl<H: InterceptHandler> FlowHooks for HandlerFlowHooks<H> {
             };
             if let Some(uds_process_info) = process_info_from_unix_client_addr(&context.client_addr)
             {
-                return Some(policy_process_info_from_runtime(&uds_process_info));
+                return Some(uds_process_info);
             }
             let result = lookup
                 .resolve_with_status(&lookup_connection_info_from_flow_context(&context))
@@ -127,18 +126,18 @@ impl<H: InterceptHandler> FlowHooks for HandlerFlowHooks<H> {
                 metrics_store.record_process_attribution_timeout();
                 return None;
             }
-            let Some(process_info) = result.process_info.as_ref() else {
+            if result.process_info.is_none() {
                 metrics_store.record_process_attribution_failure();
                 return None;
-            };
-            Some(policy_process_info_from_runtime(process_info))
+            }
+            result.process_info
         })
     }
 
     fn on_connection_open(
         &self,
         context: FlowContext,
-        process_info: Option<crate::policy::ProcessInfo>,
+        process_info: Option<crate::types::ProcessInfo>,
     ) -> Pin<Box<dyn Future<Output = ()> + Send>> {
         let flow_state = Arc::clone(&self.flow_state);
         let stale_flow_ttl = self.stale_flow_ttl;
@@ -154,7 +153,7 @@ impl<H: InterceptHandler> FlowHooks for HandlerFlowHooks<H> {
             flow_state.tls_intercepted_flow_ids.remove(&context.flow_id);
             let connection_meta = connection_meta_from_accept_context(
                 &context,
-                process_info.map(runtime_process_info_from_policy),
+                process_info,
             );
             let connection_meta = Arc::new(connection_meta);
             flow_state
@@ -181,12 +180,11 @@ impl<H: InterceptHandler> FlowHooks for HandlerFlowHooks<H> {
     fn should_intercept_tls(
         &self,
         context: FlowContext,
-        process_info: Option<crate::policy::ProcessInfo>,
+        process_info: Option<crate::types::ProcessInfo>,
     ) -> Pin<Box<dyn Future<Output = bool> + Send>> {
         let flow_state = Arc::clone(&self.flow_state);
         let tls_intercept_backoff = Arc::clone(&self.tls_intercept_backoff);
         Box::pin(async move {
-            let process_info = process_info.map(runtime_process_info_from_policy);
             let process_info_for_handler = process_info.clone();
             let server_host = context.server_host.clone();
             let handler = Arc::clone(&flow_state.handler);
@@ -257,7 +255,7 @@ impl<H: InterceptHandler> FlowHooks for HandlerFlowHooks<H> {
         &self,
         context: FlowContext,
         request: SidecarRawRequest,
-    ) -> Pin<Box<dyn Future<Output = RequestDecision> + Send>> {
+    ) -> Pin<Box<dyn Future<Output = HandlerDecision> + Send>> {
         let flow_state = Arc::clone(&self.flow_state);
         Box::pin(async move {
             flow_state
@@ -271,7 +269,7 @@ impl<H: InterceptHandler> FlowHooks for HandlerFlowHooks<H> {
             )
             .await
             else {
-                return RequestDecision::Block {
+                return HandlerDecision::Block {
                     status: 500,
                     body: Bytes::from_static(b"missing ConnectionMeta"),
                 };
@@ -284,16 +282,12 @@ impl<H: InterceptHandler> FlowHooks for HandlerFlowHooks<H> {
                 connection_meta: Arc::clone(&connection_meta),
             };
             let handler = Arc::clone(&flow_state.handler);
-            let decision = flow_state
+            flow_state
                 .callback_guard
                 .run_request(HandlerDecision::Allow, async move {
                     handler.on_request(&raw_request).await
                 })
-                .await;
-            match decision {
-                HandlerDecision::Allow => RequestDecision::Allow,
-                HandlerDecision::Block { status, body } => RequestDecision::Block { status, body },
-            }
+                .await
         })
     }
     fn on_request_observe(
@@ -413,9 +407,6 @@ impl<H: InterceptHandler> FlowHooks for HandlerFlowHooks<H> {
             flow_state
                 .flow_last_touched
                 .insert(context.flow_id, Instant::now());
-            let Some(frame_kind) = map_stream_frame_kind(chunk.frame_kind) else {
-                return;
-            };
             let sequence = {
                 let mut next = flow_state
                     .stream_sequences
@@ -429,7 +420,7 @@ impl<H: InterceptHandler> FlowHooks for HandlerFlowHooks<H> {
                 connection_id: connection_id_for_flow_id(context.flow_id),
                 payload: chunk.payload,
                 sequence,
-                frame_kind,
+                frame_kind: chunk.frame_kind,
             };
             let enqueued = flow_state
                 .flow_dispatchers

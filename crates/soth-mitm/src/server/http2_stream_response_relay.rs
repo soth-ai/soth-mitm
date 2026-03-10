@@ -40,7 +40,7 @@ impl H2ResponseStreamHookDispatcher {
                             StreamChunk {
                                 payload: bytes::Bytes::from(event.data),
                                 sequence: *sequence,
-                                frame_kind: StreamFrameKind::SseData,
+                                frame_kind: FrameKind::SseData,
                             },
                         )
                         .await;
@@ -78,7 +78,7 @@ impl H2ResponseStreamHookDispatcher {
                             StreamChunk {
                                 payload,
                                 sequence: *sequence,
-                                frame_kind: StreamFrameKind::NdjsonLine,
+                                frame_kind: FrameKind::NdjsonLine,
                             },
                         )
                         .await;
@@ -109,7 +109,7 @@ impl H2ResponseStreamHookDispatcher {
                             StreamChunk {
                                 payload,
                                 sequence: *sequence,
-                                frame_kind: StreamFrameKind::GrpcMessage,
+                                frame_kind: FrameKind::GrpcMessage,
                             },
                         )
                         .await;
@@ -137,7 +137,7 @@ impl H2ResponseStreamHookDispatcher {
                             StreamChunk {
                                 payload: bytes::Bytes::from(event.data),
                                 sequence: *sequence,
-                                frame_kind: StreamFrameKind::SseData,
+                                frame_kind: FrameKind::SseData,
                             },
                         )
                         .await;
@@ -171,7 +171,7 @@ impl H2ResponseStreamHookDispatcher {
                             StreamChunk {
                                 payload,
                                 sequence: *sequence,
-                                frame_kind: StreamFrameKind::NdjsonLine,
+                                frame_kind: FrameKind::NdjsonLine,
                             },
                         )
                         .await;

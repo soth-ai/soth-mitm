@@ -1,3 +1,4 @@
+use crate::config::InterceptMode;
 use crate::policy::{FlowAction, PolicyDecision, PolicyOverrideState};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -116,22 +117,6 @@ impl TlsFingerprintClass {
 impl Default for TlsFingerprintClass {
     fn default() -> Self {
         Self::Native
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum InterceptMode {
-    /// Streaming tee: forward request to upstream immediately while capturing
-    /// a copy for the handler. Handler observes but cannot block.
-    Monitor,
-    /// Store-and-forward: buffer request body, call handler, block or forward.
-    Enforce,
-}
-
-impl Default for InterceptMode {
-    fn default() -> Self {
-        Self::Monitor
     }
 }
 

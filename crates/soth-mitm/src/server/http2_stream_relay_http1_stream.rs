@@ -119,7 +119,7 @@ where
                 },
             )
             .await;
-        if let RequestDecision::Block { status, body } = request_decision {
+        if let HandlerDecision::Block { status, body } = request_decision {
             let _ = send_h2_text_response(
                 &mut downstream_respond,
                 &runtime_governor,

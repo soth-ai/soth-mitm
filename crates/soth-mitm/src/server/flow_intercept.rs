@@ -8,7 +8,7 @@ async fn intercept_http_connection<P, S>(
     flow_hooks: Arc<dyn FlowHooks>,
     upstream_tls_cache: Arc<UpstreamTlsConfigCache>,
     tunnel_context: FlowContext,
-    process_info: Option<crate::policy::ProcessInfo>,
+    process_info: Option<ProcessInfo>,
     route: RouteBinding,
     policy_override_state: crate::policy::PolicyOverrideState,
     mut downstream: TcpStream,

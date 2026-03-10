@@ -13,7 +13,7 @@ async fn relay_http2_downstream_to_http1_upstream<P, S, D>(
     runtime_governor: Arc<runtime_governor::RuntimeGovernor>,
     flow_hooks: Arc<dyn FlowHooks>,
     tunnel_context: FlowContext,
-    process_info: Option<crate::policy::ProcessInfo>,
+    process_info: Option<ProcessInfo>,
     downstream_tls: D,
     upstream_tls: tokio_rustls::client::TlsStream<tokio::net::TcpStream>,
     route: RouteBinding,

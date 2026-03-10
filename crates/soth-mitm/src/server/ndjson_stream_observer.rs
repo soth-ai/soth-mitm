@@ -59,7 +59,7 @@ where
                 StreamChunk {
                     payload: bytes::Bytes::from(line),
                     sequence,
-                    frame_kind: StreamFrameKind::NdjsonLine,
+                    frame_kind: FrameKind::NdjsonLine,
                 },
             )
             .await;

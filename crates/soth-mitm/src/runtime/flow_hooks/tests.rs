@@ -13,7 +13,7 @@ use futures::FutureExt;
 use http::HeaderMap;
 use crate::protocol::ApplicationProtocol;
 use crate::observe::FlowContext;
-use crate::policy::ProcessInfo as PolicyProcessInfo;
+use crate::types::ProcessInfo as PolicyProcessInfo;
 use crate::server::{FlowHooks, RawRequest as SidecarRawRequest, RawResponse as SidecarRawResponse};
 use std::panic::AssertUnwindSafe;
 use std::path::PathBuf;
@@ -70,7 +70,7 @@ async fn request_timeout_cancels_future_and_records_metric() {
         .on_request(context.clone(), sample_sidecar_request())
         .await;
     assert!(
-        matches!(decision, crate::server::RequestDecision::Allow),
+        matches!(decision, crate::HandlerDecision::Allow),
         "timed-out request handler should default to Allow"
     );
 
@@ -105,7 +105,7 @@ async fn request_panic_recover_true_defaults_allow_and_records_metric() {
 
     let decision = hooks.on_request(context, sample_sidecar_request()).await;
     assert!(
-        matches!(decision, crate::server::RequestDecision::Allow),
+        matches!(decision, crate::HandlerDecision::Allow),
         "panic with recover=true should default to Allow"
     );
     assert_eq!(
@@ -358,7 +358,10 @@ async fn should_intercept_tls_receives_process_info_from_connect_path() {
     let policy_process = Some(PolicyProcessInfo {
         pid: 4242,
         bundle_id: Some("com.soth.tests".to_string()),
-        process_name: Some("curl".to_string()),
+        exe_name: Some("curl".to_string()),
+        exe_path: None,
+        parent_pid: None,
+        parent_process_name: None,
     });
 
     let _ = hooks.should_intercept_tls(context, policy_process).await;
@@ -581,7 +584,10 @@ fn fixture_policy_process_info(pid: u32) -> PolicyProcessInfo {
     PolicyProcessInfo {
         pid,
         bundle_id: Some("com.soth.fixture".to_string()),
-        process_name: Some("fixture-client".to_string()),
+        exe_name: Some("fixture-client".to_string()),
+        exe_path: None,
+        parent_pid: None,
+        parent_process_name: None,
     }
 }
 

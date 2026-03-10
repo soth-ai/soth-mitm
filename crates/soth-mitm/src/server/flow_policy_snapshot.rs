@@ -28,7 +28,7 @@ fn resolve_flow_policy_snapshot<P, S>(
     server_host: String,
     server_port: u16,
     path: Option<String>,
-    process_info: Option<crate::policy::ProcessInfo>,
+    process_info: Option<ProcessInfo>,
 ) -> FlowPolicySnapshot
 where
     P: PolicyEngine + Send + Sync + 'static,

@@ -56,7 +56,7 @@ where
                 StreamChunk {
                     payload: bytes::Bytes::from(payload),
                     sequence,
-                    frame_kind: StreamFrameKind::GrpcMessage,
+                    frame_kind: FrameKind::GrpcMessage,
                 },
             )
             .await;

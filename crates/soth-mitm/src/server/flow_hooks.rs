@@ -3,18 +3,9 @@ use std::pin::Pin;
 
 use bytes::Bytes;
 use http::HeaderMap;
+use crate::actions::HandlerDecision;
 use crate::observe::FlowContext;
-use crate::policy::ProcessInfo as PolicyProcessInfo;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StreamFrameKind {
-    SseData,
-    NdjsonLine,
-    GrpcMessage,
-    WebSocketText,
-    WebSocketBinary,
-    WebSocketClose,
-}
+use crate::types::{FrameKind, ProcessInfo};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RawRequest {
@@ -32,30 +23,24 @@ pub struct RawResponse {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RequestDecision {
-    Allow,
-    Block { status: u16, body: Bytes },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StreamChunk {
     pub payload: Bytes,
     pub sequence: u64,
-    pub frame_kind: StreamFrameKind,
+    pub frame_kind: FrameKind,
 }
 
 pub trait FlowHooks: Send + Sync + 'static {
     fn resolve_process_info(
         &self,
         _context: FlowContext,
-    ) -> Pin<Box<dyn Future<Output = Option<PolicyProcessInfo>> + Send>> {
+    ) -> Pin<Box<dyn Future<Output = Option<ProcessInfo>> + Send>> {
         Box::pin(async { None })
     }
 
     fn should_intercept_tls(
         &self,
         _context: FlowContext,
-        _process_info: Option<PolicyProcessInfo>,
+        _process_info: Option<ProcessInfo>,
     ) -> Pin<Box<dyn Future<Output = bool> + Send>> {
         Box::pin(async { true })
     }
@@ -71,7 +56,7 @@ pub trait FlowHooks: Send + Sync + 'static {
     fn on_connection_open(
         &self,
         _context: FlowContext,
-        _process_info: Option<PolicyProcessInfo>,
+        _process_info: Option<ProcessInfo>,
     ) -> Pin<Box<dyn Future<Output = ()> + Send>> {
         Box::pin(async {})
     }
@@ -80,8 +65,8 @@ pub trait FlowHooks: Send + Sync + 'static {
         &self,
         _context: FlowContext,
         _request: RawRequest,
-    ) -> Pin<Box<dyn Future<Output = RequestDecision> + Send>> {
-        Box::pin(async { RequestDecision::Allow })
+    ) -> Pin<Box<dyn Future<Output = HandlerDecision> + Send>> {
+        Box::pin(async { HandlerDecision::Allow })
     }
 
     fn on_request_observe(

@@ -89,7 +89,7 @@ struct WebSocketMessageAssemblers {
 
 #[derive(Debug, Default)]
 struct WebSocketMessageAssembler {
-    frame_kind: Option<StreamFrameKind>,
+    frame_kind: Option<FrameKind>,
     payload: Vec<u8>,
 }
 
@@ -141,9 +141,9 @@ async fn track_websocket_frame<P, S>(
     match frame.opcode {
         0x1 | 0x2 => {
             let frame_kind = if frame.opcode == 0x1 {
-                StreamFrameKind::WebSocketText
+                FrameKind::WebSocketText
             } else {
-                StreamFrameKind::WebSocketBinary
+                FrameKind::WebSocketBinary
             };
             if frame.fin {
                 let sequence = turn_state.next_chunk_sequence;
@@ -196,7 +196,7 @@ async fn track_websocket_frame<P, S>(
                     StreamChunk {
                         payload: frame.payload.clone(),
                         sequence,
-                        frame_kind: StreamFrameKind::WebSocketClose,
+                        frame_kind: FrameKind::WebSocketClose,
                     },
                 )
                 .await;

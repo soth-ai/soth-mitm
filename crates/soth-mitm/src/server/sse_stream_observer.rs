@@ -59,7 +59,7 @@ where
                 StreamChunk {
                     payload: bytes::Bytes::from(event.data),
                     sequence: sequence_no,
-                    frame_kind: StreamFrameKind::SseData,
+                    frame_kind: FrameKind::SseData,
                 },
             )
             .await;

@@ -8,7 +8,7 @@ async fn handle_forward_http1_proxy_request<P, S, D>(
     downstream: D,
     client_addr: String,
     flow_id: u64,
-    process_info: Option<crate::policy::ProcessInfo>,
+    process_info: Option<ProcessInfo>,
     initial_head: Vec<u8>,
     max_http_head_bytes: usize,
     listener_addr: Option<std::net::SocketAddr>,
