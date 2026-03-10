@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use dashmap::{DashMap, DashSet};
-use mitm_observe::FlowContext;
-use mitm_sidecar::StreamFrameKind;
+use crate::observe::FlowContext;
+use crate::server::StreamFrameKind;
 
 use crate::runtime::connection_meta::tls_info_from_intercept_decision;
 use crate::types::{ConnectionMeta, FrameKind};

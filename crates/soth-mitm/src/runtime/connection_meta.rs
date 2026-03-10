@@ -1,8 +1,8 @@
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::path::PathBuf;
 
-use mitm_http::ApplicationProtocol;
-use mitm_observe::FlowContext;
+use crate::protocol::ApplicationProtocol;
+use crate::observe::FlowContext;
 
 use crate::runtime::connection_id::connection_id_for_flow_id;
 use crate::types::{ConnectionInfo, ConnectionMeta, ProcessInfo, SocketFamily, TlsInfo};
@@ -148,7 +148,7 @@ fn normalize_sni(server_host: &str) -> Option<String> {
 
 pub(crate) fn policy_process_info_from_runtime(
     process_info: &ProcessInfo,
-) -> mitm_policy::ProcessInfo {
+) -> crate::policy::ProcessInfo {
     let process_name = process_info.exe_name.clone().or_else(|| {
         process_info
             .exe_path
@@ -157,7 +157,7 @@ pub(crate) fn policy_process_info_from_runtime(
             .and_then(|name| name.to_str())
             .map(|value| value.to_string())
     });
-    mitm_policy::ProcessInfo {
+    crate::policy::ProcessInfo {
         pid: process_info.pid,
         bundle_id: process_info.bundle_id.clone(),
         process_name,
@@ -165,7 +165,7 @@ pub(crate) fn policy_process_info_from_runtime(
 }
 
 pub(crate) fn runtime_process_info_from_policy(
-    process_info: mitm_policy::ProcessInfo,
+    process_info: crate::policy::ProcessInfo,
 ) -> ProcessInfo {
     ProcessInfo {
         pid: process_info.pid,
@@ -230,8 +230,8 @@ pub(crate) fn process_info_from_unix_client_addr(client_addr: &str) -> Option<Pr
 #[cfg(test)]
 mod tests {
     use super::{lookup_connection_info_from_flow_context, tls_info_from_flow_context};
-    use mitm_http::ApplicationProtocol;
-    use mitm_observe::FlowContext;
+    use crate::protocol::ApplicationProtocol;
+    use crate::observe::FlowContext;
 
     #[test]
     fn tls_info_is_populated_for_http2_context() {

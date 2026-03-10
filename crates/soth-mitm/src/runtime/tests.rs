@@ -1,4 +1,4 @@
-use mitm_policy::{FlowAction, PolicyEngine, PolicyInput};
+use crate::policy::{FlowAction, PolicyEngine, PolicyInput};
 
 use super::{map_core_config, DestinationPolicyEngine, RuntimeConfigHandle};
 use crate::config::{InterceptionScope, MitmConfig};

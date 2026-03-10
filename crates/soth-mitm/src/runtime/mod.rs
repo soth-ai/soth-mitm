@@ -2,9 +2,9 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 
-use mitm_core::{InterceptMode as CoreInterceptMode, MitmConfig as CoreMitmConfig, MitmEngine};
-use mitm_policy::{FlowAction, PolicyDecision, PolicyEngine, PolicyInput, PolicyOverrideState};
-use mitm_sidecar::{
+use crate::engine::{InterceptMode as CoreInterceptMode, MitmConfig as CoreMitmConfig, MitmEngine};
+use crate::policy::{FlowAction, PolicyDecision, PolicyEngine, PolicyInput, PolicyOverrideState};
+use crate::server::{
     FlowHooks, H2ResponseOverflowMode as SidecarH2ResponseOverflowMode, SidecarConfig,
     SidecarServer,
 };

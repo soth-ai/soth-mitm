@@ -11,10 +11,10 @@ use crate::HandlerDecision;
 use bytes::Bytes;
 use futures::FutureExt;
 use http::HeaderMap;
-use mitm_http::ApplicationProtocol;
-use mitm_observe::FlowContext;
-use mitm_policy::ProcessInfo as PolicyProcessInfo;
-use mitm_sidecar::{FlowHooks, RawRequest as SidecarRawRequest, RawResponse as SidecarRawResponse};
+use crate::protocol::ApplicationProtocol;
+use crate::observe::FlowContext;
+use crate::policy::ProcessInfo as PolicyProcessInfo;
+use crate::server::{FlowHooks, RawRequest as SidecarRawRequest, RawResponse as SidecarRawResponse};
 use std::panic::AssertUnwindSafe;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
@@ -70,7 +70,7 @@ async fn request_timeout_cancels_future_and_records_metric() {
         .on_request(context.clone(), sample_sidecar_request())
         .await;
     assert!(
-        matches!(decision, mitm_sidecar::RequestDecision::Allow),
+        matches!(decision, crate::server::RequestDecision::Allow),
         "timed-out request handler should default to Allow"
     );
 
@@ -105,7 +105,7 @@ async fn request_panic_recover_true_defaults_allow_and_records_metric() {
 
     let decision = hooks.on_request(context, sample_sidecar_request()).await;
     assert!(
-        matches!(decision, mitm_sidecar::RequestDecision::Allow),
+        matches!(decision, crate::server::RequestDecision::Allow),
         "panic with recover=true should default to Allow"
     );
     assert_eq!(

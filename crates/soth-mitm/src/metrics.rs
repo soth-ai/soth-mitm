@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
 
-use mitm_observe::{EventConsumer, EventEnvelope, EventType};
+use crate::observe::{EventConsumer, EventEnvelope, EventType};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ProxyMetrics {
@@ -231,8 +231,8 @@ fn stream_closed_trace_enabled() -> bool {
 
 #[cfg(test)]
 mod tests {
-    use mitm_http::ApplicationProtocol;
-    use mitm_observe::{Event, EventConsumer, EventEnvelope, EventType, FlowContext};
+    use crate::protocol::ApplicationProtocol;
+    use crate::observe::{Event, EventConsumer, EventEnvelope, EventType, FlowContext};
 
     use super::ProxyMetricsStore;
 

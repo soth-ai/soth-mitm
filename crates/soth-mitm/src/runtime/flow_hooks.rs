@@ -17,8 +17,8 @@ use crate::HandlerDecision;
 use bytes::Bytes;
 use dashmap::{DashMap, DashSet};
 use lru::LruCache;
-use mitm_observe::FlowContext;
-use mitm_sidecar::{
+use crate::observe::FlowContext;
+use crate::server::{
     FlowHooks, RawRequest as SidecarRawRequest, RawResponse as SidecarRawResponse, RequestDecision,
     StreamChunk as SidecarStreamChunk,
 };
@@ -96,7 +96,7 @@ impl<H: InterceptHandler> FlowHooks for HandlerFlowHooks<H> {
     fn resolve_process_info(
         &self,
         context: FlowContext,
-    ) -> Pin<Box<dyn Future<Output = Option<mitm_policy::ProcessInfo>> + Send>> {
+    ) -> Pin<Box<dyn Future<Output = Option<crate::policy::ProcessInfo>> + Send>> {
         let process_lookup = self.flow_state.process_lookup.clone();
         let metrics_store = Arc::clone(&self.flow_state.metrics_store);
         Box::pin(async move {
@@ -138,7 +138,7 @@ impl<H: InterceptHandler> FlowHooks for HandlerFlowHooks<H> {
     fn on_connection_open(
         &self,
         context: FlowContext,
-        process_info: Option<mitm_policy::ProcessInfo>,
+        process_info: Option<crate::policy::ProcessInfo>,
     ) -> Pin<Box<dyn Future<Output = ()> + Send>> {
         let flow_state = Arc::clone(&self.flow_state);
         let stale_flow_ttl = self.stale_flow_ttl;
@@ -181,7 +181,7 @@ impl<H: InterceptHandler> FlowHooks for HandlerFlowHooks<H> {
     fn should_intercept_tls(
         &self,
         context: FlowContext,
-        process_info: Option<mitm_policy::ProcessInfo>,
+        process_info: Option<crate::policy::ProcessInfo>,
     ) -> Pin<Box<dyn Future<Output = bool> + Send>> {
         let flow_state = Arc::clone(&self.flow_state);
         let tls_intercept_backoff = Arc::clone(&self.tls_intercept_backoff);

@@ -1739,9 +1739,13 @@ dependencies = [
 name = "soth-mitm"
 version = "0.1.0"
 dependencies = [
+ "base64",
+ "brotli",
  "bytes",
  "dashmap",
+ "flate2",
  "futures",
+ "h2",
  "http",
  "hudsucker",
  "hyper-rustls",
@@ -1753,16 +1757,28 @@ dependencies = [
  "mitm-policy",
  "mitm-sidecar",
  "mitm-tls",
+ "openssl",
  "parking_lot",
+ "pin-project-lite",
  "plist",
  "rcgen",
+ "rustls",
  "rustls-pemfile",
+ "serde",
+ "serde_json",
+ "sha1",
+ "socket2 0.5.10",
+ "soketto",
  "sysinfo",
  "thiserror",
  "tokio",
+ "tokio-openssl",
  "tokio-rustls",
  "tracing",
  "uuid",
+ "webpki-roots 1.0.6",
+ "x509-parser",
+ "zstd",
 ]
 
 [[package]]

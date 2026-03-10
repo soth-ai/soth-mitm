@@ -1,3 +1,12 @@
+// Consolidated sub-crate modules
+pub(crate) mod engine;
+pub(crate) mod observe;
+pub(crate) mod policy;
+pub(crate) mod protocol;
+pub(crate) mod server;
+pub(crate) mod tls;
+
+// Facade modules
 mod actions;
 mod builder;
 mod ca;

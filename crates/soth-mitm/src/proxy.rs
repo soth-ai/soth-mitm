@@ -5,7 +5,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-use mitm_sidecar::RuntimeGovernor;
+use crate::server::RuntimeGovernor;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 
@@ -211,7 +211,7 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
 
-    use mitm_sidecar::{RuntimeBudgetConfig, RuntimeGovernor};
+    use crate::server::{RuntimeBudgetConfig, RuntimeGovernor};
     use tokio::sync::Mutex;
 
     use super::{write_private_key_file, MitmProxyHandle};
