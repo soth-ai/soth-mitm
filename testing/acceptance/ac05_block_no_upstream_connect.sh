@@ -36,7 +36,7 @@ outcome_tsv="$report_dir/outcome.tsv"
 printf 'check\tstatus\tdetail\n' >"$status_tsv"
 
 ac_run_case "$status_tsv" block_unit_contract \
-  cargo test -p soth-mitm block_prevents_any_upstream_connect -q || true
+  cargo test -p soth-mitm --test phase_a block_action_returns_403_and_emits_reason_code -q || true
 ac_run_case "$status_tsv" block_integration_no_upstream_socket \
   cargo test -p soth-mitm --test phase_a blocked_host_never_opens_upstream_socket -q || true
 

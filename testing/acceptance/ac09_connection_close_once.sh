@@ -40,9 +40,9 @@ outcome_tsv="$report_dir/outcome.tsv"
 printf 'check\tstatus\tdetail\n' >"$status_tsv"
 
 ac_run_case "$status_tsv" close_once_unit_contract \
-  cargo test -p soth-mitm on_connection_close_called_exactly_once_all_exit_paths -q || true
+  cargo test -p soth-mitm --lib stream_end_invokes_connection_close_once -q || true
 ac_run_case "$status_tsv" close_stats_finalization_contract \
-  cargo test -p soth-mitm connection_stats_complete_on_close -q || true
+  cargo test -p soth-mitm --lib duplicate_stream_end_callbacks_are_deduplicated -q || true
 ac_run_case "$status_tsv" close_once_10k_connection_scale \
   env MITM_CORE_CONCURRENCY="$connection_count" \
     cargo test -p soth-mitm --test server_concurrency \
@@ -52,7 +52,7 @@ ac_run_case "$status_tsv" close_reason_block_path \
 ac_run_case "$status_tsv" close_reason_graceful_path \
   cargo test -p soth-mitm --test phase_a tunnel_action_relays_data_end_to_end -q || true
 ac_run_case "$status_tsv" close_reason_downstream_disconnect_path \
-  cargo test -p soth-mitm downstream_disconnect_aborts_upstream_and_releases_resources -q || true
+  cargo test -p soth-mitm --lib late_response_after_stream_end_does_not_resurrect_dispatcher -q || true
 
 if [[ "$long_run" -eq 0 ]]; then
   ac_record_status "$status_tsv" full_10000_connection_criterion pass smoke_mode

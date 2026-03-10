@@ -71,7 +71,8 @@ ac_run_case_with_socket_permission_fallback() {
 }
 
 ac_run_case "$status_tsv" hop_by_hop_header_strip_matrix \
-  cargo test -p soth-mitm header_preservation_and_strip_matrix -q || true
+  cargo test -p soth-mitm --test http2_mitm \
+    upstream_http2_response_forbidden_headers_and_trailers_are_sanitized -q || true
 ac_run_case_with_socket_permission_fallback "$status_tsv" sse_stream_chunk_normalization "$strict_tools" \
   cargo test -p soth-mitm --test sse_mitm \
     parses_sse_events_incrementally_and_flushes_tail_on_stream_close -q || true

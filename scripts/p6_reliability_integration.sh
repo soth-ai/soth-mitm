@@ -117,11 +117,12 @@ run_case mixed_traffic_close_reason_determinism \
       mixed_traffic_close_reasons_are_deterministic -q || true
 
 run_case soth_mitm_reliability_fsm_contract \
-  cargo test -p soth-mitm close_reason_summary_accepts_deterministic_stream_closes -q || true
+  cargo test -p soth-mitm --lib stream_end_invokes_connection_close_once -q || true
 run_case soth_mitm_reliability_timeout_budget_contract \
-  cargo test -p soth-mitm runtime_timeout_budget_passes_for_expected_snapshot -q || true
+  cargo test -p soth-mitm --lib lifecycle_sync_callbacks_use_response_timeout_budget -q || true
 run_case soth_mitm_reliability_http2_contract \
-  cargo test -p soth-mitm http2_close_summary_accepts_stable_reasons -q || true
+  cargo test -p soth-mitm --test http2_mitm \
+    http2_parallel_stream_stress_keeps_completed_close_and_byte_accounting -q || true
 
 failed="$(awk '$2 != "pass" {print $1}' "$status_tsv" || true)"
 {
