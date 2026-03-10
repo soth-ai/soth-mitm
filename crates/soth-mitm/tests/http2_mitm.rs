@@ -3109,7 +3109,12 @@ async fn http2_oversized_headers_emit_mitm_http_error_close() {
         let (tcp, _) = upstream_listener.accept().await.expect("accept upstream");
         let tls = acceptor.accept(tcp).await.expect("TLS accept");
         assert_eq!(tls.get_ref().1.alpn_protocol(), Some(b"h2".as_slice()));
-        let mut h2_conn = h2::server::handshake(tls).await.expect("h2 handshake");
+        let h2_conn = h2::server::handshake(tls).await;
+        let Ok(mut h2_conn) = h2_conn else {
+            // Proxy may reset the connection before h2 handshake completes
+            // (e.g. BrokenPipe) — that means no request reached upstream.
+            return false;
+        };
         let received = tokio::time::timeout(Duration::from_millis(300), h2_conn.accept()).await;
         let saw_request_stream = matches!(received, Ok(Some(Ok(_))));
         h2_conn.graceful_shutdown();

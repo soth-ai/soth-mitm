@@ -570,6 +570,7 @@ mod flow_intercept_http1;
 mod flow_intercept_http1_response;
 mod flow_intercept_tls_failure;
 // Unix local capture
+#[cfg(unix)]
 mod local_capture_unix;
 
 // Public re-exports from submodules (needed by lib.rs / external consumers)
