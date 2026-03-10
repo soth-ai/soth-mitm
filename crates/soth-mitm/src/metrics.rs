@@ -1,6 +1,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::OnceLock;
 
-use mitm_observe::{EventConsumer, EventEnvelope, EventType};
+use crate::observe::{EventConsumer, EventEnvelope, EventType};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ProxyMetrics {
@@ -184,6 +185,17 @@ impl EventConsumer for MetricsEventConsumer {
                     .get("reason_detail")
                     .map(std::string::String::as_str)
                     .unwrap_or_default();
+                if stream_closed_trace_enabled() {
+                    tracing::warn!(
+                        flow_id = envelope.event.context.flow_id.as_u64(),
+                        server_host = %envelope.event.context.server_host,
+                        server_port = envelope.event.context.server_port,
+                        protocol = ?envelope.event.context.protocol,
+                        reason_code = reason_code.unwrap_or("unknown"),
+                        reason_detail = reason_detail,
+                        "stream closed diagnostic"
+                    );
+                }
                 match reason_code {
                     Some("upstream_connect_failed") => {
                         self.store.record_upstream_connect_error();
@@ -207,10 +219,20 @@ fn is_timeout_reason(reason_detail: &str) -> bool {
     lower.contains("timed out") || lower.contains("timeout")
 }
 
+fn stream_closed_trace_enabled() -> bool {
+    static STREAM_CLOSED_TRACE_ENABLED: OnceLock<bool> = OnceLock::new();
+    *STREAM_CLOSED_TRACE_ENABLED.get_or_init(|| {
+        std::env::var("SOTH_PROXY_STREAM_CLOSED_TRACE")
+            .ok()
+            .map(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
+            .unwrap_or(false)
+    })
+}
+
 #[cfg(test)]
 mod tests {
-    use mitm_http::ApplicationProtocol;
-    use mitm_observe::{Event, EventConsumer, EventEnvelope, EventType, FlowContext};
+    use crate::observe::{Event, EventConsumer, EventEnvelope, EventType, FlowContext};
+    use crate::protocol::ApplicationProtocol;
 
     use super::ProxyMetricsStore;
 
@@ -282,8 +304,9 @@ mod tests {
     }
 
     fn sample_context(flow_id: u64) -> FlowContext {
+        use crate::types::FlowId;
         FlowContext {
-            flow_id,
+            flow_id: FlowId(flow_id),
             client_addr: "127.0.0.1:1234".to_string(),
             server_host: "api.example.com".to_string(),
             server_port: 443,

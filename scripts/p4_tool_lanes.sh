@@ -177,10 +177,10 @@ lane_fault_tools() {
 
 lane_proptest_and_fuzz() {
   local lane="proptest_cargo_fuzz"
-  cargo test -p mitm-core --test connect_parser_proptest -q
-  cargo test -p mitm-http --test grpc_envelope_proptest -q
-  cargo test -p mitm-http --test sse_parser_proptest -q
-  cargo test -p mitm-tls --test tls_classification_proptest -q
+  cargo test -p soth-mitm --test connect_parser_proptest -q
+  cargo test -p soth-mitm --test grpc_envelope_proptest -q
+  cargo test -p soth-mitm --test sse_parser_proptest -q
+  cargo test -p soth-mitm --test tls_classification_proptest -q
   cargo check --manifest-path fuzz/Cargo.toml
   ./scripts/fuzz_decoder_layering_regression.sh --runs 64
   ./scripts/fuzz_corpus_maintenance.sh --report-dir "$report_dir/fuzz-corpus" --runs 32

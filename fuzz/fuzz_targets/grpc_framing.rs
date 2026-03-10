@@ -1,7 +1,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use mitm_http::{GrpcEnvelopeParser, GrpcEnvelopeParserLimits};
+use soth_mitm::test_protocol::{GrpcEnvelopeParser, GrpcEnvelopeParserLimits};
 
 fuzz_target!(|data: &[u8]| {
     let max_message_len = data

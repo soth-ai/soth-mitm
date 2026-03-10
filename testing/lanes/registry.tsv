@@ -14,8 +14,10 @@ phase5_http2_resilience	stress	./scripts/p5_http2_resilience.sh	1	0	0	HTTP/2 str
 phase5_event_log_contract	stress	./scripts/p5_event_log_contract.sh	0	0	0	Deterministic event log v2 contract (stable serialization, replay diff fixtures, and machine-readable sidecar exit status).
 phase5_compat_override_layer	stress	./scripts/p5_compat_override_layer.sh	0	0	0	Per-host compatibility overrides (`force_tunnel`, `disable_h2`, strict-header intent, `skip_upstream_verify`) with decision provenance checks.
 phase5_socket_net_hardening	stress	./scripts/p5_socket_net_hardening.sh	0	0	0	IPv6/dual-stack listener and socket lifecycle guards with runtime pressure instrumentation checks.
-phase5_control_plane_boundary	stress	./scripts/p5_control_plane_boundary.sh	0	1	0	Conditional control-plane boundary guard lane asserting no exposed management/control endpoint surface.
+phase5_control_plane_boundary	stress	./scripts/p5_control_plane_boundary.sh	0	0	0	Conditional control-plane boundary guard lane asserting no exposed management/control endpoint surface.
 phase5_runtime_soak	soak	./scripts/p5_runtime_soak.sh	0	0	0	Long-running mixed-traffic soak gate for runtime budget envelope.
+phase5_websocket_chaos_burnin	soak	./scripts/p5_websocket_chaos_burnin.sh	0	0	0	Repeat-run websocket chaos burn-in with fail-fast and monotonic FD/RSS leak trend guards.
+phase5_websocket_network_faults	stress	./scripts/p5_websocket_network_faults.sh	0	0	0	WebSocket network-fault lane (jitter/loss/reset profiles) plus chaos reference run.
 phase6_reliability_integration	stress	./scripts/p6_reliability_integration.sh	1	0	0	Integrated reliability gate carrying forward Phase-5 contract, HTTP/2 resilience, runtime soak, and deterministic mixed-traffic close semantics.
 phase6_tls_revocation_matrix	stress	./scripts/p6_tls_revocation_matrix.sh	0	0	0	TLS revocation metadata matrix and diagnostics stability checks.
 phase6_tls_mtls_matrix	stress	./scripts/p6_tls_mtls_matrix.sh	0	0	0	Optional/required upstream mTLS behavior matrix with deterministic fallback checks.

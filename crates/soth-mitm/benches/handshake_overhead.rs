@@ -135,7 +135,7 @@ async fn run_benchmark(config: BenchConfig) -> io::Result<BenchResult> {
     let (upstream_addr, upstream_task) = start_tls_upstream().await?;
     let (proxy_addr, proxy_handle, temp_dir) = start_proxy(upstream_addr).await?;
 
-    let tls_connector = TlsConnector::from(mitm_tls::build_http1_client_config(true));
+    let tls_connector = TlsConnector::from(soth_mitm::bench_tls::build_http1_client_config(true));
     for _ in 0..config.warmup {
         run_direct_tls_request(upstream_addr, tls_connector.clone()).await?;
         run_proxy_tls_request(proxy_addr, upstream_addr, tls_connector.clone()).await?;
@@ -198,7 +198,7 @@ async fn run_benchmark(config: BenchConfig) -> io::Result<BenchResult> {
 async fn start_tls_upstream() -> io::Result<(SocketAddr, JoinHandle<()>)> {
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let addr = listener.local_addr()?;
-    let server_config = mitm_tls::build_http1_server_config_for_host("127.0.0.1")
+    let server_config = soth_mitm::bench_tls::build_http1_server_config_for_host("127.0.0.1")
         .map_err(|error| io::Error::other(format!("build upstream TLS config: {error}")))?;
     let acceptor = TlsAcceptor::from(server_config);
     let task = tokio::spawn(async move {

@@ -1,7 +1,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use mitm_sidecar::{parse_http1_request_head_bytes, parse_http1_response_head_bytes};
+use soth_mitm::test_server::{parse_http1_request_head_bytes, parse_http1_response_head_bytes};
 
 fuzz_target!(|data: &[u8]| {
     let split = data

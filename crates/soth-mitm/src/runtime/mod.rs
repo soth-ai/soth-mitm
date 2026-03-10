@@ -2,9 +2,9 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 
-use mitm_core::{MitmConfig as CoreMitmConfig, MitmEngine};
-use mitm_policy::{FlowAction, PolicyDecision, PolicyEngine, PolicyInput, PolicyOverrideState};
-use mitm_sidecar::{FlowHooks, SidecarConfig, SidecarServer};
+use crate::engine::{MitmConfig as CoreMitmConfig, MitmEngine};
+use crate::policy::{FlowAction, PolicyDecision, PolicyEngine, PolicyInput, PolicyOverrideState};
+use crate::server::{FlowHooks, SidecarConfig, SidecarServer};
 use parking_lot::RwLock;
 
 use crate::config::{InterceptionScope, MitmConfig};
@@ -21,6 +21,7 @@ mod flow_dispatch;
 mod flow_hooks;
 mod flow_lifecycle;
 mod handler_guard;
+mod tls_intercept_backoff;
 
 pub(crate) type RuntimeServer = SidecarServer<DestinationPolicyEngine, MetricsEventConsumer>;
 pub(crate) struct RuntimeServerBundle {
@@ -33,19 +34,33 @@ pub(crate) fn build_runtime_server<H: InterceptHandler>(
     handler: Arc<H>,
     metrics_store: Arc<ProxyMetricsStore>,
 ) -> Result<RuntimeServerBundle, MitmError> {
+    const MIN_IDLE_WATCHDOG_TIMEOUT_MS: u64 = 10 * 60 * 1000;
     config.validate()?;
     let config_handle = RuntimeConfigHandle::from_config(config)?;
     let policy = config_handle.policy_engine();
     let sink = MetricsEventConsumer::new(Arc::clone(&metrics_store));
     let core_config = map_core_config(config);
+    // Keep tunnel/relay sessions resilient by clamping legacy low idle values.
+    let idle_watchdog_timeout = Duration::from_millis(
+        config
+            .connection_pool
+            .idle_timeout_ms
+            .max(MIN_IDLE_WATCHDOG_TIMEOUT_MS),
+    );
     let sidecar_config = SidecarConfig {
         listen_addr: core_config.listen_addr.clone(),
         listen_port: core_config.listen_port,
         max_connect_head_bytes: 64 * 1024,
         max_http_head_bytes: core_config.max_http_head_bytes,
-        idle_watchdog_timeout: Duration::from_millis(config.connection_pool.idle_timeout_ms.max(1)),
+        accept_retry_backoff_ms: config.accept_retry_backoff_ms.max(1),
+        idle_watchdog_timeout,
+        websocket_idle_watchdog_timeout: idle_watchdog_timeout.max(Duration::from_secs(600)),
         upstream_connect_timeout: Duration::from_millis(config.upstream.connect_timeout_ms.max(1)),
-        stream_stage_timeout: Duration::from_millis(config.upstream.timeout_ms.max(1)),
+        stream_stage_timeout: Duration::from_millis(
+            config.upstream.h2_header_stage_timeout_ms.max(1),
+        ),
+        h2_body_idle_timeout: Duration::from_millis(config.upstream.h2_body_idle_timeout_ms.max(1)),
+        h2_response_overflow_mode: config.upstream.h2_response_overflow_mode,
         unix_socket_path: config
             .unix_socket_path
             .as_ref()
@@ -70,12 +85,21 @@ fn map_core_config(config: &MitmConfig) -> CoreMitmConfig {
     core.listen_port = config.bind.port();
     core.ca_cert_pem_path = Some(config.tls.ca_cert_path.to_string_lossy().to_string());
     core.ca_key_pem_path = Some(config.tls.ca_key_path.to_string_lossy().to_string());
-    core.http2_enabled = true;
+    core.max_http_head_bytes = config.max_http_head_bytes.max(1);
+    core.http2_enabled = config.http2_enabled;
+    core.http2_max_header_list_size = config.http2_max_header_list_size.max(1);
+    core.http3_passthrough = config.http3_passthrough;
     core.max_flow_body_buffer_bytes = config.body.max_size_bytes.max(1);
-    core.max_flow_decoder_buffer_bytes = core
-        .max_flow_decoder_buffer_bytes
-        .min(core.max_flow_body_buffer_bytes);
+    core.max_flow_decoder_buffer_bytes = (core.max_flow_body_buffer_bytes / 2).max(1);
+    core.max_flow_event_backlog = config.max_flow_event_backlog.max(1);
+    core.max_in_flight_bytes = config.max_in_flight_bytes.max(1);
+    core.max_concurrent_flows = config.max_concurrent_flows.max(1);
     core.upstream_tls_insecure_skip_verify = !config.upstream.verify_upstream_tls;
+    core.intercept_mode = config.intercept_mode;
+    core.h2_response_overflow_strict = matches!(
+        config.upstream.h2_response_overflow_mode,
+        crate::config::H2ResponseOverflowMode::StrictFail
+    );
     core
 }
 
@@ -231,6 +255,30 @@ fn validate_reload_contract(current: &MitmConfig, next: &MitmConfig) -> Result<(
     if current.tls != next.tls {
         changed_fields.push("tls");
     }
+    if current.http2_enabled != next.http2_enabled {
+        changed_fields.push("http2_enabled");
+    }
+    if current.http2_max_header_list_size != next.http2_max_header_list_size {
+        changed_fields.push("http2_max_header_list_size");
+    }
+    if current.http3_passthrough != next.http3_passthrough {
+        changed_fields.push("http3_passthrough");
+    }
+    if current.max_http_head_bytes != next.max_http_head_bytes {
+        changed_fields.push("max_http_head_bytes");
+    }
+    if current.accept_retry_backoff_ms != next.accept_retry_backoff_ms {
+        changed_fields.push("accept_retry_backoff_ms");
+    }
+    if current.max_flow_event_backlog != next.max_flow_event_backlog {
+        changed_fields.push("max_flow_event_backlog");
+    }
+    if current.max_in_flight_bytes != next.max_in_flight_bytes {
+        changed_fields.push("max_in_flight_bytes");
+    }
+    if current.max_concurrent_flows != next.max_concurrent_flows {
+        changed_fields.push("max_concurrent_flows");
+    }
     if current.upstream != next.upstream {
         changed_fields.push("upstream");
     }
@@ -242,6 +290,9 @@ fn validate_reload_contract(current: &MitmConfig, next: &MitmConfig) -> Result<(
     }
     if current.handler != next.handler {
         changed_fields.push("handler");
+    }
+    if current.flow_runtime != next.flow_runtime {
+        changed_fields.push("flow_runtime");
     }
 
     let detail = if changed_fields.is_empty() {
@@ -255,216 +306,4 @@ fn validate_reload_contract(current: &MitmConfig, next: &MitmConfig) -> Result<(
 }
 
 #[cfg(test)]
-mod tests {
-    use mitm_policy::{FlowAction, PolicyEngine, PolicyInput};
-
-    use super::{map_core_config, DestinationPolicyEngine, RuntimeConfigHandle};
-    use crate::config::{InterceptionScope, MitmConfig};
-
-    fn policy(scope: InterceptionScope) -> DestinationPolicyEngine {
-        DestinationPolicyEngine::new(&scope).expect("scope must build policy")
-    }
-
-    #[test]
-    fn destination_scope_intercept_vs_passthrough() {
-        let engine = policy(InterceptionScope {
-            destinations: vec!["API.Example.COM:443".to_string()],
-            passthrough_unlisted: true,
-        });
-        let intercept = engine.decide(&PolicyInput {
-            server_host: "api.example.com".to_string(),
-            server_port: 443,
-            path: None,
-            process_info: None,
-        });
-        assert_eq!(intercept.action, FlowAction::Intercept);
-        assert_eq!(intercept.reason, "interception_scope_match");
-
-        let passthrough = engine.decide(&PolicyInput {
-            server_host: "other.example.com".to_string(),
-            server_port: 443,
-            path: None,
-            process_info: None,
-        });
-        assert_eq!(passthrough.action, FlowAction::Tunnel);
-        assert_eq!(passthrough.reason, "passthrough_unlisted");
-    }
-
-    #[test]
-    fn destination_scope_wildcard_intercept_for_runtime_like_hosts() {
-        let engine = policy(InterceptionScope {
-            destinations: vec!["runtime-gateway*.example.net:443".to_string()],
-            passthrough_unlisted: true,
-        });
-        let intercept = engine.decide(&PolicyInput {
-            server_host: "runtime-gateway.us-east-1.example.net".to_string(),
-            server_port: 443,
-            path: None,
-            process_info: None,
-        });
-        assert_eq!(intercept.action, FlowAction::Intercept);
-        assert_eq!(intercept.reason, "interception_scope_match");
-    }
-
-    #[test]
-    fn destination_scope_wildcard_match_requires_same_port() {
-        let engine = policy(InterceptionScope {
-            destinations: vec!["gateway*.example.net:443".to_string()],
-            passthrough_unlisted: false,
-        });
-        let blocked = engine.decide(&PolicyInput {
-            server_host: "gateway.us-east-1.example.net".to_string(),
-            server_port: 8443,
-            path: None,
-            process_info: None,
-        });
-        assert_eq!(blocked.action, FlowAction::Block);
-        assert_eq!(blocked.reason, "destination_not_allowed");
-    }
-
-    #[test]
-    fn destination_scope_exact_and_wildcard_both_intercept() {
-        let engine = policy(InterceptionScope {
-            destinations: vec![
-                "gateway*.example.net:443".to_string(),
-                "gateway.us-east-1.example.net:443".to_string(),
-            ],
-            passthrough_unlisted: false,
-        });
-        let decision = engine.decide(&PolicyInput {
-            server_host: "gateway.us-east-1.example.net".to_string(),
-            server_port: 443,
-            path: None,
-            process_info: None,
-        });
-        assert_eq!(decision.action, FlowAction::Intercept);
-        assert_eq!(decision.reason, "interception_scope_match");
-    }
-
-    #[test]
-    fn passthrough_unlisted_false_rst() {
-        let engine = policy(InterceptionScope {
-            destinations: vec!["api.example.com:443".to_string()],
-            passthrough_unlisted: false,
-        });
-        let decision = engine.decide(&PolicyInput {
-            server_host: "other.example.com".to_string(),
-            server_port: 443,
-            path: None,
-            process_info: None,
-        });
-        assert_eq!(decision.action, FlowAction::Block);
-        assert_eq!(decision.reason, "destination_not_allowed");
-    }
-
-    #[test]
-    fn config_reload_inflight_requests_contract() {
-        let mut config = MitmConfig::default();
-        config
-            .interception
-            .destinations
-            .push("api.example.com:443".to_string());
-
-        let runtime_config =
-            RuntimeConfigHandle::from_config(&config).expect("initial config must be valid");
-        let engine = runtime_config.policy_engine();
-
-        let in_flight = engine.decide(&PolicyInput {
-            server_host: "api.example.com".to_string(),
-            server_port: 443,
-            path: None,
-            process_info: None,
-        });
-        assert_eq!(in_flight.action, FlowAction::Intercept);
-
-        let mut reloaded = config.clone();
-        reloaded.interception.destinations = vec!["other.example.com:443".to_string()];
-        runtime_config
-            .apply_reload(&reloaded)
-            .expect("reload should apply");
-
-        let applied_config = runtime_config.current_config();
-        assert_eq!(
-            applied_config.interception.destinations,
-            vec!["other.example.com:443".to_string()]
-        );
-
-        assert_eq!(
-            in_flight.action,
-            FlowAction::Intercept,
-            "in-flight decisions must keep the pre-reload policy result"
-        );
-
-        let old_destination_after_reload = engine.decide(&PolicyInput {
-            server_host: "api.example.com".to_string(),
-            server_port: 443,
-            path: None,
-            process_info: None,
-        });
-        assert_eq!(old_destination_after_reload.action, FlowAction::Tunnel);
-
-        let new_destination_after_reload = engine.decide(&PolicyInput {
-            server_host: "other.example.com".to_string(),
-            server_port: 443,
-            path: None,
-            process_info: None,
-        });
-        assert_eq!(new_destination_after_reload.action, FlowAction::Intercept);
-    }
-
-    #[test]
-    fn body_size_limit_maps_to_core_runtime_budget() {
-        let mut config = MitmConfig::default();
-        config.body.max_size_bytes = 32 * 1024;
-        let core = map_core_config(&config);
-        assert_eq!(core.max_flow_body_buffer_bytes, 32 * 1024);
-    }
-
-    #[test]
-    fn decoder_budget_is_clamped_by_body_size_limit() {
-        let mut config = MitmConfig::default();
-        config.body.max_size_bytes = 256;
-        let core = map_core_config(&config);
-        assert_eq!(core.max_flow_body_buffer_bytes, 256);
-        assert!(
-            core.max_flow_decoder_buffer_bytes <= 256,
-            "decoder budget must be bounded by body size limit"
-        );
-    }
-
-    #[test]
-    fn reload_rejects_non_hot_reloadable_field_changes() {
-        let mut config = MitmConfig::default();
-        config
-            .interception
-            .destinations
-            .push("api.example.com:443".to_string());
-        let runtime_config =
-            RuntimeConfigHandle::from_config(&config).expect("initial config must be valid");
-
-        let mut next = config.clone();
-        next.upstream.timeout_ms += 1;
-        let error = runtime_config
-            .apply_reload(&next)
-            .expect_err("non hot-reloadable field changes must fail reload");
-        match error {
-            crate::MitmError::InvalidConfig(message) => {
-                assert!(message.contains("changed fields: upstream"));
-            }
-            other => panic!("expected invalid config error, got {other}"),
-        }
-    }
-
-    #[test]
-    fn runtime_config_handle_rejects_invalid_initial_config() {
-        let config = MitmConfig::default();
-        let error = RuntimeConfigHandle::from_config(&config)
-            .expect_err("invalid config should be rejected at runtime handle creation");
-        match error {
-            crate::MitmError::InvalidConfig(message) => {
-                assert!(message.contains("interception.destinations"));
-            }
-            other => panic!("expected invalid config error, got {other}"),
-        }
-    }
-}
+mod tests;

@@ -28,6 +28,10 @@ if command -v rg >/dev/null 2>&1; then
   has_rg=1
 fi
 
+# Allowed syscall boundary implementation files. These are audited explicitly,
+# but they are expected to contain `unsafe` and raw FFI/syscall primitives.
+allowed_syscall_boundary_regex='^crates/soth-mitm/src/process/socket_pid\.rs:|^crates/soth-mitm/src/process/socket_pid/macos\.rs:|^crates/soth-mitm/src/process/socket_pid/windows\.rs:|^crates/soth-mitm/src/process/macos\.rs:'
+
 search_sources() {
   local pattern="$1"
   shift
@@ -45,16 +49,8 @@ fi
 
 unsafe_matches="$(
   search_sources "$unsafe_pattern" \
-    crates/soth-mitm/src \
-    crates/mitm-core/src \
-    crates/mitm-http/src \
-    crates/mitm-policy/src \
-    crates/mitm-sidecar/src \
-    crates/mitm-tls/src \
-    crates/mitm-observe/src | \
-    awk -F: '
-      !($1 ~ /crates\/soth-mitm\/src\/process\/socket_pid\.rs$/) {print}
-    ' || true
+    crates/soth-mitm/src | \
+    grep -E -v "$allowed_syscall_boundary_regex" || true
 )"
 if [[ -n "$unsafe_matches" ]]; then
   status="fail"
@@ -64,9 +60,7 @@ fi
 raw_syscall_matches="$(
   search_sources 'libc::|nix::sys::|std::os::unix::io::FromRawFd|std::os::fd::FromRawFd' \
     crates/soth-mitm/src | \
-    awk -F: '
-      !($1 ~ /crates\/soth-mitm\/src\/process\/socket_pid\.rs$/) {print}
-    ' || true
+    grep -E -v "$allowed_syscall_boundary_regex" || true
 )"
 if [[ -n "$raw_syscall_matches" ]]; then
   status="fail"

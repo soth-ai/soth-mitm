@@ -38,7 +38,7 @@ run_case() {
 : >"$status_tsv"
 
 run_case tls_fingerprint_parity \
-  cargo test -p mitm-sidecar --test tls_fingerprint_parity -q || true
+  cargo test -p soth-mitm --test tls_fingerprint_parity -q || true
 
 run_case fingerprint_capture_contract \
   cargo test -p soth-mitm --lib fingerprint_capture -q || true

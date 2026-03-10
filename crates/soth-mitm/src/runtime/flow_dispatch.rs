@@ -8,12 +8,13 @@ use tokio::task::JoinHandle;
 use crate::handler::InterceptHandler;
 use crate::metrics::ProxyMetricsStore;
 use crate::runtime::handler_guard::HandlerCallbackGuard;
-use crate::types::{RawResponse, StreamChunk};
+use crate::types::{FlowId, RawResponse, StreamChunk};
 
 #[derive(Debug)]
 enum DispatchWork {
     Response(RawResponse),
     StreamChunk(StreamChunk),
+    WebSocketStart(RawResponse),
 }
 
 #[derive(Debug)]
@@ -27,8 +28,8 @@ pub(crate) struct FlowDispatchers<H: InterceptHandler> {
     handler: Arc<H>,
     callback_guard: Arc<HandlerCallbackGuard>,
     metrics_store: Arc<ProxyMetricsStore>,
-    closed_flow_live: Arc<DashSet<u64>>,
-    per_flow: DashMap<u64, FlowDispatcher>,
+    closed_flow_live: Arc<DashSet<FlowId>>,
+    per_flow: DashMap<FlowId, FlowDispatcher>,
     queue_capacity: usize,
     queue_send_timeout: Duration,
     close_join_timeout: Duration,
@@ -39,7 +40,7 @@ impl<H: InterceptHandler> FlowDispatchers<H> {
         handler: Arc<H>,
         callback_guard: Arc<HandlerCallbackGuard>,
         metrics_store: Arc<ProxyMetricsStore>,
-        closed_flow_live: Arc<DashSet<u64>>,
+        closed_flow_live: Arc<DashSet<FlowId>>,
         queue_capacity: usize,
         queue_send_timeout: Duration,
         close_join_timeout: Duration,
@@ -56,17 +57,26 @@ impl<H: InterceptHandler> FlowDispatchers<H> {
         }
     }
 
-    pub(crate) async fn enqueue_response(&self, flow_id: u64, response: RawResponse) {
+    pub(crate) async fn enqueue_response(&self, flow_id: FlowId, response: RawResponse) -> bool {
         self.enqueue(flow_id, DispatchWork::Response(response))
-            .await;
+            .await
     }
 
-    pub(crate) async fn enqueue_stream_chunk(&self, flow_id: u64, chunk: StreamChunk) {
+    pub(crate) async fn enqueue_stream_chunk(&self, flow_id: FlowId, chunk: StreamChunk) -> bool {
         self.enqueue(flow_id, DispatchWork::StreamChunk(chunk))
-            .await;
+            .await
     }
 
-    pub(crate) async fn close_and_drain(&self, flow_id: u64) {
+    pub(crate) async fn enqueue_websocket_start(
+        &self,
+        flow_id: FlowId,
+        response: RawResponse,
+    ) -> bool {
+        self.enqueue(flow_id, DispatchWork::WebSocketStart(response))
+            .await
+    }
+
+    pub(crate) async fn close_and_drain(&self, flow_id: FlowId) {
         let Some((_, mut dispatcher)) = self.per_flow.remove(&flow_id) else {
             return;
         };
@@ -75,7 +85,7 @@ impl<H: InterceptHandler> FlowDispatchers<H> {
             Ok(Ok(())) => {}
             Ok(Err(error)) => {
                 self.metrics_store.record_dispatch_drop();
-                tracing::warn!(flow_id, error = %error, "flow dispatcher worker join failed");
+                tracing::warn!(flow_id = flow_id.as_u64(), error = %error, "flow dispatcher worker join failed");
             }
             Err(_) => {
                 dispatcher.worker.abort();
@@ -83,7 +93,7 @@ impl<H: InterceptHandler> FlowDispatchers<H> {
                     tokio::time::timeout(Duration::from_millis(100), &mut dispatcher.worker).await;
                 self.metrics_store.record_dispatch_drop();
                 tracing::warn!(
-                    flow_id,
+                    flow_id = flow_id.as_u64(),
                     timeout_ms = self.close_join_timeout.as_millis(),
                     "flow dispatcher worker join timed out; worker aborted"
                 );
@@ -93,14 +103,14 @@ impl<H: InterceptHandler> FlowDispatchers<H> {
 
     #[allow(dead_code)]
     pub(crate) async fn shutdown_all(&self) {
-        let flow_ids: Vec<u64> = self.per_flow.iter().map(|entry| *entry.key()).collect();
+        let flow_ids: Vec<FlowId> = self.per_flow.iter().map(|entry| *entry.key()).collect();
         for flow_id in flow_ids {
             self.close_and_drain(flow_id).await;
         }
     }
 
     pub(crate) fn abort_all_now(&self) {
-        let flow_ids: Vec<u64> = self.per_flow.iter().map(|entry| *entry.key()).collect();
+        let flow_ids: Vec<FlowId> = self.per_flow.iter().map(|entry| *entry.key()).collect();
         for flow_id in flow_ids {
             if let Some((_, dispatcher)) = self.per_flow.remove(&flow_id) {
                 dispatcher.worker.abort();
@@ -108,30 +118,38 @@ impl<H: InterceptHandler> FlowDispatchers<H> {
         }
     }
 
-    async fn enqueue(&self, flow_id: u64, work: DispatchWork) {
+    async fn enqueue(&self, flow_id: FlowId, work: DispatchWork) -> bool {
         let Some(sender) = self.sender_for_flow(flow_id).await else {
             self.metrics_store.record_dispatch_drop();
-            tracing::warn!(flow_id, "dropped dispatch work for finalized flow");
-            return;
+            tracing::warn!(
+                flow_id = flow_id.as_u64(),
+                "dropped dispatch work for finalized flow"
+            );
+            return false;
         };
         match tokio::time::timeout(self.queue_send_timeout, sender.send(work)).await {
-            Ok(Ok(())) => {}
+            Ok(Ok(())) => true,
             Ok(Err(_)) => {
                 self.metrics_store.record_dispatch_drop();
-                tracing::warn!(flow_id, "dropped dispatch work; flow worker closed");
+                tracing::warn!(
+                    flow_id = flow_id.as_u64(),
+                    "dropped dispatch work; flow worker closed"
+                );
+                false
             }
             Err(_) => {
                 self.metrics_store.record_dispatch_drop();
                 tracing::warn!(
-                    flow_id,
+                    flow_id = flow_id.as_u64(),
                     timeout_ms = self.queue_send_timeout.as_millis(),
                     "dispatch queue send timed out; dropping work item"
                 );
+                false
             }
         }
     }
 
-    async fn sender_for_flow(&self, flow_id: u64) -> Option<mpsc::Sender<DispatchWork>> {
+    async fn sender_for_flow(&self, flow_id: FlowId) -> Option<mpsc::Sender<DispatchWork>> {
         if self.is_flow_closed(flow_id) {
             return None;
         }
@@ -170,7 +188,7 @@ impl<H: InterceptHandler> FlowDispatchers<H> {
         None
     }
 
-    fn is_flow_closed(&self, flow_id: u64) -> bool {
+    fn is_flow_closed(&self, flow_id: FlowId) -> bool {
         self.closed_flow_live.contains(&flow_id)
     }
 }
@@ -199,6 +217,15 @@ fn spawn_flow_dispatch_worker<H: InterceptHandler>(
                     let handler = Arc::clone(&handler);
                     callback_guard
                         .run_response((), async move { handler.on_stream_chunk(&chunk).await })
+                        .await;
+                }
+                DispatchWork::WebSocketStart(response) => {
+                    let handler = Arc::clone(&handler);
+                    callback_guard
+                        .run_response(
+                            (),
+                            async move { handler.on_websocket_start(&response).await },
+                        )
                         .await;
                 }
             }

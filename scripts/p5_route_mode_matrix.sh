@@ -41,13 +41,13 @@ run_case() {
 : >"$status_tsv"
 
 run_case route_config_validation \
-  cargo test -p mitm-core route_mode_requires_corresponding_endpoint -q
+  cargo test -p soth-mitm route_mode_requires_corresponding_endpoint -q
 run_case route_config_rejects_unexpected_proxy_fields \
-  cargo test -p mitm-core route_mode_rejects_unexpected_endpoint -q
+  cargo test -p soth-mitm route_mode_rejects_unexpected_endpoint -q
 run_case route_planner_unit_matrix \
-  cargo test -p mitm-sidecar route_planner_ -q
+  cargo test -p soth-mitm route_planner_ -q
 run_case route_mode_integration_matrix \
-  cargo test -p mitm-sidecar --test route_mode_matrix -q
+  cargo test -p soth-mitm --test route_mode_matrix -q
 
 failed="$(awk '$2 == "fail" {print $1}' "$status_tsv" || true)"
 {

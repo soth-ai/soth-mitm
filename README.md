@@ -157,14 +157,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 Compilable integration example:
 - `crates/soth-mitm/examples/soth_proxy_integration.rs`
 
-Workspace crates:
+Workspace crate:
 - `crates/soth-mitm`
-- `crates/mitm-core`
-- `crates/mitm-sidecar`
-- `crates/mitm-http`
-- `crates/mitm-policy`
-- `crates/mitm-observe`
-- `crates/mitm-tls`
 
 ## Build And Validation
 

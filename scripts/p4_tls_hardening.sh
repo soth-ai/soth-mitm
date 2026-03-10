@@ -73,8 +73,8 @@ check_or_skip_tool() {
 
 : >"$status_tsv"
 run_case tls_failure_fixture_matrix ./scripts/tls_failure_fixtures.sh --report-dir "$report_dir/tls-fixtures"
-run_case tls_taxonomy_adapter cargo test -p mitm-sidecar --test mitmproxy_tls_adapter replayed_mitmproxy_failed_callbacks_match_native_taxonomy -q
-run_case tls_learning_guardrails cargo test -p mitm-sidecar --test tls_learning_guardrails -q
+run_case tls_taxonomy_adapter cargo test -p soth-mitm --test mitmproxy_tls_adapter replayed_mitmproxy_failed_callbacks_match_native_taxonomy -q
+run_case tls_learning_guardrails cargo test -p soth-mitm --test tls_learning_guardrails -q
 check_or_skip_tool openssl_client_probe openssl "openssl version"
 check_or_skip_tool testssl_probe testssl.sh "testssl.sh --version"
 

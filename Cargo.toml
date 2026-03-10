@@ -1,21 +1,9 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/mitm-core",
-    "crates/mitm-http",
-    "crates/mitm-observe",
-    "crates/mitm-policy",
-    "crates/mitm-sidecar",
-    "crates/mitm-tls",
     "crates/soth-mitm",
 ]
 default-members = [
-    "crates/mitm-core",
-    "crates/mitm-http",
-    "crates/mitm-observe",
-    "crates/mitm-policy",
-    "crates/mitm-sidecar",
-    "crates/mitm-tls",
     "crates/soth-mitm",
 ]
 exclude = [
@@ -31,13 +19,6 @@ repository = "https://github.com/soth-ai/soth-mitm"
 authors = ["Labterminal"]
 
 [workspace.dependencies]
-# Internal crates
-mitm-core = { path = "crates/mitm-core" }
-mitm-http = { path = "crates/mitm-http" }
-mitm-observe = { path = "crates/mitm-observe" }
-mitm-policy = { path = "crates/mitm-policy" }
-mitm-sidecar = { path = "crates/mitm-sidecar" }
-mitm-tls = { path = "crates/mitm-tls" }
 soth-mitm = { path = "crates/soth-mitm" }
 
 # Async runtime
@@ -65,6 +46,7 @@ serde_yaml = "0.9"
 
 # Cryptography
 ed25519-dalek = { version = "2", features = ["rand_core"] }
+sha1 = "0.10"
 sha2 = "0.10"
 bs58 = "0.5"
 rand = "0.8"
@@ -88,6 +70,7 @@ hyper-util = { version = "0.1", features = ["client-legacy", "http1", "http2", "
 h2 = "0.4"
 http-body-util = "0.1"
 tokio-tungstenite = "0.21"
+soketto = "0.8.1"
 
 # TLS
 rcgen = "0.14"

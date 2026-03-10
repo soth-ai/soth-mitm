@@ -31,10 +31,10 @@ run_case() {
 }
 
 : >"$status_tsv"
-run_case tls_reset_timeout_invalid_chain_taxonomy cargo test -p mitm-sidecar --test mitmproxy_tls_adapter replayed_mitmproxy_failed_callbacks_match_native_taxonomy -q
-run_case tls_unknown_ca_native_path cargo test -p mitm-sidecar --test http1_mitm intercept_upstream_tls_failure_emits_taxonomy_reason -q
-run_case tls_fragmented_handshake_failure cargo test -p mitm-sidecar --test chaos_charter tls_fragmented_client_hello_emits_failed_handshake_close -q
-run_case upstream_eof_mid_stream cargo test -p mitm-sidecar --test chaos_charter jitter_and_loss_in_tunnel_path_emit_relay_error_close -q
+run_case tls_reset_timeout_invalid_chain_taxonomy cargo test -p soth-mitm --test mitmproxy_tls_adapter replayed_mitmproxy_failed_callbacks_match_native_taxonomy -q
+run_case tls_unknown_ca_native_path cargo test -p soth-mitm --test http1_mitm intercept_upstream_tls_failure_emits_taxonomy_reason -q
+run_case tls_fragmented_handshake_failure cargo test -p soth-mitm --test chaos_charter tls_fragmented_client_hello_emits_failed_handshake_close -q
+run_case upstream_eof_mid_stream cargo test -p soth-mitm --test chaos_charter jitter_and_loss_in_tunnel_path_emit_relay_error_close -q
 
 failed="$(awk '$2 != "pass" {print $1}' "$status_tsv" || true)"
 {

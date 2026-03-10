@@ -18,10 +18,10 @@ run_cargo_test() {
 }
 
 echo "[phase-a] core parser + policy unit tests"
-run_cargo_test -p mitm-core
+run_cargo_test -p soth-mitm --lib
 
 echo "[phase-a] sidecar transport integration fixtures"
-run_cargo_test -p mitm-sidecar --test phase_a
+run_cargo_test -p soth-mitm --test phase_a
 
 echo "[phase-a] http/1.1 MITM integration fixtures"
-run_cargo_test -p mitm-sidecar --test http1_mitm
+run_cargo_test -p soth-mitm --test http1_mitm

@@ -71,6 +71,7 @@ impl ProcessAttributor for SleepyAttributor {
                 exe_name: Some("curl".to_string()),
                 exe_path: Some(PathBuf::from("/usr/bin/curl")),
                 parent_pid: Some(1),
+                parent_process_name: None,
             })
         })
     }
@@ -103,6 +104,7 @@ impl ProcessAttributor for SleepyAttributor {
                 exe_name: Some("curl".to_string()),
                 exe_path: Some(PathBuf::from("/usr/bin/curl")),
                 parent_pid: Some(1),
+                parent_process_name: None,
             })
         })
     }
@@ -113,7 +115,12 @@ async fn process_lookup_timeout_sets_none() {
     let attributor = Arc::new(SleepyAttributor::new_without_identity(
         Duration::from_millis(75),
     ));
-    let service = ProcessLookupService::new(Arc::clone(&attributor), Duration::from_millis(5));
+    let service = ProcessLookupService::new_with_cache(
+        Arc::clone(&attributor),
+        Duration::from_millis(5),
+        4_096,
+        None,
+    );
     let connection = sample_connection();
 
     let first = service.resolve_with_status(&connection).await;
@@ -141,7 +148,12 @@ async fn process_lookup_timeout_sets_none() {
 #[tokio::test]
 async fn process_info_resolved_once_per_connection() {
     let attributor = Arc::new(SleepyAttributor::new(Duration::from_millis(1)));
-    let service = ProcessLookupService::new(Arc::clone(&attributor), Duration::from_millis(50));
+    let service = ProcessLookupService::new_with_cache(
+        Arc::clone(&attributor),
+        Duration::from_millis(50),
+        4_096,
+        None,
+    );
     let connection = sample_connection();
 
     let first = service.resolve_with_status(&connection).await;
@@ -174,7 +186,12 @@ async fn process_info_resolved_once_per_connection() {
 #[tokio::test]
 async fn identity_cache_reused_across_connections() {
     let attributor = Arc::new(SleepyAttributor::new(Duration::from_millis(1)));
-    let service = ProcessLookupService::new(Arc::clone(&attributor), Duration::from_millis(50));
+    let service = ProcessLookupService::new_with_cache(
+        Arc::clone(&attributor),
+        Duration::from_millis(50),
+        4_096,
+        None,
+    );
     let first_connection = sample_connection();
     let mut second_connection = sample_connection();
     second_connection.connection_id = Uuid::new_v4();
@@ -198,9 +215,11 @@ async fn concurrent_cold_misses_are_singleflight_per_connection() {
     let attributor = Arc::new(SleepyAttributor::new_without_identity(
         Duration::from_millis(40),
     ));
-    let service = Arc::new(ProcessLookupService::new(
+    let service = Arc::new(ProcessLookupService::new_with_cache(
         Arc::clone(&attributor),
         Duration::from_millis(500),
+        4_096,
+        None,
     ));
     let connection = sample_connection();
 
@@ -233,6 +252,37 @@ async fn concurrent_cold_misses_are_singleflight_per_connection() {
         attributor.calls(),
         1,
         "singleflight should collapse concurrent cold misses into one lookup call"
+    );
+}
+
+#[tokio::test]
+async fn cache_ttl_expires_cached_entries() {
+    let attributor = Arc::new(SleepyAttributor::new(Duration::from_millis(1)));
+    let service = ProcessLookupService::new_with_cache(
+        Arc::clone(&attributor),
+        Duration::from_millis(50),
+        4_096,
+        Some(Duration::from_millis(25)),
+    );
+    let connection = sample_connection();
+
+    let first = service.resolve_with_status(&connection).await;
+    let second = service.resolve_with_status(&connection).await;
+    assert_eq!(first.cache_path, ProcessCachePath::Miss);
+    assert_eq!(second.cache_path, ProcessCachePath::ConnectionHit);
+
+    tokio::time::sleep(Duration::from_millis(35)).await;
+
+    let third = service.resolve_with_status(&connection).await;
+    assert_eq!(
+        third.cache_path,
+        ProcessCachePath::Miss,
+        "expired cache entry should force uncached lookup again"
+    );
+    assert_eq!(
+        attributor.identity_lookup_calls(),
+        2,
+        "lookup should run again after ttl expiry"
     );
 }
 

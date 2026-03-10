@@ -11,18 +11,19 @@ use crate::process::{PlatformProcessAttributor, ProcessLookupService};
 use crate::runtime::connection_id::connection_id_for_flow_id;
 use crate::runtime::flow_dispatch::FlowDispatchers;
 use crate::runtime::handler_guard::HandlerCallbackGuard;
-use crate::types::ConnectionMeta;
+use crate::types::{ConnectionMeta, FlowId};
 
 #[derive(Debug)]
 pub(super) struct FlowStateContext<H: InterceptHandler> {
     pub(super) metrics_store: Arc<ProxyMetricsStore>,
-    pub(super) closed_flow_ids: Arc<Mutex<LruCache<u64, ()>>>,
-    pub(super) closed_flow_live: Arc<DashSet<u64>>,
+    pub(super) closed_flow_ids: Arc<Mutex<LruCache<FlowId, ()>>>,
+    pub(super) closed_flow_live: Arc<DashSet<FlowId>>,
     pub(super) flow_dispatchers: Arc<FlowDispatchers<H>>,
-    pub(super) stream_sequences: Arc<DashMap<u64, u64>>,
-    pub(super) connection_meta_by_flow: Arc<DashMap<u64, Arc<ConnectionMeta>>>,
-    pub(super) flow_last_touched: Arc<DashMap<u64, Instant>>,
-    pub(super) tls_intercepted_flow_ids: Arc<DashMap<u64, ()>>,
+    pub(super) stream_sequences: Arc<DashMap<FlowId, u64>>,
+    pub(super) connection_meta_by_flow: Arc<DashMap<FlowId, Arc<ConnectionMeta>>>,
+    pub(super) response_activity_flows: Arc<DashSet<FlowId>>,
+    pub(super) flow_last_touched: Arc<DashMap<FlowId, Instant>>,
+    pub(super) tls_intercepted_flow_ids: Arc<DashMap<FlowId, ()>>,
     pub(super) process_lookup: Option<Arc<ProcessLookupService<PlatformProcessAttributor>>>,
     pub(super) handler: Arc<H>,
     pub(super) callback_guard: Arc<HandlerCallbackGuard>,
@@ -60,7 +61,7 @@ async fn reap_stale_flows<H: InterceptHandler>(
     stale_reap_max_batch: usize,
 ) {
     let now = Instant::now();
-    let stale_flow_ids: Vec<u64> = flow_state
+    let stale_flow_ids: Vec<FlowId> = flow_state
         .flow_last_touched
         .iter()
         .filter_map(|entry| {
@@ -80,7 +81,7 @@ async fn reap_stale_flows<H: InterceptHandler>(
             }
         }
         tracing::warn!(
-            flow_id,
+            flow_id = flow_id.as_u64(),
             "reaping stale flow state without explicit stream_end"
         );
         flow_state.metrics_store.record_stale_flow_reap();
@@ -89,7 +90,7 @@ async fn reap_stale_flows<H: InterceptHandler>(
 }
 
 pub(super) async fn finalize_flow<H: InterceptHandler>(
-    flow_id: u64,
+    flow_id: FlowId,
     flow_state: Arc<FlowStateContext<H>>,
 ) {
     let should_finalize = {
@@ -101,14 +102,15 @@ pub(super) async fn finalize_flow<H: InterceptHandler>(
                 flow_state.closed_flow_live.remove(&evicted_flow_id);
                 flow_state.metrics_store.record_closed_flow_id_eviction();
                 tracing::debug!(
-                    flow_id,
-                    evicted_flow_id,
+                    flow_id = flow_id.as_u64(),
+                    evicted_flow_id = evicted_flow_id.as_u64(),
                     "closed-flow LRU evicted tombstone entry"
                 );
             }
             flow_state.closed_flow_live.insert(flow_id);
             flow_state.stream_sequences.remove(&flow_id);
             flow_state.connection_meta_by_flow.remove(&flow_id);
+            flow_state.response_activity_flows.remove(&flow_id);
             flow_state.flow_last_touched.remove(&flow_id);
             flow_state.tls_intercepted_flow_ids.remove(&flow_id);
             true
@@ -132,11 +134,6 @@ pub(super) async fn finalize_flow<H: InterceptHandler>(
             handler_for_end.on_stream_end(connection_id).await
         })
         .await;
-    let handler_for_close = Arc::clone(&flow_state.handler);
-    flow_state
-        .callback_guard
-        .run_lifecycle((), move || {
-            handler_for_close.on_connection_close(connection_id)
-        })
-        .await;
+
+    flow_state.handler.on_connection_close(connection_id);
 }

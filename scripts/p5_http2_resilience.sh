@@ -103,13 +103,13 @@ run_h2spec_blocking_criteria() {
 : >"$status_tsv"
 
 run_case h2_parallel_stream_stress \
-  cargo test -p mitm-sidecar --test http2_mitm \
+  cargo test -p soth-mitm --test http2_mitm \
     http2_parallel_stream_stress_keeps_completed_close_and_byte_accounting -q
 run_case h2_upstream_cancel_reset_nonfatal \
-  cargo test -p mitm-sidecar --test http2_mitm \
+  cargo test -p soth-mitm --test http2_mitm \
     http2_upstream_cancel_reset_on_single_stream_is_nonfatal_for_flow -q
 run_case h2_header_limit_guard \
-  cargo test -p mitm-sidecar --test http2_mitm \
+  cargo test -p soth-mitm --test http2_mitm \
     http2_oversized_headers_emit_mitm_http_error_close -q
 
 check_h2spec_probe || true
