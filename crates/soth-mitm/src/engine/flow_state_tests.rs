@@ -100,8 +100,9 @@ fn http2_machine_rejects_websocket_events() {
 
 #[test]
 fn invalid_transition_terminalizes_without_panic_and_allows_close() {
+    use crate::types::FlowId;
     let tracker = FlowStateTracker::default();
-    let flow_id = 91;
+    let flow_id = FlowId(91);
 
     assert_eq!(
         tracker.on_event(

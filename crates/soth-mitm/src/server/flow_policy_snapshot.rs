@@ -1,8 +1,9 @@
 use dashmap::DashMap;
+use crate::types::FlowId;
 
 #[derive(Debug, Clone)]
 struct FlowPolicySnapshot {
-    flow_id: u64,
+    flow_id: FlowId,
     action: FlowAction,
     reason: String,
     override_state: crate::policy::PolicyOverrideState,
@@ -11,7 +12,7 @@ struct FlowPolicySnapshot {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct FlowPolicySnapshotKey {
     engine_instance_id: u64,
-    flow_id: u64,
+    flow_id: FlowId,
 }
 
 static FLOW_POLICY_SNAPSHOTS: std::sync::OnceLock<DashMap<FlowPolicySnapshotKey, FlowPolicySnapshot>> =
@@ -23,7 +24,7 @@ fn flow_policy_snapshots() -> &'static DashMap<FlowPolicySnapshotKey, FlowPolicy
 
 fn resolve_flow_policy_snapshot<P, S>(
     engine: &MitmEngine<P, S>,
-    flow_id: u64,
+    flow_id: FlowId,
     client_addr: String,
     server_host: String,
     server_port: u16,
@@ -59,7 +60,7 @@ where
     snapshot
 }
 
-fn clear_flow_policy_snapshot(engine_instance_id: u64, flow_id: u64) {
+fn clear_flow_policy_snapshot(engine_instance_id: u64, flow_id: FlowId) {
     let snapshot_key = FlowPolicySnapshotKey {
         engine_instance_id,
         flow_id,

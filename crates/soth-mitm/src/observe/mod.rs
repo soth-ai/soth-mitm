@@ -3,6 +3,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::protocol::ApplicationProtocol;
+use crate::types::FlowId;
 
 pub(crate) mod event_log_v2;
 
@@ -67,7 +68,7 @@ impl EventType {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FlowContext {
-    pub flow_id: u64,
+    pub flow_id: FlowId,
     pub client_addr: String,
     pub server_host: String,
     pub server_port: u16,
@@ -184,7 +185,7 @@ mod tests {
 
     use super::{
         ApplicationProtocol, Event, EventConsumer, EventEnvelope, EventType, FlowContext,
-        NoopEventConsumer, VecEventConsumer, EVENT_SCHEMA_VERSION,
+        FlowId, NoopEventConsumer, VecEventConsumer, EVENT_SCHEMA_VERSION,
     };
 
     #[derive(Debug, Default, Clone)]
@@ -206,7 +207,7 @@ mod tests {
 
     fn sample_context(flow_id: u64) -> FlowContext {
         FlowContext {
-            flow_id,
+            flow_id: FlowId(flow_id),
             client_addr: "127.0.0.1:12345".to_string(),
             server_host: "example.com".to_string(),
             server_port: 443,

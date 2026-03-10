@@ -13,6 +13,7 @@ use futures::FutureExt;
 use http::HeaderMap;
 use crate::protocol::ApplicationProtocol;
 use crate::observe::FlowContext;
+use crate::types::FlowId;
 use crate::types::ProcessInfo as PolicyProcessInfo;
 use crate::server::{FlowHooks, RawRequest as SidecarRawRequest, RawResponse as SidecarRawResponse};
 use std::panic::AssertUnwindSafe;
@@ -33,7 +34,7 @@ fn parses_unix_client_addr_metadata() {
 #[test]
 fn unix_client_addr_maps_socket_family_and_process_info() {
     let context = FlowContext {
-        flow_id: 9,
+        flow_id: FlowId(9),
         client_addr: "unix:pid=1234,path=/tmp/soth.sock".to_string(),
         server_host: "127.0.0.1".to_string(),
         server_port: 11434,
@@ -566,7 +567,7 @@ fn build_hooks<H: InterceptHandler>(
 
 fn sample_context(flow_id: u64) -> FlowContext {
     FlowContext {
-        flow_id,
+        flow_id: FlowId(flow_id),
         client_addr: "127.0.0.1:56000".to_string(),
         server_host: "api.example.com".to_string(),
         server_port: 443,
@@ -672,13 +673,11 @@ impl InterceptHandler for StreamLifecycleHandler {
 
     fn on_stream_end(&self, _connection_id: Uuid) -> impl std::future::Future<Output = ()> + Send {
         let stream_end_count = Arc::clone(&self.stream_end_count);
+        let close_count = Arc::clone(&self.close_count);
         async move {
             stream_end_count.fetch_add(1, Ordering::Relaxed);
+            close_count.fetch_add(1, Ordering::Relaxed);
         }
-    }
-
-    fn on_connection_close(&self, _connection_id: Uuid) {
-        self.close_count.fetch_add(1, Ordering::Relaxed);
     }
 }
 
@@ -696,9 +695,13 @@ impl InterceptHandler for SlowLifecycleCloseHandler {
         async { HandlerDecision::Allow }
     }
 
-    fn on_connection_close(&self, _connection_id: Uuid) {
-        std::thread::sleep(self.close_delay);
-        self.close_count.fetch_add(1, Ordering::Relaxed);
+    fn on_stream_end(&self, _connection_id: Uuid) -> impl std::future::Future<Output = ()> + Send {
+        let close_delay = self.close_delay;
+        let close_count = Arc::clone(&self.close_count);
+        async move {
+            tokio::time::sleep(close_delay).await;
+            close_count.fetch_add(1, Ordering::Relaxed);
+        }
     }
 }
 

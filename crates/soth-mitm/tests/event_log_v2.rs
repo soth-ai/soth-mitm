@@ -91,7 +91,7 @@ fn event_log_v2_consumer_writes_index_and_rotates_segments() {
 
 fn sample_context(flow_id: u64) -> FlowContext {
     FlowContext {
-        flow_id,
+        flow_id: soth_mitm::FlowId(flow_id),
         client_addr: "127.0.0.1:12345".to_string(),
         server_host: "example.com".to_string(),
         server_port: 443,

@@ -187,7 +187,7 @@ impl EventConsumer for MetricsEventConsumer {
                     .unwrap_or_default();
                 if stream_closed_trace_enabled() {
                     tracing::warn!(
-                        flow_id = envelope.event.context.flow_id,
+                        flow_id = envelope.event.context.flow_id.as_u64(),
                         server_host = %envelope.event.context.server_host,
                         server_port = envelope.event.context.server_port,
                         protocol = ?envelope.event.context.protocol,
@@ -304,8 +304,9 @@ mod tests {
     }
 
     fn sample_context(flow_id: u64) -> FlowContext {
+        use crate::types::FlowId;
         FlowContext {
-            flow_id,
+            flow_id: FlowId(flow_id),
             client_addr: "127.0.0.1:1234".to_string(),
             server_host: "api.example.com".to_string(),
             server_port: 443,

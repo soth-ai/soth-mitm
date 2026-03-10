@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+use soth_mitm::FlowId;
 use soth_mitm::test_engine::{MitmConfig, MitmEngine};
 use soth_mitm::test_protocol::ApplicationProtocol;
 use soth_mitm::test_observe::{EventType, VecEventConsumer};
@@ -20,7 +21,7 @@ fn build_sidecar(sink: VecEventConsumer) -> SidecarServer<DefaultPolicyEngine, V
     SidecarServer::new(SidecarConfig::default(), engine).expect("build sidecar")
 }
 
-fn metadata_for_flow(events: &[soth_mitm::test_observe::Event], flow_id: u64) -> BTreeMap<String, String> {
+fn metadata_for_flow(events: &[soth_mitm::test_observe::Event], flow_id: FlowId) -> BTreeMap<String, String> {
     events
         .iter()
         .find(|event| {
@@ -38,35 +39,35 @@ fn upstream_revocation_metadata_matrix_emits_stable_fields() {
 
     let fixtures = vec![
         (
-            201_u64,
+            FlowId(201),
             "OCSP response required but missing",
             "false",
             "missing",
             "signal_missing_staple",
         ),
         (
-            202_u64,
+            FlowId(202),
             "upstream rejected malformed OCSP stapling parse error",
             "true",
             "invalid",
             "signal_invalid_staple",
         ),
         (
-            203_u64,
+            FlowId(203),
             "certificate revoked by OCSP responder",
             "unknown",
             "revoked",
             "signal_revoked",
         ),
         (
-            204_u64,
+            FlowId(204),
             "OCSP stapling status: good",
             "true",
             "present",
             "signal_present",
         ),
         (
-            205_u64,
+            FlowId(205),
             "OCSP response expired while validating chain",
             "true",
             "invalid",
@@ -119,7 +120,7 @@ fn downstream_tls_failure_marks_revocation_not_applicable() {
     let server = build_sidecar(sink.clone());
 
     server.ingest_mitmproxy_tls_callback(MitmproxyTlsCallback {
-        flow_id: 301,
+        flow_id: FlowId(301),
         client_addr: "127.0.0.1:50001".to_string(),
         server_host: "api.example.com".to_string(),
         server_port: 443,
@@ -132,7 +133,7 @@ fn downstream_tls_failure_marks_revocation_not_applicable() {
     });
 
     let events = sink.snapshot();
-    let attrs = metadata_for_flow(&events, 301);
+    let attrs = metadata_for_flow(&events, FlowId(301));
     assert_eq!(
         attrs
             .get("upstream_ocsp_staple_present")

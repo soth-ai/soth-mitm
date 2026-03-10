@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
+use soth_mitm::FlowId;
 use soth_mitm::test_engine::{ConnectParseMode, MitmConfig, MitmEngine};
 use soth_mitm::test_observe::{EventType, VecEventConsumer};
 use soth_mitm::test_policy::DefaultPolicyEngine;
@@ -65,7 +66,7 @@ fn assert_event_ordering_metadata(events: &[soth_mitm::test_observe::Event]) {
 
     let mut last_sequence_id = 0_u64;
     let mut last_monotonic_ns = 0_u128;
-    let mut per_flow_last = HashMap::<u64, u64>::new();
+    let mut per_flow_last = HashMap::<FlowId, u64>::new();
 
     for event in events {
         assert!(event.sequence_id > 0, "missing global sequence id");
@@ -98,7 +99,7 @@ fn assert_event_ordering_metadata(events: &[soth_mitm::test_observe::Event]) {
 }
 
 fn assert_exactly_one_stream_closed_per_flow(events: &[soth_mitm::test_observe::Event]) {
-    let mut by_flow = HashMap::<u64, usize>::new();
+    let mut by_flow = HashMap::<FlowId, usize>::new();
     for event in events {
         if event.kind == EventType::StreamClosed {
             *by_flow.entry(event.context.flow_id).or_insert(0) += 1;

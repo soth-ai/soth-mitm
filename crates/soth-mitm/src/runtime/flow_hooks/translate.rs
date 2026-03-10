@@ -4,13 +4,13 @@ use dashmap::{DashMap, DashSet};
 use crate::observe::FlowContext;
 
 use crate::runtime::connection_meta::tls_info_from_intercept_decision;
-use crate::types::ConnectionMeta;
+use crate::types::{ConnectionMeta, FlowId};
 
 pub(super) async fn connection_meta_for_context(
     context: &FlowContext,
-    connection_meta_by_flow: &Arc<DashMap<u64, Arc<ConnectionMeta>>>,
-    closed_flow_live: &Arc<DashSet<u64>>,
-    tls_intercepted_flow_ids: &Arc<DashMap<u64, ()>>,
+    connection_meta_by_flow: &Arc<DashMap<FlowId, Arc<ConnectionMeta>>>,
+    closed_flow_live: &Arc<DashSet<FlowId>>,
+    tls_intercepted_flow_ids: &Arc<DashMap<FlowId, ()>>,
 ) -> Option<Arc<ConnectionMeta>> {
     let Some(connection_meta) = connection_meta_by_flow
         .get(&context.flow_id)
@@ -25,7 +25,7 @@ pub(super) async fn connection_meta_for_context(
             context.flow_id
         );
         tracing::error!(
-            flow_id = context.flow_id,
+            flow_id = context.flow_id.as_u64(),
             host = %context.server_host,
             port = context.server_port,
             "missing ConnectionMeta in flow map"

@@ -1,3 +1,4 @@
+use soth_mitm::FlowId;
 use soth_mitm::test_engine::{MitmConfig, MitmEngine};
 use soth_mitm::test_protocol::ApplicationProtocol;
 use soth_mitm::test_observe::{EventType, VecEventConsumer};
@@ -27,43 +28,43 @@ fn replayed_mitmproxy_failed_callbacks_match_native_taxonomy() {
 
     let fixtures = vec![
         (
-            1_u64,
+            FlowId(1),
             MitmproxyTlsHook::TlsFailedClient,
             "127.0.0.1",
             "certificate verify failed: unknown ca",
         ),
         (
-            2_u64,
+            FlowId(2),
             MitmproxyTlsHook::TlsFailedServer,
             "api.example.com",
             "invalid peer certificate: HostnameMismatch",
         ),
         (
-            3_u64,
+            FlowId(3),
             MitmproxyTlsHook::TlsFailedServer,
             "api.example.com",
             "remote error: tls: handshake failure",
         ),
         (
-            7_u64,
+            FlowId(7),
             MitmproxyTlsHook::TlsFailedServer,
             "api.example.com",
             "certificate verify failed: invalid certificate chain",
         ),
         (
-            4_u64,
+            FlowId(4),
             MitmproxyTlsHook::TlsFailedServer,
             "service.local",
             "operation timed out",
         ),
         (
-            5_u64,
+            FlowId(5),
             MitmproxyTlsHook::TlsFailedClient,
             "127.0.0.1",
             "connection reset by peer",
         ),
         (
-            6_u64,
+            FlowId(6),
             MitmproxyTlsHook::TlsFailedServer,
             "service.local",
             "unexpected provider fault",
@@ -219,7 +220,7 @@ fn replayed_mitmproxy_started_and_succeeded_callbacks_emit_lifecycle_events() {
 
     let callbacks = vec![
         MitmproxyTlsCallback {
-            flow_id: 10,
+            flow_id: FlowId(10),
             client_addr: "127.0.0.1:50001".to_string(),
             server_host: "example.com".to_string(),
             server_port: 443,
@@ -231,7 +232,7 @@ fn replayed_mitmproxy_started_and_succeeded_callbacks_emit_lifecycle_events() {
             provider_error_detail: None,
         },
         MitmproxyTlsCallback {
-            flow_id: 11,
+            flow_id: FlowId(11),
             client_addr: "127.0.0.1:50002".to_string(),
             server_host: "example.com".to_string(),
             server_port: 443,
@@ -243,7 +244,7 @@ fn replayed_mitmproxy_started_and_succeeded_callbacks_emit_lifecycle_events() {
             provider_error_detail: None,
         },
         MitmproxyTlsCallback {
-            flow_id: 12,
+            flow_id: FlowId(12),
             client_addr: "127.0.0.1:50003".to_string(),
             server_host: "example.com".to_string(),
             server_port: 443,
@@ -255,7 +256,7 @@ fn replayed_mitmproxy_started_and_succeeded_callbacks_emit_lifecycle_events() {
             provider_error_detail: None,
         },
         MitmproxyTlsCallback {
-            flow_id: 13,
+            flow_id: FlowId(13),
             client_addr: "127.0.0.1:50004".to_string(),
             server_host: "example.com".to_string(),
             server_port: 443,

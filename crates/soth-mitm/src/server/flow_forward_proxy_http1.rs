@@ -7,7 +7,7 @@ async fn handle_forward_http1_proxy_request<P, S, D>(
     flow_hooks: Arc<dyn FlowHooks>,
     downstream: D,
     client_addr: String,
-    flow_id: u64,
+    flow_id: crate::types::FlowId,
     process_info: Option<ProcessInfo>,
     initial_head: Vec<u8>,
     max_http_head_bytes: usize,

@@ -39,8 +39,8 @@ pub use handler::InterceptHandler;
 pub use metrics::ProxyMetrics;
 pub use proxy::{MitmProxy, MitmProxyHandle};
 pub use types::{
-    ConnectionMeta, FrameKind, ProcessInfo, RawRequest, RawResponse, SocketFamily, StreamChunk,
-    TlsInfo, TlsVersion,
+    ConnectionMeta, FlowId, FrameKind, ProcessInfo, RawRequest, RawResponse, SocketFamily,
+    StreamChunk, TlsInfo, TlsVersion,
 };
 
 // TLS helpers re-exported for benchmarks

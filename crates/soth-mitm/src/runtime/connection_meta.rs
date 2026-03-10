@@ -201,11 +201,12 @@ mod tests {
     use super::{lookup_connection_info_from_flow_context, tls_info_from_flow_context};
     use crate::protocol::ApplicationProtocol;
     use crate::observe::FlowContext;
+    use crate::types::FlowId;
 
     #[test]
     fn tls_info_is_populated_for_http2_context() {
         let context = FlowContext {
-            flow_id: 7,
+            flow_id: FlowId(7),
             client_addr: "127.0.0.1:5000".to_string(),
             server_host: "api.example.com".to_string(),
             server_port: 443,
@@ -219,7 +220,7 @@ mod tests {
     #[test]
     fn connection_info_protocol_hints_follow_flow_protocol() {
         let context = FlowContext {
-            flow_id: 8,
+            flow_id: FlowId(8),
             client_addr: "127.0.0.1:5001".to_string(),
             server_host: "api.example.com".to_string(),
             server_port: 443,

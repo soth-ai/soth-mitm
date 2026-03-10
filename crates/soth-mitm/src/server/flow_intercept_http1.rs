@@ -438,7 +438,7 @@ where
                     response_upgrade_validation.err(),
                 );
                 tracing::warn!(
-                    flow_id = http_context.flow_id,
+                    flow_id = http_context.flow_id.as_u64(),
                     server_host = %http_context.server_host,
                     server_port = http_context.server_port,
                     request_upgrade_intent = websocket_upgrade_request_intent,
@@ -614,7 +614,7 @@ where
     }
 
     tracing::error!(
-        flow_id = context.flow_id,
+        flow_id = context.flow_id.as_u64(),
         server_host = %context.server_host,
         server_port = context.server_port,
         direction,

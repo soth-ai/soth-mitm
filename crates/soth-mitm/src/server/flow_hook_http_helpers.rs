@@ -411,10 +411,11 @@ fn decompress_zstd(input: &[u8]) -> Result<Vec<u8>, String> {
 mod flow_hook_http_helpers_tests {
     use super::*;
     use crate::protocol::ApplicationProtocol;
+    use crate::types::FlowId;
 
     fn context(server_host: &str, server_port: u16) -> FlowContext {
         FlowContext {
-            flow_id: 1,
+            flow_id: FlowId(1),
             client_addr: "127.0.0.1:55000".to_string(),
             server_host: server_host.to_string(),
             server_port,

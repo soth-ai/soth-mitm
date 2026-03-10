@@ -372,7 +372,7 @@ fn emit_stream_closed<P, S>(
         );
     if should_log_close {
         tracing::error!(
-            flow_id = context.flow_id,
+            flow_id = context.flow_id.as_u64(),
             client_addr = %context.client_addr,
             server_host = %context.server_host,
             server_port = context.server_port,
@@ -429,7 +429,7 @@ fn emit_connect_parse_failed<P, S>(
     engine.emit_event(event);
 }
 
-fn unknown_context(flow_id: u64, client_addr: String) -> FlowContext {
+fn unknown_context(flow_id: crate::types::FlowId, client_addr: String) -> FlowContext {
     FlowContext {
         flow_id,
         client_addr,

@@ -4,6 +4,7 @@ use crate::server::insert_tls_revocation_metadata;
 use crate::protocol::ApplicationProtocol;
 use crate::observe::{EventType, FlowContext};
 use crate::tls::classify_tls_error;
+use crate::types::FlowId;
 
 const MITMPROXY_PROVIDER: &str = "mitmproxy";
 const MISSING_DETAIL: &str = "mitmproxy callback reported TLS failure without detail";
@@ -56,7 +57,7 @@ impl MitmproxyTlsHook {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MitmproxyTlsCallback {
-    pub flow_id: u64,
+    pub flow_id: FlowId,
     pub client_addr: String,
     pub server_host: String,
     pub server_port: u16,
@@ -158,8 +159,9 @@ mod tests {
 
     #[test]
     fn adapter_maps_failed_client_callback_to_tls_failed_with_taxonomy() {
+        use crate::types::FlowId;
         let callback = MitmproxyTlsCallback {
-            flow_id: 42,
+            flow_id: FlowId(42),
             client_addr: "127.0.0.1:50000".to_string(),
             server_host: "api.example.com".to_string(),
             server_port: 443,
@@ -202,8 +204,9 @@ mod tests {
 
     #[test]
     fn adapter_maps_started_server_callback_to_tls_started() {
+        use crate::types::FlowId;
         let callback = MitmproxyTlsCallback {
-            flow_id: 7,
+            flow_id: FlowId(7),
             client_addr: "127.0.0.1:50001".to_string(),
             server_host: "example.org".to_string(),
             server_port: 443,

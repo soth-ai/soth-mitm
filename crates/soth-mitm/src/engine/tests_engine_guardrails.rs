@@ -2,6 +2,7 @@ use super::{MitmConfig, MitmEngine};
 use crate::protocol::ApplicationProtocol;
 use crate::observe::{Event, EventConsumer, EventEnvelope, EventType, FlowContext};
 use crate::policy::{DefaultPolicyEngine, FlowAction};
+use crate::types::FlowId;
 use std::sync::{Arc, Mutex};
 
 #[derive(Default, Clone)]
@@ -32,7 +33,7 @@ fn suppresses_duplicate_stream_closed_for_same_flow() {
     let engine = MitmEngine::new(config, policy, sink.clone());
 
     let context = FlowContext {
-        flow_id: 7,
+        flow_id: FlowId(7),
         client_addr: "127.0.0.1:10000".to_string(),
         server_host: "example.com".to_string(),
         server_port: 443,
@@ -74,7 +75,7 @@ fn enforces_max_flow_event_backlog_by_dropping_non_close_events() {
     let engine = MitmEngine::new(config, policy, sink.clone());
 
     let context = FlowContext {
-        flow_id: 11,
+        flow_id: FlowId(11),
         client_addr: "127.0.0.1:10000".to_string(),
         server_host: "example.com".to_string(),
         server_port: 443,

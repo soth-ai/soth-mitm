@@ -3,6 +3,7 @@ use std::sync::Mutex;
 
 use crate::protocol::ApplicationProtocol;
 use crate::observe::EventType;
+use crate::types::FlowId;
 
 const MAX_TRACKED_FLOW_STATES: usize = 16_384;
 
@@ -51,8 +52,8 @@ impl Default for FlowTrackerEntry {
 
 #[derive(Debug, Default)]
 struct FlowStateStore {
-    entries: HashMap<u64, FlowTrackerEntry>,
-    order: VecDeque<u64>,
+    entries: HashMap<FlowId, FlowTrackerEntry>,
+    order: VecDeque<FlowId>,
 }
 
 #[derive(Debug, Default)]
@@ -63,7 +64,7 @@ pub(crate) struct FlowStateTracker {
 impl FlowStateTracker {
     pub(crate) fn on_event(
         &self,
-        flow_id: u64,
+        flow_id: FlowId,
         protocol: ApplicationProtocol,
         kind: EventType,
     ) -> u64 {
@@ -124,7 +125,7 @@ impl FlowStateTracker {
     #[cfg(test)]
     fn debug_snapshot(
         &self,
-        flow_id: u64,
+        flow_id: FlowId,
     ) -> Option<(FlowLifecycleState, FlowProtocolMachine, u64)> {
         let store = self.store.lock().expect("flow state lock poisoned");
         store
@@ -134,7 +135,7 @@ impl FlowStateTracker {
     }
 }
 
-fn remove_from_order(order: &mut VecDeque<u64>, flow_id: u64) {
+fn remove_from_order(order: &mut VecDeque<FlowId>, flow_id: FlowId) {
     order.retain(|existing| *existing != flow_id);
 }
 

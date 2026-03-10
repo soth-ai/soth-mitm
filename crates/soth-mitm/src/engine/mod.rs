@@ -9,7 +9,7 @@ use crate::observe::{Event, EventConsumer, EventEnvelope, EventType, FlowContext
 use crate::policy::{
     FlowAction, PolicyDecision, PolicyEngine, PolicyInput, PolicyOverrideState,
 };
-use crate::types::ProcessInfo;
+use crate::types::{FlowId, ProcessInfo};
 
 mod config;
 mod flow_state;
@@ -29,16 +29,25 @@ pub struct ConnectRequest {
     pub server_port: u16,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum ConnectParseError {
+    #[error("incomplete headers")]
     IncompleteHeaders,
+    #[error("invalid UTF-8 in request")]
     InvalidUtf8,
+    #[error("empty request line")]
     EmptyRequestLine,
+    #[error("invalid request line")]
     InvalidRequestLine,
+    #[error("method is not CONNECT")]
     MethodNotConnect,
+    #[error("invalid HTTP version")]
     InvalidHttpVersion,
+    #[error("invalid authority")]
     InvalidAuthority,
+    #[error("missing port")]
     MissingPort,
+    #[error("invalid port")]
     InvalidPort,
 }
 
@@ -216,7 +225,7 @@ fn normalize_connect_authority(authority: &str, mode: ConnectParseMode) -> Strin
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConnectOutcome {
-    pub flow_id: u64,
+    pub flow_id: FlowId,
     pub action: FlowAction,
     pub reason: String,
     pub override_state: PolicyOverrideState,
@@ -236,7 +245,7 @@ where
     process_started_at: Instant,
     instance_id: u64,
     last_monotonic_ns: AtomicU64,
-    recently_closed_flows: Mutex<VecDeque<u64>>,
+    recently_closed_flows: Mutex<VecDeque<FlowId>>,
 }
 
 impl<P, S> MitmEngine<P, S>
@@ -278,7 +287,7 @@ where
 
     pub fn decide_connect(
         &self,
-        flow_id: u64,
+        flow_id: FlowId,
         client_addr: impl Into<String>,
         server_host: impl Into<String>,
         server_port: u16,
@@ -340,8 +349,8 @@ where
         self.sink.consume(EventEnvelope::from_event(event));
     }
 
-    pub fn allocate_flow_id(&self) -> u64 {
-        self.next_flow_id.fetch_add(1, Ordering::Relaxed)
+    pub fn allocate_flow_id(&self) -> FlowId {
+        FlowId(self.next_flow_id.fetch_add(1, Ordering::Relaxed))
     }
 
     fn reserve_monotonic_ns(&self) -> u64 {
@@ -367,7 +376,7 @@ where
         }
     }
 
-    fn register_stream_closed(&self, flow_id: u64) -> bool {
+    fn register_stream_closed(&self, flow_id: FlowId) -> bool {
         const RECENT_CLOSED_FLOW_IDS: usize = 16_384;
         let mut closed = self
             .recently_closed_flows

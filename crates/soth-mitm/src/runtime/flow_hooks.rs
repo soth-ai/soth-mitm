@@ -170,11 +170,6 @@ impl<H: InterceptHandler> FlowHooks for HandlerFlowHooks<H> {
                 Arc::clone(&last_stale_reap_at),
             )
             .await;
-            let handler = Arc::clone(&flow_state.handler);
-            flow_state
-                .callback_guard
-                .run_lifecycle((), move || handler.on_connection_open(&connection_meta))
-                .await;
         })
     }
     fn should_intercept_tls(
@@ -234,7 +229,7 @@ impl<H: InterceptHandler> FlowHooks for HandlerFlowHooks<H> {
                 &error,
             ) {
                 tracing::warn!(
-                    flow_id = context.flow_id,
+                    flow_id = context.flow_id.as_u64(),
                     pid = process_pid,
                     process_name = process_name.unwrap_or("unknown"),
                     server_host = %context.server_host,
@@ -455,7 +450,7 @@ impl<H: InterceptHandler> FlowHooks for HandlerFlowHooks<H> {
                             .map(|name| name.to_ascii_lowercase())
                     });
                     tracing::debug!(
-                        flow_id = context.flow_id,
+                        flow_id = context.flow_id.as_u64(),
                         server_host = %context.server_host,
                         pid = process_pid,
                         process_name = process_name.as_deref().unwrap_or("<unknown>"),

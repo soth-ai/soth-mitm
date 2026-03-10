@@ -9,7 +9,7 @@ use std::sync::Mutex;
 use serde::Serialize;
 
 use super::{Event, EventConsumer, EventEnvelope};
-use crate::protocol::ApplicationProtocol;
+use crate::types::FlowId;
 
 pub const DETERMINISTIC_EVENT_LOG_V2_SCHEMA: &str = "soth-mitm-event-log-v2";
 const INDEX_HEADER: &str = "sequence_id\tflow_id\tflow_sequence_id\tkind\tprotocol\tstream_key\tsegment_id\tbyte_offset\tline_bytes";
@@ -53,7 +53,7 @@ impl EventLogV2Config {
 pub struct DeterministicEventRecordV2 {
     pub schema: &'static str,
     pub sequence_id: u64,
-    pub flow_id: u64,
+    pub flow_id: FlowId,
     pub flow_sequence_id: u64,
     pub kind: &'static str,
     pub protocol: &'static str,
@@ -174,7 +174,7 @@ pub fn deterministic_event_record_v2(envelope: &EventEnvelope) -> DeterministicE
         flow_id: context.flow_id,
         flow_sequence_id: event.flow_sequence_id,
         kind: event.kind.as_str(),
-        protocol: protocol_label(context.protocol),
+        protocol: context.protocol.as_str(),
         stream_key: event_stream_key(event),
         client_addr: context.client_addr.clone(),
         server_host: context.server_host.clone(),
@@ -276,16 +276,6 @@ fn create_truncated_file(path: &Path) -> io::Result<File> {
         .open(path)
 }
 
-fn protocol_label(protocol: ApplicationProtocol) -> &'static str {
-    match protocol {
-        ApplicationProtocol::Http1 => "http1",
-        ApplicationProtocol::Http2 => "http2",
-        ApplicationProtocol::WebSocket => "websocket",
-        ApplicationProtocol::Sse => "sse",
-        ApplicationProtocol::StreamableHttp => "streamable_http",
-        ApplicationProtocol::Tunnel => "tunnel",
-    }
-}
 
 fn event_stream_key(event: &Event) -> String {
     if let Some(stream_id) = event.attributes.get("http2_stream_id") {
