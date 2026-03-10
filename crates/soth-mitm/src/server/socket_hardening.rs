@@ -1,4 +1,8 @@
-async fn bind_listener_with_socket_hardening(config: &SidecarConfig) -> io::Result<TcpListener> {
+use std::io;
+use tokio::net::{TcpListener, TcpStream};
+use super::SidecarConfig;
+
+pub(crate) async fn bind_listener_with_socket_hardening(config: &SidecarConfig) -> io::Result<TcpListener> {
     const LISTENER_BIND_RETRY_ATTEMPTS: u32 = 8;
 
     let resolved = tokio::net::lookup_host((config.listen_addr.as_str(), config.listen_port))
@@ -130,7 +134,7 @@ fn order_listen_addrs_for_dual_stack(listen_addrs: &mut [std::net::SocketAddr]) 
 }
 
 #[cfg(unix)]
-async fn bind_unix_listener_with_socket_hardening(
+pub(crate) async fn bind_unix_listener_with_socket_hardening(
     socket_path: &str,
 ) -> io::Result<tokio::net::UnixListener> {
     let path = std::path::Path::new(socket_path);
@@ -145,11 +149,11 @@ async fn bind_unix_listener_with_socket_hardening(
     tokio::net::UnixListener::bind(path)
 }
 
-fn apply_per_connection_socket_hardening(stream: &TcpStream) {
+pub(crate) fn apply_per_connection_socket_hardening(stream: &TcpStream) {
     let _ = stream.set_nodelay(true);
 }
 
-fn is_benign_socket_close_error(error: &io::Error) -> bool {
+pub(crate) fn is_benign_socket_close_error(error: &io::Error) -> bool {
     matches!(
         error.kind(),
         io::ErrorKind::UnexpectedEof

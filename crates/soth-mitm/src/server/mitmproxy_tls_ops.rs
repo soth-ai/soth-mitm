@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use crate::server::insert_tls_revocation_metadata;
+use crate::server::tls_revocation_metadata::insert_tls_revocation_metadata;
 use crate::protocol::ApplicationProtocol;
 use crate::observe::{EventType, FlowContext};
 use crate::tls::classify_tls_error;

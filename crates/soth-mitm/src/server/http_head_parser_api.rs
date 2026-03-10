@@ -1,3 +1,6 @@
+use std::io;
+use super::http_head_parser::{parse_http_request_head, parse_http_response_head};
+
 pub fn parse_http1_request_head_bytes(raw: &[u8]) -> io::Result<()> {
     parse_http_request_head(raw).map(|_| ())
 }
@@ -8,8 +11,8 @@ pub fn parse_http1_response_head_bytes(raw: &[u8], request_method: &str) -> io::
 
 #[cfg(test)]
 mod http_head_parser_api_tests {
-    use super::{
-        parse_http1_request_head_bytes, parse_http1_response_head_bytes,
+    use super::{parse_http1_request_head_bytes, parse_http1_response_head_bytes};
+    use super::super::http_head_parser::{
         parse_http_request_head_with_mode, parse_http_response_head_with_mode,
     };
 

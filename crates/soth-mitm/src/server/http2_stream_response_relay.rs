@@ -1,4 +1,18 @@
-enum H2ResponseStreamHookDispatcher {
+use std::io;
+use std::sync::Arc;
+use crate::observe::FlowContext;
+use crate::types::FrameKind;
+use super::runtime_governor;
+use super::flow_hooks::{FlowHooks, StreamChunk};
+use super::io_timeouts::with_h2_body_idle_timeout;
+use super::http2_relay_support::h2_error_to_io;
+use super::http2_stream_relay_body::send_h2_data_with_backpressure;
+use super::http2_stream_hook_dispatch::{
+    H2CapturedBody, is_sse_h2_response, is_ndjson_h2_response, is_grpc_h2_response,
+};
+use super::flow_hook_http_helpers::strip_trailer_forbidden_and_transport_headers;
+
+pub(crate) enum H2ResponseStreamHookDispatcher {
     Sse {
         parser: crate::protocol::SseParser,
         sequence: u64,
@@ -17,7 +31,7 @@ enum H2ResponseStreamHookDispatcher {
 }
 
 impl H2ResponseStreamHookDispatcher {
-    async fn on_chunk(
+    pub(crate) async fn on_chunk(
         &mut self,
         flow_hooks: &Arc<dyn FlowHooks>,
         stream_context: &FlowContext,
@@ -119,7 +133,7 @@ impl H2ResponseStreamHookDispatcher {
         }
     }
 
-    async fn finish(&mut self, flow_hooks: &Arc<dyn FlowHooks>, stream_context: &FlowContext) {
+    pub(crate) async fn finish(&mut self, flow_hooks: &Arc<dyn FlowHooks>, stream_context: &FlowContext) {
         match self {
             Self::Sse {
                 parser,
@@ -190,7 +204,7 @@ impl H2ResponseStreamHookDispatcher {
     }
 }
 
-fn h2_response_stream_hook_dispatcher(
+pub(crate) fn h2_response_stream_hook_dispatcher(
     response_parts: &http::response::Parts,
 ) -> Option<H2ResponseStreamHookDispatcher> {
     if is_sse_h2_response(response_parts) {
@@ -217,13 +231,13 @@ fn h2_response_stream_hook_dispatcher(
     None
 }
 
-struct H2ResponseStreamRelayOutcome {
-    captured: H2CapturedBody,
-    observed_trailers: Option<http::HeaderMap>,
+pub(crate) struct H2ResponseStreamRelayOutcome {
+    pub(crate) captured: H2CapturedBody,
+    pub(crate) observed_trailers: Option<http::HeaderMap>,
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn relay_h2_response_body_with_incremental_forwarding(
+pub(crate) async fn relay_h2_response_body_with_incremental_forwarding(
     upstream_response_body: &mut h2::RecvStream,
     downstream_response_stream: &mut h2::SendStream<bytes::Bytes>,
     runtime_governor: &Arc<runtime_governor::RuntimeGovernor>,

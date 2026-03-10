@@ -1,4 +1,13 @@
-struct GrpcStreamObserver<P, S>
+use std::io;
+use std::sync::Arc;
+use crate::observe::{EventConsumer, FlowContext};
+use crate::policy::PolicyEngine;
+use crate::types::FrameKind;
+use super::http_body_relay::HttpBodyObserver;
+use super::runtime_governor;
+use super::flow_hooks::{FlowHooks, StreamChunk};
+
+pub(crate) struct GrpcStreamObserver<P, S>
 where
     P: PolicyEngine + Send + Sync + 'static,
     S: EventConsumer + Send + Sync + 'static,
@@ -18,7 +27,7 @@ where
     P: PolicyEngine + Send + Sync + 'static,
     S: EventConsumer + Send + Sync + 'static,
 {
-    fn new(
+    pub(crate) fn new(
         context: FlowContext,
         runtime_governor: Arc<runtime_governor::RuntimeGovernor>,
         flow_hooks: Arc<dyn FlowHooks>,

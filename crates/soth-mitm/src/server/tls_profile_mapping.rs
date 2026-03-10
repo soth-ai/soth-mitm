@@ -1,4 +1,19 @@
-fn map_upstream_tls_profile(profile: CoreTlsProfile) -> TlsUpstreamTlsProfile {
+use crate::engine::{
+    DownstreamCertProfile as CoreDownstreamCertProfile,
+    TlsFingerprintClass as CoreTlsFingerprintClass,
+    TlsFingerprintMode as CoreTlsFingerprintMode,
+    TlsProfile as CoreTlsProfile,
+    UpstreamClientAuthMode as CoreUpstreamClientAuthMode,
+    UpstreamSniMode as CoreUpstreamSniMode,
+};
+use crate::tls::{
+    DownstreamCertProfile as TlsDownstreamCertProfile,
+    UpstreamClientAuthMode as TlsUpstreamClientAuthMode,
+    UpstreamTlsProfile as TlsUpstreamTlsProfile,
+    UpstreamTlsSniMode as TlsUpstreamTlsSniMode,
+};
+
+pub(crate) fn map_upstream_tls_profile(profile: CoreTlsProfile) -> TlsUpstreamTlsProfile {
     match profile {
         CoreTlsProfile::Strict => TlsUpstreamTlsProfile::Strict,
         CoreTlsProfile::Default => TlsUpstreamTlsProfile::Default,
@@ -6,7 +21,7 @@ fn map_upstream_tls_profile(profile: CoreTlsProfile) -> TlsUpstreamTlsProfile {
     }
 }
 
-fn resolve_effective_upstream_tls_profile(
+pub(crate) fn resolve_effective_upstream_tls_profile(
     profile: CoreTlsProfile,
     fingerprint_mode: CoreTlsFingerprintMode,
     fingerprint_class: CoreTlsFingerprintClass,
@@ -31,7 +46,7 @@ fn resolve_effective_upstream_tls_profile(
     }
 }
 
-fn map_upstream_sni_mode(mode: CoreUpstreamSniMode) -> TlsUpstreamTlsSniMode {
+pub(crate) fn map_upstream_sni_mode(mode: CoreUpstreamSniMode) -> TlsUpstreamTlsSniMode {
     match mode {
         CoreUpstreamSniMode::Required => TlsUpstreamTlsSniMode::Required,
         CoreUpstreamSniMode::Auto => TlsUpstreamTlsSniMode::Auto,
@@ -39,7 +54,7 @@ fn map_upstream_sni_mode(mode: CoreUpstreamSniMode) -> TlsUpstreamTlsSniMode {
     }
 }
 
-fn map_upstream_client_auth_mode(mode: CoreUpstreamClientAuthMode) -> TlsUpstreamClientAuthMode {
+pub(crate) fn map_upstream_client_auth_mode(mode: CoreUpstreamClientAuthMode) -> TlsUpstreamClientAuthMode {
     match mode {
         CoreUpstreamClientAuthMode::Never => TlsUpstreamClientAuthMode::Never,
         CoreUpstreamClientAuthMode::IfRequested => TlsUpstreamClientAuthMode::IfRequested,
@@ -47,14 +62,14 @@ fn map_upstream_client_auth_mode(mode: CoreUpstreamClientAuthMode) -> TlsUpstrea
     }
 }
 
-fn map_downstream_cert_profile(profile: CoreDownstreamCertProfile) -> TlsDownstreamCertProfile {
+pub(crate) fn map_downstream_cert_profile(profile: CoreDownstreamCertProfile) -> TlsDownstreamCertProfile {
     match profile {
         CoreDownstreamCertProfile::Modern => TlsDownstreamCertProfile::Modern,
         CoreDownstreamCertProfile::Compat => TlsDownstreamCertProfile::Compat,
     }
 }
 
-fn insert_tls_fingerprint_provenance(
+pub(crate) fn insert_tls_fingerprint_provenance(
     attributes: &mut std::collections::BTreeMap<String, String>,
     fingerprint_mode: CoreTlsFingerprintMode,
     fingerprint_class: CoreTlsFingerprintClass,

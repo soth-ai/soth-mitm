@@ -1,4 +1,9 @@
-fn emit_sse_event<P, S>(
+use crate::engine::MitmEngine;
+use crate::observe::{Event, EventConsumer, EventType, FlowContext};
+use crate::policy::PolicyEngine;
+use super::http2_relay_support::GrpcRequestObservation;
+
+pub(crate) fn emit_sse_event<P, S>(
     engine: &MitmEngine<P, S>,
     context: FlowContext,
     sequence_no: u64,
@@ -35,7 +40,7 @@ fn emit_sse_event<P, S>(
     engine.emit_event(emitted);
 }
 
-fn emit_http3_passthrough_event<P, S>(
+pub(crate) fn emit_http3_passthrough_event<P, S>(
     engine: &MitmEngine<P, S>,
     context: FlowContext,
     requested_by: &str,
@@ -60,7 +65,7 @@ fn emit_http3_passthrough_event<P, S>(
     engine.emit_event(event);
 }
 
-fn emit_grpc_request_headers_event<P, S>(
+pub(crate) fn emit_grpc_request_headers_event<P, S>(
     engine: &MitmEngine<P, S>,
     context: FlowContext,
     observation: &GrpcRequestObservation,
@@ -86,7 +91,7 @@ fn emit_grpc_request_headers_event<P, S>(
     engine.emit_event(event);
 }
 
-fn emit_grpc_response_headers_event<P, S>(
+pub(crate) fn emit_grpc_response_headers_event<P, S>(
     engine: &MitmEngine<P, S>,
     context: FlowContext,
     observation: &GrpcRequestObservation,
@@ -116,7 +121,7 @@ fn emit_grpc_response_headers_event<P, S>(
     engine.emit_event(event);
 }
 
-fn emit_grpc_response_trailers_event<P, S>(
+pub(crate) fn emit_grpc_response_trailers_event<P, S>(
     engine: &MitmEngine<P, S>,
     context: FlowContext,
     observation: &GrpcRequestObservation,

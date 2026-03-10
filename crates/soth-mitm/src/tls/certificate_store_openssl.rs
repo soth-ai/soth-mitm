@@ -1,5 +1,7 @@
+use super::TlsConfigError;
+
 #[cfg(feature = "openssl-backend")]
-fn validate_ca_material_with_openssl(
+pub(super) fn validate_ca_material_with_openssl(
     ca_cert_path: &str,
     cert_pem: &str,
     key_pem: &str,
@@ -31,7 +33,7 @@ fn validate_ca_material_with_openssl(
 }
 
 #[cfg(not(feature = "openssl-backend"))]
-fn validate_ca_material_with_openssl(
+pub(super) fn validate_ca_material_with_openssl(
     _ca_cert_path: &str,
     _cert_pem: &str,
     _key_pem: &str,

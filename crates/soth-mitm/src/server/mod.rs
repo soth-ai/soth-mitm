@@ -1,33 +1,21 @@
-use crate::engine::{
-    parse_connect_request_head_with_mode, ConnectParseError,
-    DownstreamCertProfile as CoreDownstreamCertProfile, InterceptMode, MitmEngine,
-    TlsFingerprintClass as CoreTlsFingerprintClass, TlsFingerprintMode as CoreTlsFingerprintMode,
-    TlsProfile as CoreTlsProfile, UpstreamClientAuthMode as CoreUpstreamClientAuthMode,
-    UpstreamSniMode as CoreUpstreamSniMode,
-};
-use crate::protocol::{negotiated_alpn_label, protocol_from_negotiated_alpn, ApplicationProtocol};
-use crate::observe::{Event, EventConsumer, EventType, FlowContext};
-use crate::policy::{FlowAction, PolicyEngine};
+use crate::engine::MitmEngine;
+use crate::protocol::ApplicationProtocol;
+use crate::observe::{Event, EventConsumer, FlowContext};
+use crate::policy::PolicyEngine;
 use crate::tls::{
-    classify_tls_error, resolve_upstream_server_name, CertificateAuthorityConfig,
-    DownstreamCertProfile as TlsDownstreamCertProfile, MitmCertificateStore, TlsConfigError,
-    UpstreamClientAuthMode as TlsUpstreamClientAuthMode, UpstreamTlsConfigCache,
-    UpstreamTlsProfile as TlsUpstreamTlsProfile, UpstreamTlsSniMode as TlsUpstreamTlsSniMode,
+    CertificateAuthorityConfig, MitmCertificateStore, UpstreamTlsConfigCache,
 };
 use std::io;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::io::{AsyncRead, AsyncWrite};
-use tokio::net::{TcpListener, TcpStream};
-use tokio_rustls::TlsConnector;
+use tokio::net::TcpListener;
 mod flow_hooks;
 mod mitmproxy_tls_ops;
 mod runtime_governor;
 mod tls_diagnostics;
 mod tls_learning;
-pub use crate::actions::HandlerDecision;
 pub use crate::config::H2ResponseOverflowMode;
-pub use crate::types::{FrameKind, ProcessInfo};
+pub use crate::types::FrameKind;
 pub use flow_hooks::{FlowHooks, NoopFlowHooks, RawRequest, RawResponse, StreamChunk};
 pub use mitmproxy_tls_ops::{
     adapt_mitmproxy_tls_callback, MitmproxyTlsAdapterEvent, MitmproxyTlsCallback,
@@ -39,9 +27,23 @@ pub use tls_learning::{
     TlsLearningDecision, TlsLearningGuardrails, TlsLearningOutcome,
     TlsLearningSignal, TlsLearningSnapshot,
 };
-const IO_CHUNK_SIZE: usize = 8 * 1024;
-const CHUNK_LINE_LIMIT: usize = 8 * 1024;
-const TLS_OPS_PROVIDER: &str = "rustls";
+use tls_profile_mapping::{
+    map_downstream_cert_profile, resolve_effective_upstream_tls_profile,
+    map_upstream_sni_mode, map_upstream_client_auth_mode, insert_tls_fingerprint_provenance,
+};
+use event_emitters::{tls_error_to_io_invalid_input, ingest_tls_learning_signal_with_audit};
+use io_timeouts::{install_io_timeout_config, write_all_with_idle_timeout, shutdown_with_idle_timeout};
+use socket_hardening::{
+    bind_listener_with_socket_hardening, apply_per_connection_socket_hardening,
+    is_benign_socket_close_error,
+};
+use flow_intercept::load_upstream_client_auth_pem;
+use event_emitters::unknown_context;
+use flow_connect_tunnel::handle_client;
+
+pub(crate) const IO_CHUNK_SIZE: usize = 8 * 1024;
+pub(crate) const CHUNK_LINE_LIMIT: usize = 8 * 1024;
+pub(crate) const TLS_OPS_PROVIDER: &str = "rustls";
 const DEFAULT_LISTENER_ACCEPT_RETRY_BACKOFF_MS: u64 = 100;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -92,21 +94,21 @@ where
     upstream_tls_cache: Arc<UpstreamTlsConfigCache>,
 }
 #[derive(Clone)]
-struct RuntimeHandles<P, S>
+pub(crate) struct RuntimeHandles<P, S>
 where
     P: PolicyEngine + Send + Sync + 'static,
     S: EventConsumer + Send + Sync + 'static,
 {
-    engine: Arc<MitmEngine<P, S>>,
-    cert_store: Arc<MitmCertificateStore>,
-    runtime_governor: Arc<runtime_governor::RuntimeGovernor>,
-    tls_diagnostics: Arc<TlsDiagnostics>,
-    tls_learning: Arc<TlsLearningGuardrails>,
-    flow_hooks: Arc<dyn FlowHooks>,
-    upstream_tls_cache: Arc<UpstreamTlsConfigCache>,
+    pub(crate) engine: Arc<MitmEngine<P, S>>,
+    pub(crate) cert_store: Arc<MitmCertificateStore>,
+    pub(crate) runtime_governor: Arc<runtime_governor::RuntimeGovernor>,
+    pub(crate) tls_diagnostics: Arc<TlsDiagnostics>,
+    pub(crate) tls_learning: Arc<TlsLearningGuardrails>,
+    pub(crate) flow_hooks: Arc<dyn FlowHooks>,
+    pub(crate) upstream_tls_cache: Arc<UpstreamTlsConfigCache>,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum HttpVersion {
+pub(crate) enum HttpVersion {
     Http10,
     Http11,
 }
@@ -120,40 +122,40 @@ impl HttpVersion {
     }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum HttpBodyMode {
+pub(crate) enum HttpBodyMode {
     None,
     ContentLength(u64),
     Chunked,
     CloseDelimited,
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct HttpHeader {
-    name: String,
-    value: String,
+pub(crate) struct HttpHeader {
+    pub(crate) name: String,
+    pub(crate) value: String,
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct HttpRequestHead {
-    raw: Vec<u8>,
-    method: String,
-    target: String,
-    version: HttpVersion,
-    headers: Vec<HttpHeader>,
-    body_mode: HttpBodyMode,
-    connection_close: bool,
+pub(crate) struct HttpRequestHead {
+    pub(crate) raw: Vec<u8>,
+    pub(crate) method: String,
+    pub(crate) target: String,
+    pub(crate) version: HttpVersion,
+    pub(crate) headers: Vec<HttpHeader>,
+    pub(crate) body_mode: HttpBodyMode,
+    pub(crate) connection_close: bool,
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct HttpResponseHead {
-    raw: Vec<u8>,
-    version: HttpVersion,
-    status_code: u16,
-    reason_phrase: String,
-    headers: Vec<HttpHeader>,
-    body_mode: HttpBodyMode,
-    connection_close: bool,
+pub(crate) struct HttpResponseHead {
+    pub(crate) raw: Vec<u8>,
+    pub(crate) version: HttpVersion,
+    pub(crate) status_code: u16,
+    pub(crate) reason_phrase: String,
+    pub(crate) headers: Vec<HttpHeader>,
+    pub(crate) body_mode: HttpBodyMode,
+    pub(crate) connection_close: bool,
 }
-struct BufferedConn<S> {
-    stream: S,
-    read_buf: Vec<u8>,
+pub(crate) struct BufferedConn<S> {
+    pub(crate) stream: S,
+    pub(crate) read_buf: Vec<u8>,
 }
 
 impl<S> BufferedConn<S> {
@@ -513,4 +515,64 @@ mod listener_accept_error_tests {
     }
 }
 
-include!("module_includes.rs");
+// HTTP parsing
+mod close_codes;
+mod http_head_parser_smuggling;
+mod http_head_parser;
+mod http_head_parser_api;
+mod http_body_relay;
+// TLS helpers
+mod tls_revocation_metadata;
+mod tls_profile_mapping;
+mod downstream_tls;
+// IO utilities
+mod io_timeouts;
+mod socket_hardening;
+mod shutdown_control;
+// Routing
+mod route_planner_model;
+mod route_planner_transport;
+mod route_planner;
+// Policy
+mod flow_policy_snapshot;
+// Events
+mod event_emitters;
+mod event_emitters_protocol;
+// Stream observers
+mod sse_stream_observer;
+mod ndjson_stream_observer;
+mod grpc_stream_observer;
+// WebSocket
+mod websocket_codec;
+mod websocket_relay_io;
+mod websocket_handshake_validation;
+mod websocket_events;
+mod websocket_relay;
+mod websocket_turn_tracker;
+mod websocket_relay_support;
+// HTTP/2
+mod http2_relay_support;
+mod http2_stream_relay_body;
+mod http2_stream_hook_dispatch;
+mod http2_stream_response_relay;
+mod http2_stream_relay_http1_body;
+mod http2_stream_relay_http1_response_relay;
+mod http2_stream_relay_http1_stream;
+mod http2_stream_relay_http1;
+mod http2_stream_relay_stream;
+mod http2_stream_relay;
+// HTTP flow helpers
+mod flow_hook_http_helpers;
+mod flow_connect_tunnel_support;
+mod flow_intercept_tls_failure;
+mod flow_intercept_http1_response;
+mod flow_intercept_http1;
+mod flow_intercept;
+mod flow_forward_proxy_http1_helpers;
+mod flow_forward_proxy_http1;
+mod flow_connect_tunnel;
+// Unix local capture
+mod local_capture_unix;
+
+// Public re-exports from submodules (needed by lib.rs / external consumers)
+pub use http_head_parser_api::{parse_http1_request_head_bytes, parse_http1_response_head_bytes};

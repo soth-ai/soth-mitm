@@ -1,4 +1,8 @@
-fn validate_websocket_upgrade_request_head(request: &HttpRequestHead) -> io::Result<()> {
+use std::io;
+use super::{HttpHeader, HttpRequestHead, HttpResponseHead};
+use super::http_head_parser::{has_header_token, has_header_value};
+
+pub(crate) fn validate_websocket_upgrade_request_head(request: &HttpRequestHead) -> io::Result<()> {
     if !request.method.eq_ignore_ascii_case("GET") {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -52,7 +56,7 @@ fn validate_websocket_upgrade_request_head(request: &HttpRequestHead) -> io::Res
 
 /// Validate the server's 101 response including RFC 6455 §4.2.2
 /// `Sec-WebSocket-Accept` verification against the client's key.
-fn validate_websocket_upgrade_response_head(
+pub(crate) fn validate_websocket_upgrade_response_head(
     request: &HttpRequestHead,
     response: &HttpResponseHead,
 ) -> io::Result<()> {

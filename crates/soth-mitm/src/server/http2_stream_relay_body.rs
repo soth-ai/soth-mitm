@@ -1,4 +1,10 @@
-async fn send_h2_data_with_backpressure(
+use std::io;
+use std::sync::Arc;
+use super::runtime_governor;
+use super::io_timeouts::with_h2_body_idle_timeout;
+use super::http2_relay_support::{H2_FORWARD_CHUNK_LIMIT, h2_error_to_io};
+
+pub(crate) async fn send_h2_data_with_backpressure(
     sink: &mut h2::SendStream<bytes::Bytes>,
     runtime_governor: &Arc<runtime_governor::RuntimeGovernor>,
     mut data: bytes::Bytes,

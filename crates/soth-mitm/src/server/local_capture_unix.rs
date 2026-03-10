@@ -1,10 +1,29 @@
+use std::io;
+use std::sync::Arc;
+use tokio::net::TcpListener;
+use crate::engine::ConnectParseError;
+use crate::observe::EventConsumer;
+use crate::policy::PolicyEngine;
+use crate::types::ProcessInfo;
+use super::{RuntimeHandles, SidecarServer};
+use super::io_timeouts::{write_all_with_idle_timeout, shutdown_with_idle_timeout};
+use super::socket_hardening::{apply_per_connection_socket_hardening, bind_unix_listener_with_socket_hardening, is_benign_socket_close_error};
+use super::flow_forward_proxy_http1::write_forward_proxy_error_response;
+use super::event_emitters::{emit_connect_parse_failed, emit_stream_closed, unknown_context};
+use super::close_codes::{CloseReasonCode, ParseFailureCode};
+use super::flow_policy_snapshot::clear_flow_policy_snapshot;
+use super::flow_forward_proxy_http1::handle_forward_http1_proxy_request;
+use super::flow_connect_tunnel::handle_client;
+use super::flow_forward_proxy_http1_helpers::is_forward_http1_request_candidate;
+use super::http_head_parser::read_connect_head;
+
 #[cfg(unix)]
 impl<P, S> SidecarServer<P, S>
 where
     P: PolicyEngine + Send + Sync + 'static,
     S: EventConsumer + Send + Sync + 'static,
 {
-    async fn run_with_optional_unix_listener(self, listener: TcpListener) -> io::Result<()> {
+    pub(super) async fn run_with_optional_unix_listener(self, listener: TcpListener) -> io::Result<()> {
         let unix_listener = match self.bind_unix_listener().await? {
             Some(listener) => listener,
             None => return self.run_with_listener(listener).await,

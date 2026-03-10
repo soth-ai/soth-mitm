@@ -1,4 +1,17 @@
-fn emit_request_headers_event<P, S>(
+use std::io;
+use crate::engine::MitmEngine;
+use crate::observe::{Event, EventConsumer, EventType, FlowContext};
+use crate::policy::PolicyEngine;
+use crate::protocol::{negotiated_alpn_label, ApplicationProtocol};
+use crate::tls::{classify_tls_error, TlsConfigError};
+use super::{HttpRequestHead, HttpResponseHead, TLS_OPS_PROVIDER, TlsDiagnostics};
+use super::tls_profile_mapping::insert_tls_fingerprint_provenance;
+use super::tls_revocation_metadata::insert_tls_revocation_metadata;
+use super::tls_learning::{TlsLearningDecision, TlsLearningGuardrails, TlsLearningOutcome, TlsLearningSignal};
+use super::close_codes::{CloseReasonCode, ParseFailureCode};
+use super::runtime_governor;
+
+pub(crate) fn emit_request_headers_event<P, S>(
     engine: &MitmEngine<P, S>,
     context: &FlowContext,
     request: &HttpRequestHead,
@@ -23,7 +36,7 @@ fn emit_request_headers_event<P, S>(
     engine.emit_event(event);
 }
 
-fn emit_response_headers_event<P, S>(
+pub(crate) fn emit_response_headers_event<P, S>(
     engine: &MitmEngine<P, S>,
     context: &FlowContext,
     response: &HttpResponseHead,
@@ -48,7 +61,7 @@ fn emit_response_headers_event<P, S>(
     engine.emit_event(event);
 }
 
-fn emit_body_chunk_event<P, S>(
+pub(crate) fn emit_body_chunk_event<P, S>(
     engine: &MitmEngine<P, S>,
     context: FlowContext,
     kind: EventType,
@@ -67,7 +80,7 @@ fn emit_body_chunk_event<P, S>(
     engine.emit_event(event);
 }
 
-fn emit_tls_event<P, S>(
+pub(crate) fn emit_tls_event<P, S>(
     engine: &MitmEngine<P, S>,
     kind: EventType,
     context: FlowContext,
@@ -88,7 +101,7 @@ fn emit_tls_event<P, S>(
     engine.emit_event(event);
 }
 
-fn emit_tls_event_with_negotiated_alpn<P, S>(
+pub(crate) fn emit_tls_event_with_negotiated_alpn<P, S>(
     engine: &MitmEngine<P, S>,
     kind: EventType,
     context: FlowContext,
@@ -115,7 +128,7 @@ fn emit_tls_event_with_negotiated_alpn<P, S>(
     engine.emit_event(event);
 }
 
-fn emit_tls_event_with_cache<P, S>(
+pub(crate) fn emit_tls_event_with_cache<P, S>(
     engine: &MitmEngine<P, S>,
     kind: EventType,
     context: FlowContext,
@@ -141,7 +154,7 @@ fn emit_tls_event_with_cache<P, S>(
     engine.emit_event(event);
 }
 
-fn emit_tls_event_with_detail<P, S>(
+pub(crate) fn emit_tls_event_with_detail<P, S>(
     engine: &MitmEngine<P, S>,
     tls_diagnostics: &TlsDiagnostics,
     tls_learning: &TlsLearningGuardrails,
@@ -276,7 +289,7 @@ fn emit_tls_event_with_detail<P, S>(
     engine.emit_event(event);
 }
 
-fn ingest_tls_learning_signal_with_audit<P, S>(
+pub(crate) fn ingest_tls_learning_signal_with_audit<P, S>(
     engine: &MitmEngine<P, S>,
     tls_learning: &TlsLearningGuardrails,
     context: FlowContext,
@@ -337,7 +350,7 @@ fn emit_tls_learning_audit_event<P, S>(
     engine.emit_event(event);
 }
 
-fn emit_stream_closed<P, S>(
+pub(crate) fn emit_stream_closed<P, S>(
     engine: &MitmEngine<P, S>,
     context: FlowContext,
     reason_code: CloseReasonCode,
@@ -406,7 +419,7 @@ fn emit_stream_closed<P, S>(
     engine.emit_event(event);
 }
 
-fn emit_connect_parse_failed<P, S>(
+pub(crate) fn emit_connect_parse_failed<P, S>(
     engine: &MitmEngine<P, S>,
     context: FlowContext,
     parse_failure: ParseFailureCode,
@@ -429,7 +442,7 @@ fn emit_connect_parse_failed<P, S>(
     engine.emit_event(event);
 }
 
-fn unknown_context(flow_id: crate::types::FlowId, client_addr: String) -> FlowContext {
+pub(crate) fn unknown_context(flow_id: crate::types::FlowId, client_addr: String) -> FlowContext {
     FlowContext {
         flow_id,
         client_addr,
@@ -439,7 +452,7 @@ fn unknown_context(flow_id: crate::types::FlowId, client_addr: String) -> FlowCo
     }
 }
 
-fn tls_error_to_io_invalid_input(error: TlsConfigError) -> io::Error {
+pub(crate) fn tls_error_to_io_invalid_input(error: TlsConfigError) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidInput, error.to_string())
 }
 

@@ -1,9 +1,18 @@
+use crate::observe::{Event, EventType, FlowContext};
+use crate::policy::{FlowAction, PolicyDecision};
+
+use super::{EventConsumer, MitmEngine, PolicyEngine};
+
 impl<P, S> MitmEngine<P, S>
 where
     P: PolicyEngine,
     S: EventConsumer,
 {
-    fn emit_connect_decision_event(&self, context: &FlowContext, decision: &PolicyDecision) {
+    pub(super) fn emit_connect_decision_event(
+        &self,
+        context: &FlowContext,
+        decision: &PolicyDecision,
+    ) {
         let mut event = Event::new(EventType::ConnectDecision, context.clone());
         let action = match decision.action {
             FlowAction::Intercept => "intercept",

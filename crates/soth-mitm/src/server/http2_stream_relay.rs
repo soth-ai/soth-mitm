@@ -1,11 +1,24 @@
+use std::io;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
+use tokio::io::{AsyncRead, AsyncWrite};
+use crate::engine::MitmEngine;
+use crate::observe::{EventConsumer, FlowContext};
+use crate::policy::PolicyEngine;
+use crate::protocol::ApplicationProtocol;
+use crate::types::ProcessInfo;
+use super::runtime_governor;
+use super::flow_hooks::FlowHooks;
+use super::close_codes::CloseReasonCode;
+use super::event_emitters::emit_stream_closed;
+use super::io_timeouts::{is_idle_watchdog_timeout, is_stream_stage_timeout};
+use super::http2_relay_support::{
+    configure_h2_server, configure_h2_client,
+    is_h2_nonfatal_stream_error, is_benign_h2_stream_io_error, h2_error_to_io,
+};
+use super::http2_stream_relay_stream::relay_http2_stream;
 
-const H2_MAX_CONCURRENT_STREAMS: u32 = 128;
-const H2_INITIAL_WINDOW_SIZE: u32 = 1_048_576;
-const H2_INITIAL_CONNECTION_WINDOW_SIZE: u32 = 4_194_304;
-const H2_MAX_SEND_BUFFER_SIZE: usize = 128 * 1024;
-const H2_FORWARD_CHUNK_LIMIT: usize = 128 * 1024;
 static H2_RELAY_DEBUG_ENABLED: OnceLock<bool> = OnceLock::new();
 
 fn h2_relay_debug_enabled() -> bool {
@@ -17,19 +30,19 @@ fn h2_relay_debug_enabled() -> bool {
     })
 }
 
-fn h2_relay_debug(message: impl AsRef<str>) {
+pub(crate) fn h2_relay_debug(message: impl AsRef<str>) {
     if h2_relay_debug_enabled() {
         tracing::debug!("{}", message.as_ref());
     }
 }
 
 #[derive(Clone)]
-struct H2ByteCounters {
-    request_bytes: Arc<AtomicU64>,
-    response_bytes: Arc<AtomicU64>,
+pub(crate) struct H2ByteCounters {
+    pub(crate) request_bytes: Arc<AtomicU64>,
+    pub(crate) response_bytes: Arc<AtomicU64>,
 }
 
-async fn relay_http2_connection<P, S, D, U>(
+pub(crate) async fn relay_http2_connection<P, S, D, U>(
     engine: Arc<MitmEngine<P, S>>,
     runtime_governor: Arc<runtime_governor::RuntimeGovernor>,
     flow_hooks: Arc<dyn FlowHooks>,
@@ -218,4 +231,3 @@ where
     Ok(())
 }
 
-include!("http2_stream_relay_body.rs");

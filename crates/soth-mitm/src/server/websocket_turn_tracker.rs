@@ -1,4 +1,19 @@
-async fn observe_websocket_frames<P, S>(
+use std::io;
+use std::sync::Arc;
+use crate::engine::MitmEngine;
+use crate::observe::{EventConsumer, FlowContext};
+use crate::policy::PolicyEngine;
+use crate::types::FrameKind;
+use super::flow_hooks::{FlowHooks, StreamChunk};
+use super::websocket_relay::{
+    WS_TURN_IDLE_TIMEOUT, WS_OPCODE_CLOSE, WebSocketObserverMessage, WebSocketFrameObservation,
+    WebSocketTurnTrackerState,
+};
+use super::websocket_events::{
+    emit_websocket_frame_event, emit_websocket_turn_started_event, emit_websocket_turn_completed_event,
+};
+
+pub(crate) async fn observe_websocket_frames<P, S>(
     engine: Arc<MitmEngine<P, S>>,
     websocket_context: FlowContext,
     flow_hooks: Arc<dyn FlowHooks>,

@@ -195,7 +195,7 @@ fn load_ca_material(
 ) -> Result<CaMaterial, TlsConfigError> {
     let cert_pem = fs::read_to_string(ca_cert_path)?;
     let key_pem = fs::read_to_string(ca_key_path)?;
-    validate_ca_material_with_openssl(ca_cert_path, &cert_pem, &key_pem)?;
+    certificate_store_openssl::validate_ca_material_with_openssl(ca_cert_path, &cert_pem, &key_pem)?;
     let cert_der = CertificateDer::from_pem_slice(cert_pem.as_bytes()).map_err(|error| {
         TlsConfigError::InvalidConfiguration(format!(
             "failed to parse CA certificate PEM from {ca_cert_path}: {error}"

@@ -1,4 +1,6 @@
-fn parse_http3_passthrough_hint(connect_head: &[u8]) -> Option<&'static str> {
+use crate::policy::FlowAction;
+
+pub(crate) fn parse_http3_passthrough_hint(connect_head: &[u8]) -> Option<&'static str> {
     let head = std::str::from_utf8(connect_head).ok()?;
     for line in head.split("\r\n").skip(1) {
         if line.is_empty() {
@@ -23,7 +25,7 @@ fn parse_http3_passthrough_hint(connect_head: &[u8]) -> Option<&'static str> {
     None
 }
 
-fn flow_action_label(action: FlowAction) -> &'static str {
+pub(crate) fn flow_action_label(action: FlowAction) -> &'static str {
     match action {
         FlowAction::Intercept => "intercept",
         FlowAction::Tunnel => "tunnel",

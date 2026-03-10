@@ -1,4 +1,7 @@
-fn canonicalize_http_headers(headers: Vec<HttpHeader>) -> io::Result<Vec<HttpHeader>> {
+use std::io;
+use super::HttpHeader;
+
+pub(crate) fn canonicalize_http_headers(headers: Vec<HttpHeader>) -> io::Result<Vec<HttpHeader>> {
     let mut canonical = Vec::with_capacity(headers.len());
     for header in headers {
         let name = header.name.trim();
@@ -57,7 +60,7 @@ fn is_valid_http_header_value(value: &str) -> bool {
         .any(|byte| matches!(*byte, 0x00..=0x08 | 0x0A..=0x1F | 0x7F))
 }
 
-fn parse_content_length(headers: &[HttpHeader]) -> io::Result<Option<u64>> {
+pub(crate) fn parse_content_length(headers: &[HttpHeader]) -> io::Result<Option<u64>> {
     let mut value = None;
     for header in headers {
         if header.name.eq_ignore_ascii_case("content-length") {
@@ -95,11 +98,11 @@ fn parse_content_length(headers: &[HttpHeader]) -> io::Result<Option<u64>> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct ParsedTransferEncoding {
-    chunked: bool,
+pub(crate) struct ParsedTransferEncoding {
+    pub(crate) chunked: bool,
 }
 
-fn parse_transfer_encoding(headers: &[HttpHeader]) -> io::Result<ParsedTransferEncoding> {
+pub(crate) fn parse_transfer_encoding(headers: &[HttpHeader]) -> io::Result<ParsedTransferEncoding> {
     let mut parsed = ParsedTransferEncoding { chunked: false };
     for header in headers {
         if !header.name.eq_ignore_ascii_case("transfer-encoding") {

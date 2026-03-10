@@ -1,11 +1,25 @@
-struct H2CapturedBody {
-    bytes: bytes::Bytes,
-    bytes_forwarded: u64,
-    trailers: Option<http::HeaderMap>,
-    body_truncated: bool,
+use std::io;
+use std::sync::Arc;
+use crate::observe::FlowContext;
+use crate::types::FrameKind;
+use super::runtime_governor;
+use super::flow_hooks::{FlowHooks, RawResponse, StreamChunk};
+use super::io_timeouts::with_h2_body_idle_timeout;
+use super::http2_relay_support::h2_error_to_io;
+use super::http2_stream_relay_body::send_h2_data_with_backpressure;
+use super::flow_hook_http_helpers::{
+    build_handler_header_map_from_h2, normalize_response_body_for_handler, mark_body_truncated, strip_trailer_forbidden_and_transport_headers,
+    is_grpc_content_type_value,
+};
+
+pub(crate) struct H2CapturedBody {
+    pub(crate) bytes: bytes::Bytes,
+    pub(crate) bytes_forwarded: u64,
+    pub(crate) trailers: Option<http::HeaderMap>,
+    pub(crate) body_truncated: bool,
 }
 
-async fn capture_h2_body(
+pub(crate) async fn capture_h2_body(
     source: &mut h2::RecvStream,
     max_handler_body: usize,
 ) -> io::Result<H2CapturedBody> {
@@ -71,7 +85,7 @@ async fn capture_h2_body(
 ///
 /// Takes owned streams so it can be spawned as a concurrent task for racing against
 /// early upstream responses.
-async fn tee_h2_request_body(
+pub(crate) async fn tee_h2_request_body(
     mut source: h2::RecvStream,
     mut sink: h2::SendStream<bytes::Bytes>,
     runtime_governor: Arc<runtime_governor::RuntimeGovernor>,
@@ -170,7 +184,7 @@ async fn tee_h2_request_body(
     })
 }
 
-async fn send_h2_captured_body(
+pub(crate) async fn send_h2_captured_body(
     sink: &mut h2::SendStream<bytes::Bytes>,
     runtime_governor: &Arc<runtime_governor::RuntimeGovernor>,
     captured: H2CapturedBody,
@@ -208,7 +222,7 @@ async fn send_h2_captured_body(
     Ok(None)
 }
 
-async fn dispatch_h2_response_hooks(
+pub(crate) async fn dispatch_h2_response_hooks(
     flow_hooks: &Arc<dyn FlowHooks>,
     stream_context: FlowContext,
     response_parts: &http::response::Parts,
@@ -268,7 +282,7 @@ async fn dispatch_h2_response_hooks(
     flow_hooks.on_stream_end(stream_context).await;
 }
 
-async fn dispatch_sse_chunks_from_buffer(
+pub(crate) async fn dispatch_sse_chunks_from_buffer(
     flow_hooks: &Arc<dyn FlowHooks>,
     stream_context: FlowContext,
     body: bytes::Bytes,
@@ -313,7 +327,7 @@ async fn dispatch_sse_chunks_from_buffer(
     flow_hooks.on_stream_end(stream_context).await;
 }
 
-async fn dispatch_ndjson_chunks_from_buffer(
+pub(crate) async fn dispatch_ndjson_chunks_from_buffer(
     flow_hooks: &Arc<dyn FlowHooks>,
     stream_context: FlowContext,
     body: bytes::Bytes,
@@ -343,7 +357,7 @@ async fn dispatch_ndjson_chunks_from_buffer(
     flow_hooks.on_stream_end(stream_context).await;
 }
 
-async fn dispatch_grpc_chunks_from_buffer(
+pub(crate) async fn dispatch_grpc_chunks_from_buffer(
     flow_hooks: &Arc<dyn FlowHooks>,
     stream_context: FlowContext,
     body: bytes::Bytes,
@@ -377,7 +391,7 @@ async fn dispatch_grpc_chunks_from_buffer(
     flow_hooks.on_stream_end(stream_context).await;
 }
 
-fn is_sse_h2_response(parts: &http::response::Parts) -> bool {
+pub(crate) fn is_sse_h2_response(parts: &http::response::Parts) -> bool {
     parts
         .headers
         .get("content-type")
@@ -387,7 +401,7 @@ fn is_sse_h2_response(parts: &http::response::Parts) -> bool {
         .unwrap_or(false)
 }
 
-fn is_ndjson_h2_response(parts: &http::response::Parts) -> bool {
+pub(crate) fn is_ndjson_h2_response(parts: &http::response::Parts) -> bool {
     parts
         .headers
         .get("content-type")
@@ -400,7 +414,7 @@ fn is_ndjson_h2_response(parts: &http::response::Parts) -> bool {
         .unwrap_or(false)
 }
 
-fn is_grpc_h2_response(parts: &http::response::Parts) -> bool {
+pub(crate) fn is_grpc_h2_response(parts: &http::response::Parts) -> bool {
     parts
         .headers
         .get("content-type")

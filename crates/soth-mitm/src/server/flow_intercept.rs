@@ -1,5 +1,38 @@
+use std::io;
+use std::sync::Arc;
+use tokio::net::TcpStream;
+use crate::engine::MitmEngine;
+use crate::observe::{EventConsumer, EventType, FlowContext};
+use crate::policy::PolicyEngine;
+use crate::protocol::{protocol_from_negotiated_alpn, ApplicationProtocol};
+use crate::tls::{
+    MitmCertificateStore, UpstreamClientAuthMode as TlsUpstreamClientAuthMode,
+    UpstreamTlsConfigCache, resolve_upstream_server_name,
+};
+use crate::types::ProcessInfo;
+use tokio_rustls::TlsConnector;
+use super::{BufferedConn};
+use super::close_codes::CloseReasonCode;
+use super::downstream_tls::accept_downstream_tls;
+use super::event_emitters::{
+    emit_stream_closed, emit_tls_event, emit_tls_event_with_cache, emit_tls_event_with_negotiated_alpn,
+};
+use super::flow_intercept_http1::relay_http1_mitm_loop;
+use super::flow_intercept_tls_failure::fail_tls_and_close;
+use super::http_body_relay::write_proxy_response;
+use super::http2_stream_relay::relay_http2_connection;
+use super::http2_stream_relay_http1::relay_http2_downstream_to_http1_upstream;
+use super::route_planner_model::{RouteBinding, RouteConnectIntent, UpstreamRequestTargetMode};
+use super::route_planner_transport::connect_via_route;
+use super::tls_diagnostics::TlsDiagnostics;
+use super::tls_learning::TlsLearningGuardrails;
+use super::tls_profile_mapping::map_upstream_sni_mode;
+use super::runtime_governor;
+use super::flow_hooks::FlowHooks;
+use super::io_timeouts::write_all_with_idle_timeout;
+
 #[allow(clippy::too_many_arguments)]
-async fn intercept_http_connection<P, S>(
+pub(crate) async fn intercept_http_connection<P, S>(
     engine: Arc<MitmEngine<P, S>>,
     cert_store: Arc<MitmCertificateStore>,
     runtime_governor: Arc<runtime_governor::RuntimeGovernor>,
@@ -264,7 +297,7 @@ where
 /// Reads raw PEM bytes for upstream client auth at startup, returning them
 /// for deferred parsing inside the TLS config cache. Fails eagerly when the
 /// auth mode is `Required` but the files cannot be read.
-fn load_upstream_client_auth_pem(
+pub(crate) fn load_upstream_client_auth_pem(
     cert_path: &Option<String>,
     key_path: &Option<String>,
     auth_mode: TlsUpstreamClientAuthMode,

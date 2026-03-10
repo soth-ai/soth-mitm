@@ -1,3 +1,6 @@
+use crate::config::H2ResponseOverflowMode;
+use super::{IO_CHUNK_SIZE, runtime_governor};
+
 const IDLE_TIMEOUT_ERROR_PREFIX: &str = "idle_watchdog_timeout";
 const STREAM_STAGE_TIMEOUT_ERROR_PREFIX: &str = "stream_stage_timeout";
 const HAPPY_EYEBALLS_STAGGER: std::time::Duration = std::time::Duration::from_millis(200);
@@ -67,7 +70,7 @@ fn ensure_bounded_timeout(timeout: std::time::Duration) -> std::time::Duration {
     as_non_zero_duration(timeout, std::time::Duration::from_millis(1))
 }
 
-fn install_io_timeout_config(
+pub(crate) fn install_io_timeout_config(
     idle_watchdog_timeout: std::time::Duration,
     websocket_idle_watchdog_timeout: std::time::Duration,
     upstream_connect_timeout: std::time::Duration,
@@ -90,7 +93,7 @@ fn install_io_timeout_config(
     *guard = config;
 }
 
-async fn connect_with_upstream_timeout(
+pub(crate) async fn connect_with_upstream_timeout(
     host: &str,
     port: u16,
     stage: &'static str,
@@ -261,21 +264,21 @@ async fn connect_with_happy_eyeballs_addrs(
     }))
 }
 
-fn is_idle_watchdog_timeout(error: &std::io::Error) -> bool {
+pub(crate) fn is_idle_watchdog_timeout(error: &std::io::Error) -> bool {
     error.kind() == std::io::ErrorKind::TimedOut
         && error
             .to_string()
             .starts_with(IDLE_TIMEOUT_ERROR_PREFIX)
 }
 
-fn is_stream_stage_timeout(error: &std::io::Error) -> bool {
+pub(crate) fn is_stream_stage_timeout(error: &std::io::Error) -> bool {
     error.kind() == std::io::ErrorKind::TimedOut
         && error
             .to_string()
             .starts_with(STREAM_STAGE_TIMEOUT_ERROR_PREFIX)
 }
 
-async fn read_with_idle_timeout<R>(
+pub(crate) async fn read_with_idle_timeout<R>(
     stream: &mut R,
     buf: &mut [u8],
     stage: &'static str,
@@ -294,7 +297,7 @@ where
     }
 }
 
-async fn write_all_with_idle_timeout<W>(
+pub(crate) async fn write_all_with_idle_timeout<W>(
     stream: &mut W,
     bytes: &[u8],
     stage: &'static str,
@@ -313,7 +316,7 @@ where
     }
 }
 
-async fn read_with_websocket_idle_timeout<R>(
+pub(crate) async fn read_with_websocket_idle_timeout<R>(
     stream: &mut R,
     buf: &mut [u8],
     stage: &'static str,
@@ -332,7 +335,7 @@ where
     }
 }
 
-async fn write_all_with_websocket_idle_timeout<W>(
+pub(crate) async fn write_all_with_websocket_idle_timeout<W>(
     stream: &mut W,
     bytes: &[u8],
     stage: &'static str,
@@ -351,7 +354,7 @@ where
     }
 }
 
-async fn flush_with_idle_timeout<W>(
+pub(crate) async fn flush_with_idle_timeout<W>(
     stream: &mut W,
     stage: &'static str,
 ) -> std::io::Result<()>
@@ -369,7 +372,7 @@ where
     }
 }
 
-async fn flush_with_websocket_idle_timeout<W>(
+pub(crate) async fn flush_with_websocket_idle_timeout<W>(
     stream: &mut W,
     stage: &'static str,
 ) -> std::io::Result<()>
@@ -387,7 +390,7 @@ where
     }
 }
 
-async fn shutdown_with_idle_timeout<W>(
+pub(crate) async fn shutdown_with_idle_timeout<W>(
     stream: &mut W,
     stage: &'static str,
 ) -> std::io::Result<()>
@@ -409,7 +412,7 @@ where
     }
 }
 
-async fn shutdown_with_websocket_idle_timeout<W>(
+pub(crate) async fn shutdown_with_websocket_idle_timeout<W>(
     stream: &mut W,
     stage: &'static str,
 ) -> std::io::Result<()>
@@ -431,7 +434,7 @@ where
     }
 }
 
-async fn with_stream_stage_timeout<T, F>(
+pub(crate) async fn with_stream_stage_timeout<T, F>(
     stage: &'static str,
     future: F,
 ) -> std::io::Result<T>
@@ -448,7 +451,7 @@ where
         })?
 }
 
-async fn with_h2_body_idle_timeout<T, F>(stage: &'static str, future: F) -> std::io::Result<T>
+pub(crate) async fn with_h2_body_idle_timeout<T, F>(stage: &'static str, future: F) -> std::io::Result<T>
 where
     F: std::future::Future<Output = std::io::Result<T>>,
 {
@@ -462,7 +465,7 @@ where
         })?
 }
 
-async fn copy_bidirectional_with_websocket_idle_timeout<A, B>(
+pub(crate) async fn copy_bidirectional_with_websocket_idle_timeout<A, B>(
     side_a: &mut A,
     side_b: &mut B,
 ) -> std::io::Result<(u64, u64)>

@@ -1,13 +1,21 @@
+use std::io;
+
+pub(crate) const H2_MAX_CONCURRENT_STREAMS: u32 = 128;
+pub(crate) const H2_INITIAL_WINDOW_SIZE: u32 = 1_048_576;
+pub(crate) const H2_INITIAL_CONNECTION_WINDOW_SIZE: u32 = 4_194_304;
+pub(crate) const H2_MAX_SEND_BUFFER_SIZE: usize = 128 * 1024;
+pub(crate) const H2_FORWARD_CHUNK_LIMIT: usize = 128 * 1024;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct GrpcRequestObservation {
-    path: String,
-    service: Option<String>,
-    method: Option<String>,
-    detection_mode: &'static str,
-    content_type: Option<String>,
+pub(crate) struct GrpcRequestObservation {
+    pub(crate) path: String,
+    pub(crate) service: Option<String>,
+    pub(crate) method: Option<String>,
+    pub(crate) detection_mode: &'static str,
+    pub(crate) content_type: Option<String>,
 }
 
-fn configure_h2_server(builder: &mut h2::server::Builder, max_header_list_size: u32) {
+pub(crate) fn configure_h2_server(builder: &mut h2::server::Builder, max_header_list_size: u32) {
     builder.max_header_list_size(max_header_list_size);
     builder.max_concurrent_streams(H2_MAX_CONCURRENT_STREAMS);
     builder.initial_window_size(H2_INITIAL_WINDOW_SIZE);
@@ -15,7 +23,7 @@ fn configure_h2_server(builder: &mut h2::server::Builder, max_header_list_size: 
     builder.max_send_buffer_size(H2_MAX_SEND_BUFFER_SIZE);
 }
 
-fn configure_h2_client(builder: &mut h2::client::Builder, max_header_list_size: u32) {
+pub(crate) fn configure_h2_client(builder: &mut h2::client::Builder, max_header_list_size: u32) {
     builder.max_header_list_size(max_header_list_size);
     builder.max_concurrent_streams(H2_MAX_CONCURRENT_STREAMS);
     builder.initial_window_size(H2_INITIAL_WINDOW_SIZE);
@@ -23,7 +31,7 @@ fn configure_h2_client(builder: &mut h2::client::Builder, max_header_list_size: 
     builder.max_send_buffer_size(H2_MAX_SEND_BUFFER_SIZE);
 }
 
-fn is_h2_transport_close_error(error: &h2::Error) -> bool {
+pub(crate) fn is_h2_transport_close_error(error: &h2::Error) -> bool {
     if let Some(io_error) = error.get_io() {
         matches!(
             io_error.kind(),
@@ -37,7 +45,7 @@ fn is_h2_transport_close_error(error: &h2::Error) -> bool {
     }
 }
 
-fn is_h2_nonfatal_stream_error(error: &h2::Error) -> bool {
+pub(crate) fn is_h2_nonfatal_stream_error(error: &h2::Error) -> bool {
     if is_h2_transport_close_error(error) {
         return true;
     }
@@ -59,11 +67,11 @@ fn is_h2_nonfatal_stream_error(error: &h2::Error) -> bool {
     false
 }
 
-fn h2_reason_for_downstream_reset(error: &h2::Error) -> h2::Reason {
+pub(crate) fn h2_reason_for_downstream_reset(error: &h2::Error) -> h2::Reason {
     error.reason().unwrap_or(h2::Reason::CANCEL)
 }
 
-fn is_benign_h2_stream_io_error(error: &io::Error) -> bool {
+pub(crate) fn is_benign_h2_stream_io_error(error: &io::Error) -> bool {
     if matches!(
         error.kind(),
         io::ErrorKind::BrokenPipe
@@ -81,11 +89,11 @@ fn is_benign_h2_stream_io_error(error: &io::Error) -> bool {
         || text.contains("connection error received: NO_ERROR")
 }
 
-fn h2_error_to_io(context: &str, error: h2::Error) -> io::Error {
+pub(crate) fn h2_error_to_io(context: &str, error: h2::Error) -> io::Error {
     io::Error::other(format!("{context}: {error}"))
 }
 
-fn enforce_h2_request_header_limit(
+pub(crate) fn enforce_h2_request_header_limit(
     parts: &http::request::Parts,
     max_header_list_size: u32,
 ) -> io::Result<()> {
@@ -104,7 +112,7 @@ fn enforce_h2_request_header_limit(
     enforce_h2_header_limit("request", header_list_size, max_header_list_size)
 }
 
-fn enforce_h2_response_header_limit(
+pub(crate) fn enforce_h2_response_header_limit(
     parts: &http::response::Parts,
     max_header_list_size: u32,
 ) -> io::Result<()> {
@@ -113,7 +121,7 @@ fn enforce_h2_response_header_limit(
     enforce_h2_header_limit("response", header_list_size, max_header_list_size)
 }
 
-fn detect_grpc_request(parts: &http::request::Parts) -> Option<GrpcRequestObservation> {
+pub(crate) fn detect_grpc_request(parts: &http::request::Parts) -> Option<GrpcRequestObservation> {
     let path = parts
         .uri
         .path_and_query()

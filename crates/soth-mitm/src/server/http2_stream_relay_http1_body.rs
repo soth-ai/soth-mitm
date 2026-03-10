@@ -1,4 +1,18 @@
-async fn write_http1_request_body_from_h2_capture<U>(
+use std::io;
+use std::sync::Arc;
+use tokio::io::{AsyncRead, AsyncWrite};
+use crate::observe::FlowContext;
+use super::{BufferedConn, HttpResponseHead, IO_CHUNK_SIZE};
+use super::runtime_governor;
+use super::flow_hooks::FlowHooks;
+use super::io_timeouts::{write_all_with_idle_timeout, with_h2_body_idle_timeout, read_with_idle_timeout};
+use super::http2_relay_support::{H2_FORWARD_CHUNK_LIMIT, h2_error_to_io, is_h2_nonfatal_stream_error};
+use super::http2_stream_hook_dispatch::H2CapturedBody;
+use super::http2_stream_relay_body::send_h2_data_with_backpressure;
+use super::flow_hook_http_helpers::{sanitize_block_status, strip_hop_by_hop_and_transport_headers};
+use super::http_body_relay::read_chunk_line;
+
+pub(crate) async fn write_http1_request_body_from_h2_capture<U>(
     upstream_stream: &mut U,
     runtime_governor: &Arc<runtime_governor::RuntimeGovernor>,
     captured: &H2CapturedBody,
@@ -105,7 +119,7 @@ fn parse_http1_trailer_line(line: &[u8]) -> io::Result<(http::header::HeaderName
     Ok((name, value))
 }
 
-async fn read_http1_response_chunk_non_eof<U>(
+pub(crate) async fn read_http1_response_chunk_non_eof<U>(
     source: &mut BufferedConn<U>,
     max_len: usize,
     stage_name: &'static str,
@@ -132,7 +146,7 @@ where
     Ok(buf)
 }
 
-async fn read_http1_response_chunk_allow_eof<U>(
+pub(crate) async fn read_http1_response_chunk_allow_eof<U>(
     source: &mut BufferedConn<U>,
     max_len: usize,
     stage_name: &'static str,
@@ -168,7 +182,7 @@ fn take_prefetched_http1_response_chunk<U>(
     Some(source.read_buf.drain(..take).collect())
 }
 
-async fn read_http1_chunked_trailers_as_header_map<U>(
+pub(crate) async fn read_http1_chunked_trailers_as_header_map<U>(
     source: &mut BufferedConn<U>,
     max_http_head_bytes: usize,
     runtime_governor: &Arc<runtime_governor::RuntimeGovernor>,
@@ -214,7 +228,7 @@ where
     Ok(Some(parsed_trailers))
 }
 
-fn build_h2_response_parts_from_http1(
+pub(crate) fn build_h2_response_parts_from_http1(
     response: &HttpResponseHead,
 ) -> io::Result<http::response::Parts> {
     let status = http::StatusCode::from_u16(response.status_code).map_err(|error| {
@@ -247,7 +261,7 @@ fn build_h2_response_parts_from_http1(
     Ok(response.into_parts().0)
 }
 
-async fn send_h2_text_response(
+pub(crate) async fn send_h2_text_response(
     downstream_respond: &mut h2::server::SendResponse<bytes::Bytes>,
     runtime_governor: &Arc<runtime_governor::RuntimeGovernor>,
     status: u16,
@@ -275,7 +289,7 @@ async fn send_h2_text_response(
     Ok(())
 }
 
-async fn respond_h2_error_and_end(
+pub(crate) async fn respond_h2_error_and_end(
     flow_hooks: &Arc<dyn FlowHooks>,
     stream_context: FlowContext,
     downstream_respond: &mut h2::server::SendResponse<bytes::Bytes>,

@@ -1,12 +1,15 @@
 use dashmap::DashMap;
-use crate::types::FlowId;
+use crate::types::{FlowId, ProcessInfo};
+use crate::engine::MitmEngine;
+use crate::policy::{FlowAction, PolicyEngine};
+use crate::observe::EventConsumer;
 
 #[derive(Debug, Clone)]
-struct FlowPolicySnapshot {
-    flow_id: FlowId,
-    action: FlowAction,
-    reason: String,
-    override_state: crate::policy::PolicyOverrideState,
+pub(crate) struct FlowPolicySnapshot {
+    pub(crate) flow_id: FlowId,
+    pub(crate) action: FlowAction,
+    pub(crate) reason: String,
+    pub(crate) override_state: crate::policy::PolicyOverrideState,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -22,7 +25,7 @@ fn flow_policy_snapshots() -> &'static DashMap<FlowPolicySnapshotKey, FlowPolicy
     FLOW_POLICY_SNAPSHOTS.get_or_init(DashMap::new)
 }
 
-fn resolve_flow_policy_snapshot<P, S>(
+pub(crate) fn resolve_flow_policy_snapshot<P, S>(
     engine: &MitmEngine<P, S>,
     flow_id: FlowId,
     client_addr: String,
@@ -60,7 +63,7 @@ where
     snapshot
 }
 
-fn clear_flow_policy_snapshot(engine_instance_id: u64, flow_id: FlowId) {
+pub(crate) fn clear_flow_policy_snapshot(engine_instance_id: u64, flow_id: FlowId) {
     let snapshot_key = FlowPolicySnapshotKey {
         engine_instance_id,
         flow_id,

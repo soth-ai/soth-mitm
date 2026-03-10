@@ -1,9 +1,17 @@
 use std::collections::HashSet;
-use std::io::Read;
+use std::io::{self, Read};
 use std::net::Ipv6Addr;
+use std::sync::Arc;
 
 use bytes::Bytes;
 use http::{header::HeaderName, HeaderMap};
+use tokio::io::{AsyncRead, AsyncWrite};
+use crate::engine::MitmEngine;
+use crate::observe::{EventConsumer, EventType, FlowContext};
+use crate::policy::PolicyEngine;
+use super::{BufferedConn, HttpBodyMode, HttpHeader, HttpResponseHead};
+use super::http_body_relay::{relay_http_body, HttpBodyObserver};
+use super::runtime_governor;
 
 const HANDLER_STRIP_HEADERS: &[&str] = &[
     "transfer-encoding",
@@ -64,7 +72,7 @@ impl HttpBodyObserver for BodyCaptureObserver {
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn relay_http_body_with_capture<RS, WS, P, S>(
+pub(crate) async fn relay_http_body_with_capture<RS, WS, P, S>(
     engine: &Arc<MitmEngine<P, S>>,
     context: &FlowContext,
     event_kind: EventType,
@@ -97,7 +105,7 @@ where
     Ok((forwarded, Bytes::from(observer.body), observer.truncated))
 }
 
-fn build_handler_header_map(headers: &[HttpHeader]) -> HeaderMap {
+pub(crate) fn build_handler_header_map(headers: &[HttpHeader]) -> HeaderMap {
     let mut map = HeaderMap::with_capacity(headers.len());
     for header in headers {
         let Ok(name) = HeaderName::from_bytes(header.name.as_bytes()) else {
@@ -112,7 +120,7 @@ fn build_handler_header_map(headers: &[HttpHeader]) -> HeaderMap {
     map
 }
 
-fn strip_hop_by_hop_and_transport_headers(headers: &mut HeaderMap) {
+pub(crate) fn strip_hop_by_hop_and_transport_headers(headers: &mut HeaderMap) {
     let mut blocked = HashSet::new();
     for name in HANDLER_STRIP_HEADERS {
         blocked.insert(HeaderName::from_static(name));
@@ -127,7 +135,7 @@ fn strip_hop_by_hop_and_transport_headers(headers: &mut HeaderMap) {
     }
 }
 
-fn strip_trailer_forbidden_and_transport_headers(headers: &mut HeaderMap) {
+pub(crate) fn strip_trailer_forbidden_and_transport_headers(headers: &mut HeaderMap) {
     strip_hop_by_hop_and_transport_headers(headers);
     for name in TRAILER_STRIP_HEADERS {
         headers.remove(HeaderName::from_static(name));
@@ -150,7 +158,7 @@ fn connection_tokens(headers: &HeaderMap) -> Vec<String> {
     out
 }
 
-fn normalize_request_path_for_handler(target: &str) -> String {
+pub(crate) fn normalize_request_path_for_handler(target: &str) -> String {
     if target.starts_with('/') || target == "*" {
         return target.to_string();
     }
@@ -163,13 +171,13 @@ fn normalize_request_path_for_handler(target: &str) -> String {
     target.to_string()
 }
 
-fn normalize_h2_path_for_handler(uri: &http::Uri) -> String {
+pub(crate) fn normalize_h2_path_for_handler(uri: &http::Uri) -> String {
     uri.path_and_query()
         .map(|value| value.as_str().to_string())
         .unwrap_or_else(|| "/".to_string())
 }
 
-fn ensure_handler_host_header_from_target(
+pub(crate) fn ensure_handler_host_header_from_target(
     headers: &mut HeaderMap,
     context: &FlowContext,
     target: &str,
@@ -181,7 +189,7 @@ fn ensure_handler_host_header_from_target(
     ensure_handler_host_header(headers, context, authority_hint.as_deref());
 }
 
-fn ensure_handler_host_header_from_uri(
+pub(crate) fn ensure_handler_host_header_from_uri(
     headers: &mut HeaderMap,
     context: &FlowContext,
     uri: &http::Uri,
@@ -244,7 +252,7 @@ fn format_authority(host: &str, port: Option<u16>) -> String {
     }
 }
 
-fn build_handler_header_map_from_h2(headers: &http::HeaderMap) -> HeaderMap {
+pub(crate) fn build_handler_header_map_from_h2(headers: &http::HeaderMap) -> HeaderMap {
     let mut map = HeaderMap::with_capacity(headers.len());
     for (name, value) in headers {
         map.append(name.clone(), value.clone());
@@ -253,7 +261,7 @@ fn build_handler_header_map_from_h2(headers: &http::HeaderMap) -> HeaderMap {
     map
 }
 
-fn is_ndjson_response(response: &HttpResponseHead) -> bool {
+pub(crate) fn is_ndjson_response(response: &HttpResponseHead) -> bool {
     for header in &response.headers {
         if !header.name.eq_ignore_ascii_case("content-type") {
             continue;
@@ -273,21 +281,21 @@ fn is_ndjson_response(response: &HttpResponseHead) -> bool {
     false
 }
 
-fn is_grpc_request(headers: &[HttpHeader]) -> bool {
+pub(crate) fn is_grpc_request(headers: &[HttpHeader]) -> bool {
     headers.iter().any(|header| {
         header.name.eq_ignore_ascii_case("content-type")
             && is_grpc_content_type_value(&header.value)
     })
 }
 
-fn is_grpc_response(response: &HttpResponseHead) -> bool {
+pub(crate) fn is_grpc_response(response: &HttpResponseHead) -> bool {
     response.headers.iter().any(|header| {
         header.name.eq_ignore_ascii_case("content-type")
             && is_grpc_content_type_value(&header.value)
     })
 }
 
-fn normalize_grpc_request_body_for_handler(headers: &mut HeaderMap, body: Bytes) -> Bytes {
+pub(crate) fn normalize_grpc_request_body_for_handler(headers: &mut HeaderMap, body: Bytes) -> Bytes {
     match strip_grpc_frame_header(body.as_ref()) {
         Ok(payload) => payload,
         Err(_) => {
@@ -311,7 +319,7 @@ fn strip_grpc_frame_header(payload: &[u8]) -> Result<Bytes, &'static str> {
     Ok(Bytes::copy_from_slice(&payload[5..5 + frame_len]))
 }
 
-fn is_grpc_content_type_value(value: &str) -> bool {
+pub(crate) fn is_grpc_content_type_value(value: &str) -> bool {
     value
         .split(';')
         .next()
@@ -323,11 +331,11 @@ fn is_grpc_content_type_value(value: &str) -> bool {
         .unwrap_or(false)
 }
 
-fn normalize_request_body_for_handler(headers: &mut HeaderMap, body: Bytes) -> Bytes {
+pub(crate) fn normalize_request_body_for_handler(headers: &mut HeaderMap, body: Bytes) -> Bytes {
     normalize_encoded_body_for_handler(headers, body)
 }
 
-fn normalize_response_body_for_handler(headers: &mut HeaderMap, body: Bytes) -> Bytes {
+pub(crate) fn normalize_response_body_for_handler(headers: &mut HeaderMap, body: Bytes) -> Bytes {
     normalize_encoded_body_for_handler(headers, body)
 }
 
@@ -360,14 +368,14 @@ fn normalize_encoded_body_for_handler(headers: &mut HeaderMap, body: Bytes) -> B
     }
 }
 
-fn mark_body_truncated(headers: &mut HeaderMap) {
+pub(crate) fn mark_body_truncated(headers: &mut HeaderMap) {
     headers.insert(
         HeaderName::from_static("x-soth-body-truncated"),
         http::HeaderValue::from_static("true"),
     );
 }
 
-fn sanitize_block_status(status: u16) -> u16 {
+pub(crate) fn sanitize_block_status(status: u16) -> u16 {
     if (100..=599).contains(&status) {
         status
     } else {

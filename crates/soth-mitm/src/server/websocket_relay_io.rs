@@ -1,11 +1,19 @@
-struct PrefixedReader<R> {
+use std::io;
+use std::sync::Arc;
+use tokio::io::{AsyncRead, AsyncWrite};
+use super::runtime_governor;
+use super::io_timeouts::{read_with_websocket_idle_timeout, write_all_with_websocket_idle_timeout};
+use super::websocket_codec::{WebSocketHeaderView, WebSocketHeaderDecodeResult, decode_websocket_header_soketto, websocket_payload_len_within_limit};
+use super::websocket_relay::WS_FRAME_COPY_CHUNK_SIZE;
+
+pub(crate) struct PrefixedReader<R> {
     prefix: Vec<u8>,
     prefix_offset: usize,
     source: R,
 }
 
 impl<R> PrefixedReader<R> {
-    fn new(prefix: Vec<u8>, source: R) -> Self {
+    pub(crate) fn new(prefix: Vec<u8>, source: R) -> Self {
         Self {
             prefix,
             prefix_offset: 0,
@@ -63,7 +71,7 @@ where
     }
 }
 
-async fn read_websocket_frame_header<R>(
+pub(crate) async fn read_websocket_frame_header<R>(
     source: &mut PrefixedReader<R>,
     codec: &soketto::base::Codec,
     max_frame_payload_bytes: usize,
@@ -115,7 +123,7 @@ where
     }
 }
 
-async fn relay_websocket_payload<R, W>(
+pub(crate) async fn relay_websocket_payload<R, W>(
     source: &mut PrefixedReader<R>,
     sink: &mut W,
     runtime_governor: &Arc<runtime_governor::RuntimeGovernor>,

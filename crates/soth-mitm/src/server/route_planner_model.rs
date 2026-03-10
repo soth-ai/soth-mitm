@@ -1,20 +1,21 @@
-const MAX_PROXY_HEAD_BYTES: usize = 64 * 1024;
+use std::io;
+
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum UpstreamRequestTargetMode {
+pub(crate) enum UpstreamRequestTargetMode {
     OriginForm,
     AbsoluteForm,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct RouteTarget {
-    host: String,
-    port: u16,
-    policy_path: Option<String>,
+pub(crate) struct RouteTarget {
+    pub(crate) host: String,
+    pub(crate) port: u16,
+    pub(crate) policy_path: Option<String>,
 }
 
 impl RouteTarget {
-    fn new(host: String, port: u16, policy_path: Option<String>) -> Self {
+    pub(crate) fn new(host: String, port: u16, policy_path: Option<String>) -> Self {
         Self {
             host,
             port,
@@ -24,18 +25,18 @@ impl RouteTarget {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct RouteBinding {
-    mode: crate::engine::RouteMode,
-    target_host: String,
-    target_port: u16,
-    policy_path: Option<String>,
-    next_hop_host: String,
-    next_hop_port: u16,
-    request_target_mode: UpstreamRequestTargetMode,
+pub(crate) struct RouteBinding {
+    pub(crate) mode: crate::engine::RouteMode,
+    pub(crate) target_host: String,
+    pub(crate) target_port: u16,
+    pub(crate) policy_path: Option<String>,
+    pub(crate) next_hop_host: String,
+    pub(crate) next_hop_port: u16,
+    pub(crate) request_target_mode: UpstreamRequestTargetMode,
 }
 
 impl RouteBinding {
-    fn route_mode_label(&self) -> &'static str {
+    pub(crate) fn route_mode_label(&self) -> &'static str {
         match self.mode {
             crate::engine::RouteMode::Direct => "direct",
             crate::engine::RouteMode::Reverse => "reverse",
@@ -52,18 +53,18 @@ impl RouteBinding {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RouteConnectIntent {
+pub(crate) enum RouteConnectIntent {
     TargetTunnel,
     ForwardHttpRequest,
 }
 
 #[derive(Debug, Default)]
-struct FlowRoutePlanner {
+pub(crate) struct FlowRoutePlanner {
     binding: Option<RouteBinding>,
 }
 
 impl FlowRoutePlanner {
-    fn bind_once(
+    pub(crate) fn bind_once(
         &mut self,
         config: &crate::engine::MitmConfig,
         target: RouteTarget,
@@ -91,7 +92,7 @@ impl FlowRoutePlanner {
     }
 }
 
-fn plan_route(config: &crate::engine::MitmConfig, target: RouteTarget) -> io::Result<RouteBinding> {
+pub(crate) fn plan_route(config: &crate::engine::MitmConfig, target: RouteTarget) -> io::Result<RouteBinding> {
     match config.route_mode {
         crate::engine::RouteMode::Direct => Ok(RouteBinding {
             mode: config.route_mode,

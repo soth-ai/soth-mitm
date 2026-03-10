@@ -7,7 +7,7 @@ use std::time::Instant;
 use crate::protocol::ApplicationProtocol;
 use crate::observe::{Event, EventConsumer, EventEnvelope, EventType, FlowContext};
 use crate::policy::{
-    FlowAction, PolicyDecision, PolicyEngine, PolicyInput, PolicyOverrideState,
+    FlowAction, PolicyEngine, PolicyInput, PolicyOverrideState,
 };
 use crate::types::{FlowId, ProcessInfo};
 
@@ -393,7 +393,7 @@ where
     }
 }
 
-include!("engine_policy_decision.rs");
+mod policy_decision;
 
 #[cfg(test)]
 mod tests {

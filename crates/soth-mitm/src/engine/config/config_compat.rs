@@ -1,3 +1,6 @@
+use super::MitmConfigError;
+use serde::{Deserialize, Serialize};
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(default, deny_unknown_fields)]
 pub struct CompatibilityOverrideConfig {
@@ -18,7 +21,7 @@ impl CompatibilityOverrideConfig {
     }
 }
 
-fn validate_compatibility_overrides(
+pub(super) fn validate_compatibility_overrides(
     overrides: &[CompatibilityOverrideConfig],
 ) -> Result<(), MitmConfigError> {
     for (index, override_rule) in overrides.iter().enumerate() {
@@ -45,7 +48,7 @@ fn validate_compatibility_overrides(
     Ok(())
 }
 
-fn host_matches_pattern(server_host: &str, host_pattern: &str) -> bool {
+pub(super) fn host_matches_pattern(server_host: &str, host_pattern: &str) -> bool {
     let host = server_host.trim().to_ascii_lowercase();
     let pattern = host_pattern.trim().to_ascii_lowercase();
     if let Some(suffix) = pattern.strip_prefix("*.") {

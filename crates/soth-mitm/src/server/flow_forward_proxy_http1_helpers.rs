@@ -1,7 +1,11 @@
+use std::io;
 use http::Uri;
 use std::net::IpAddr;
+use super::HttpRequestHead;
+use super::http_head_parser::parse_http_request_head;
+use super::route_planner_model::{RouteTarget, UpstreamRequestTargetMode};
 
-fn is_forward_http1_request_candidate(input: &[u8]) -> bool {
+pub(crate) fn is_forward_http1_request_candidate(input: &[u8]) -> bool {
     if let Ok(request) = parse_http_request_head(input) {
         return !request.method.eq_ignore_ascii_case("CONNECT");
     }
@@ -34,14 +38,14 @@ fn is_non_connect_http1_request_line(input: &[u8]) -> bool {
     matches!(version, "HTTP/1.0" | "HTTP/1.1")
 }
 
-fn resolve_forward_http_route(request: &HttpRequestHead) -> io::Result<RouteTarget> {
+pub(crate) fn resolve_forward_http_route(request: &HttpRequestHead) -> io::Result<RouteTarget> {
     if request.target.starts_with("http://") || request.target.starts_with("https://") {
         return resolve_absolute_form_forward_http_route(request);
     }
     resolve_origin_form_forward_http_route(request)
 }
 
-fn is_self_listener_target(
+pub(crate) fn is_self_listener_target(
     target_host: &str,
     target_port: u16,
     listen_addr: &str,
@@ -166,7 +170,7 @@ fn resolve_origin_form_forward_http_route(request: &HttpRequestHead) -> io::Resu
     ))
 }
 
-fn build_upstream_http1_request_head(
+pub(crate) fn build_upstream_http1_request_head(
     request: &HttpRequestHead,
     target_mode: UpstreamRequestTargetMode,
 ) -> io::Result<Vec<u8>> {

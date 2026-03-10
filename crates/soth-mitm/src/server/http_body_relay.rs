@@ -1,4 +1,16 @@
-trait HttpBodyObserver: Send {
+use std::io;
+use std::sync::Arc;
+use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::net::TcpStream;
+use crate::engine::MitmEngine;
+use crate::observe::{EventConsumer, EventType, FlowContext};
+use crate::policy::PolicyEngine;
+use super::{BufferedConn, HttpBodyMode, IO_CHUNK_SIZE, CHUNK_LINE_LIMIT, runtime_governor};
+use super::io_timeouts::{read_with_idle_timeout, write_all_with_idle_timeout};
+use super::http_head_parser::read_until_pattern_no_stage_timeout;
+use super::event_emitters::emit_body_chunk_event;
+
+pub(crate) trait HttpBodyObserver: Send {
     fn on_chunk<'a>(
         &'a mut self,
         chunk: &'a [u8],
@@ -11,7 +23,7 @@ trait HttpBodyObserver: Send {
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn relay_http_body<RS, WS, P, S>(
+pub(crate) async fn relay_http_body<RS, WS, P, S>(
     engine: &Arc<MitmEngine<P, S>>,
     context: &FlowContext,
     event_kind: EventType,
@@ -245,7 +257,7 @@ where
     Ok(total)
 }
 
-async fn read_chunk_line<S: AsyncRead + Unpin>(
+pub(crate) async fn read_chunk_line<S: AsyncRead + Unpin>(
     source: &mut BufferedConn<S>,
     runtime_governor: &Arc<runtime_governor::RuntimeGovernor>,
 ) -> io::Result<Vec<u8>> {
@@ -293,7 +305,7 @@ async fn read_chunked_trailers<S: AsyncRead + Unpin>(
     }
 }
 
-fn parse_chunk_len(line: &[u8]) -> io::Result<u64> {
+pub(crate) fn parse_chunk_len(line: &[u8]) -> io::Result<u64> {
     let text = std::str::from_utf8(line).map_err(|_| {
         io::Error::new(
             io::ErrorKind::InvalidData,
@@ -310,7 +322,7 @@ fn parse_chunk_len(line: &[u8]) -> io::Result<u64> {
     })
 }
 
-async fn read_exact_from_source<S: AsyncRead + Unpin>(
+pub(crate) async fn read_exact_from_source<S: AsyncRead + Unpin>(
     source: &mut BufferedConn<S>,
     exact_len: usize,
     runtime_governor: &Arc<runtime_governor::RuntimeGovernor>,
@@ -336,7 +348,7 @@ async fn read_exact_from_source<S: AsyncRead + Unpin>(
     Ok(source.read_buf.drain(..exact_len).collect::<Vec<_>>())
 }
 
-async fn write_proxy_response(stream: &mut TcpStream, status: &str, body: &str) -> io::Result<()> {
+pub(crate) async fn write_proxy_response(stream: &mut TcpStream, status: &str, body: &str) -> io::Result<()> {
     let response = format!(
         "HTTP/1.1 {status}\r\nConnection: close\r\nContent-Type: text/plain\r\nContent-Length: {}\r\n\r\n{body}",
         body.len()

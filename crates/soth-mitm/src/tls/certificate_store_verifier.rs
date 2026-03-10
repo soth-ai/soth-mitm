@@ -1,5 +1,9 @@
+use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
+use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
+use rustls::{DigitallySignedStruct, SignatureScheme};
+
 #[derive(Debug)]
-struct InsecureSkipVerifyServerCertVerifier;
+pub(super) struct InsecureSkipVerifyServerCertVerifier;
 
 impl ServerCertVerifier for InsecureSkipVerifyServerCertVerifier {
     fn verify_server_cert(

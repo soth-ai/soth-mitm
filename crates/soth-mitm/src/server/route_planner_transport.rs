@@ -1,4 +1,14 @@
-async fn connect_via_route(route: &RouteBinding, intent: RouteConnectIntent) -> io::Result<TcpStream> {
+use std::io;
+use tokio::net::TcpStream;
+
+const MAX_PROXY_HEAD_BYTES: usize = 64 * 1024;
+use super::route_planner_model::{RouteBinding, RouteConnectIntent};
+use super::io_timeouts::{
+    connect_with_upstream_timeout, write_all_with_idle_timeout, read_with_idle_timeout,
+};
+use super::socket_hardening::apply_per_connection_socket_hardening;
+
+pub(crate) async fn connect_via_route(route: &RouteBinding, intent: RouteConnectIntent) -> io::Result<TcpStream> {
     let mut stream =
         connect_with_upstream_timeout(&route.next_hop_host, route.next_hop_port, "upstream_connect")
             .await?;

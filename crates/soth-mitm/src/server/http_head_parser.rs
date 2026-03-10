@@ -1,4 +1,11 @@
-async fn read_connect_head<S>(
+use std::io;
+use std::sync::Arc;
+use tokio::io::AsyncRead;
+use super::{BufferedConn, HttpBodyMode, HttpHeader, HttpRequestHead, HttpResponseHead, HttpVersion, IO_CHUNK_SIZE, runtime_governor};
+use super::io_timeouts::{read_with_idle_timeout, with_stream_stage_timeout};
+use super::http_head_parser_smuggling::{canonicalize_http_headers, parse_transfer_encoding, parse_content_length};
+
+pub(crate) async fn read_connect_head<S>(
     stream: &mut S,
     max_connect_head_bytes: usize,
     runtime_governor: &Arc<runtime_governor::RuntimeGovernor>,
@@ -81,7 +88,7 @@ fn looks_like_tls_client_hello_prefix(data: &[u8]) -> bool {
     data[0] == 0x16 && data[1] == 0x03 && (0x00..=0x04).contains(&data[2])
 }
 
-async fn read_until_pattern<S: AsyncRead + Unpin>(
+pub(crate) async fn read_until_pattern<S: AsyncRead + Unpin>(
     conn: &mut BufferedConn<S>,
     pattern: &[u8],
     max_bytes: usize,
@@ -90,7 +97,7 @@ async fn read_until_pattern<S: AsyncRead + Unpin>(
     read_until_pattern_inner(conn, pattern, max_bytes, runtime_governor, true).await
 }
 
-async fn read_until_pattern_no_stage_timeout<S: AsyncRead + Unpin>(
+pub(crate) async fn read_until_pattern_no_stage_timeout<S: AsyncRead + Unpin>(
     conn: &mut BufferedConn<S>,
     pattern: &[u8],
     max_bytes: usize,
@@ -155,7 +162,7 @@ fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
         .position(|window| window == needle)
 }
 
-fn parse_http_request_head(raw: &[u8]) -> io::Result<HttpRequestHead> {
+pub(crate) fn parse_http_request_head(raw: &[u8]) -> io::Result<HttpRequestHead> {
     let text = std::str::from_utf8(raw).map_err(|_| {
         io::Error::new(
             io::ErrorKind::InvalidData,
@@ -199,7 +206,7 @@ fn parse_http_request_head(raw: &[u8]) -> io::Result<HttpRequestHead> {
     })
 }
 
-fn parse_http_request_head_with_mode(
+pub(crate) fn parse_http_request_head_with_mode(
     raw: &[u8],
     strict_header_mode: bool,
 ) -> io::Result<HttpRequestHead> {
@@ -213,7 +220,7 @@ fn parse_http_request_head_with_mode(
     Ok(parsed)
 }
 
-fn parse_http_response_head(raw: &[u8], request_method: &str) -> io::Result<HttpResponseHead> {
+pub(crate) fn parse_http_response_head(raw: &[u8], request_method: &str) -> io::Result<HttpResponseHead> {
     let text = std::str::from_utf8(raw).map_err(|_| {
         io::Error::new(
             io::ErrorKind::InvalidData,
@@ -258,7 +265,7 @@ fn parse_http_response_head(raw: &[u8], request_method: &str) -> io::Result<Http
     })
 }
 
-fn parse_http_response_head_with_mode(
+pub(crate) fn parse_http_response_head_with_mode(
     raw: &[u8],
     request_method: &str,
     strict_header_mode: bool,
@@ -370,7 +377,7 @@ fn parse_response_body_mode(
     Ok(HttpBodyMode::CloseDelimited)
 }
 
-fn has_header_token(headers: &[HttpHeader], name: &str, token: &str) -> bool {
+pub(crate) fn has_header_token(headers: &[HttpHeader], name: &str, token: &str) -> bool {
     headers
         .iter()
         .filter(|header| header.name.eq_ignore_ascii_case(name))
@@ -378,14 +385,14 @@ fn has_header_token(headers: &[HttpHeader], name: &str, token: &str) -> bool {
         .any(|value| value.trim().eq_ignore_ascii_case(token))
 }
 
-fn has_header_value(headers: &[HttpHeader], name: &str, expected: &str) -> bool {
+pub(crate) fn has_header_value(headers: &[HttpHeader], name: &str, expected: &str) -> bool {
     headers
         .iter()
         .filter(|header| header.name.eq_ignore_ascii_case(name))
         .any(|header| header.value.trim().eq_ignore_ascii_case(expected))
 }
 
-fn is_sse_response(response: &HttpResponseHead) -> bool {
+pub(crate) fn is_sse_response(response: &HttpResponseHead) -> bool {
     response.headers.iter().any(|header| {
         header.name.eq_ignore_ascii_case("content-type")
             && header

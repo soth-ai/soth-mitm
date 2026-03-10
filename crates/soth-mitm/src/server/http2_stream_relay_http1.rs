@@ -1,5 +1,34 @@
+use std::io;
+use std::sync::Arc;
+use tokio::io::{AsyncRead, AsyncWrite};
+use tokio_rustls::TlsConnector;
+use crate::engine::MitmEngine;
+use crate::observe::{EventConsumer, FlowContext};
+use crate::policy::PolicyEngine;
+use crate::protocol::ApplicationProtocol;
+use crate::types::ProcessInfo;
+use super::runtime_governor;
+use super::flow_hooks::FlowHooks;
+use super::close_codes::CloseReasonCode;
+use super::event_emitters::emit_stream_closed;
+use super::io_timeouts::{
+    is_idle_watchdog_timeout, is_stream_stage_timeout, with_stream_stage_timeout,
+};
+use super::route_planner_model::{RouteBinding, RouteConnectIntent};
+use super::route_planner_transport::connect_via_route;
+use super::http2_relay_support::{
+    configure_h2_server,
+    is_h2_nonfatal_stream_error, is_benign_h2_stream_io_error, h2_error_to_io,
+};
+use super::http2_stream_relay::H2ByteCounters;
+use super::http2_stream_relay_http1_stream::relay_http2_stream_to_http1_upstream;
+use super::http2_stream_hook_dispatch::H2CapturedBody;
+use super::flow_hook_http_helpers::{
+    ensure_handler_host_header_from_uri, strip_hop_by_hop_and_transport_headers,
+};
+
 #[derive(Clone)]
-struct H2ToH1UpstreamFactory {
+pub(crate) struct H2ToH1UpstreamFactory {
     route: RouteBinding,
     connector: TlsConnector,
     server_name: tokio_rustls::rustls::pki_types::ServerName<'static>,
@@ -8,7 +37,7 @@ struct H2ToH1UpstreamFactory {
     >,
 }
 
-async fn relay_http2_downstream_to_http1_upstream<P, S, D>(
+pub(crate) async fn relay_http2_downstream_to_http1_upstream<P, S, D>(
     engine: Arc<MitmEngine<P, S>>,
     runtime_governor: Arc<runtime_governor::RuntimeGovernor>,
     flow_hooks: Arc<dyn FlowHooks>,
@@ -166,7 +195,7 @@ where
     Ok(())
 }
 
-async fn acquire_h2_h1_upstream_stream(
+pub(crate) async fn acquire_h2_h1_upstream_stream(
     upstream_factory: &H2ToH1UpstreamFactory,
 ) -> io::Result<tokio_rustls::client::TlsStream<tokio::net::TcpStream>> {
     let mut guard = upstream_factory.initial_stream.lock().await;
@@ -194,7 +223,7 @@ async fn acquire_h2_h1_upstream_stream(
     Ok(stream)
 }
 
-fn build_http1_request_head_from_h2(
+pub(crate) fn build_http1_request_head_from_h2(
     request_parts: &http::request::Parts,
     stream_context: &FlowContext,
     request_captured: &H2CapturedBody,
@@ -240,4 +269,3 @@ fn build_http1_request_head_from_h2(
     Ok(request_head)
 }
 
-include!("http2_stream_relay_http1_stream.rs");

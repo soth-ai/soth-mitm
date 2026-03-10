@@ -1,40 +1,57 @@
-const WS_FRAME_COPY_CHUNK_SIZE: usize = 8 * 1024;
-const WS_OPCODE_CLOSE: u8 = 0x8;
-const WS_TURN_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(750);
+use std::io;
+use std::sync::Arc;
+use tokio::io::{AsyncRead, AsyncWrite};
+use crate::engine::MitmEngine;
+use crate::observe::{EventConsumer, FlowContext};
+use crate::policy::PolicyEngine;
+use super::{BufferedConn};
+use super::runtime_governor;
+use super::flow_hooks::FlowHooks;
+use super::io_timeouts::{
+    write_all_with_websocket_idle_timeout, flush_with_websocket_idle_timeout,
+    shutdown_with_websocket_idle_timeout,
+};
+use super::websocket_relay_io::{PrefixedReader, read_websocket_frame_header, relay_websocket_payload};
+use super::websocket_codec::validate_websocket_mask_direction;
+use super::websocket_events::{emit_websocket_opened_event, emit_websocket_closed_event};
+
+pub(crate) const WS_FRAME_COPY_CHUNK_SIZE: usize = 8 * 1024;
+pub(crate) const WS_OPCODE_CLOSE: u8 = 0x8;
+pub(crate) const WS_TURN_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(750);
 const WS_OBSERVER_CHANNEL_CAPACITY: usize = 1024;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct WebSocketRelayOutcome {
-    bytes_from_client: u64,
-    bytes_from_server: u64,
+pub(crate) struct WebSocketRelayOutcome {
+    pub(crate) bytes_from_client: u64,
+    pub(crate) bytes_from_server: u64,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct WebSocketDirectionOutcome {
-    bytes_forwarded: u64,
-    close_frame_seen: bool,
+pub(crate) struct WebSocketDirectionOutcome {
+    pub(crate) bytes_forwarded: u64,
+    pub(crate) close_frame_seen: bool,
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct WebSocketFrameObservation {
-    direction: crate::protocol::WsDirection,
-    kind: crate::protocol::WsFrameKind,
-    sequence_no: u64,
-    opcode: u8,
-    fin: bool,
-    masked: bool,
-    payload_len: u64,
-    frame_len: u64,
-    payload: bytes::Bytes,
-    observed_at_unix_ms: u128,
+pub(crate) struct WebSocketFrameObservation {
+    pub(crate) direction: crate::protocol::WsDirection,
+    pub(crate) kind: crate::protocol::WsFrameKind,
+    pub(crate) sequence_no: u64,
+    pub(crate) opcode: u8,
+    pub(crate) fin: bool,
+    pub(crate) masked: bool,
+    pub(crate) payload_len: u64,
+    pub(crate) frame_len: u64,
+    pub(crate) payload: bytes::Bytes,
+    pub(crate) observed_at_unix_ms: u128,
 }
-enum WebSocketObserverMessage {
+pub(crate) enum WebSocketObserverMessage {
     Frame(WebSocketFrameObservation),
     FinalFlushReason(&'static str),
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct WebSocketTurnTrackerState {
-    next_turn_id: u64,
-    next_chunk_sequence: u64,
-    active_turn_id: Option<u64>,
-    closing: bool,
+pub(crate) struct WebSocketTurnTrackerState {
+    pub(crate) next_turn_id: u64,
+    pub(crate) next_chunk_sequence: u64,
+    pub(crate) active_turn_id: Option<u64>,
+    pub(crate) closing: bool,
 }
 
 impl Default for WebSocketTurnTrackerState {
@@ -47,7 +64,7 @@ impl Default for WebSocketTurnTrackerState {
         }
     }
 }
-async fn relay_websocket_connection<P, S, D, U>(
+pub(crate) async fn relay_websocket_connection<P, S, D, U>(
     engine: Arc<MitmEngine<P, S>>,
     runtime_governor: Arc<runtime_governor::RuntimeGovernor>,
     flow_hooks: Arc<dyn FlowHooks>,
@@ -75,7 +92,7 @@ where
     let observer_context = websocket_context.clone();
     let observer_hooks = Arc::clone(&flow_hooks);
     let observer_task = tokio::spawn(async move {
-        observe_websocket_frames(
+        super::websocket_turn_tracker::observe_websocket_frames(
             observer_engine,
             observer_context,
             observer_hooks,
@@ -284,5 +301,47 @@ where
                 close_frame_seen: true,
             });
         }
+    }
+}
+
+pub(crate) fn map_joined_direction_result(
+    label: &str,
+    joined: Result<io::Result<WebSocketDirectionOutcome>, tokio::task::JoinError>,
+) -> io::Result<WebSocketDirectionOutcome> {
+    match joined {
+        Ok(result) => result,
+        Err(join_error) => Err(io::Error::other(format!(
+            "websocket {label} task join failed: {join_error}"
+        ))),
+    }
+}
+
+pub(crate) fn websocket_final_flush_reason(
+    client_result: &io::Result<WebSocketDirectionOutcome>,
+    server_result: &io::Result<WebSocketDirectionOutcome>,
+) -> &'static str {
+    if client_result.is_err() || server_result.is_err() {
+        return "error";
+    }
+
+    let close_frame_seen = client_result
+        .as_ref()
+        .map(|outcome| outcome.close_frame_seen)
+        .unwrap_or(false)
+        || server_result
+            .as_ref()
+            .map(|outcome| outcome.close_frame_seen)
+            .unwrap_or(false);
+    if close_frame_seen {
+        "close_frame"
+    } else {
+        "eof"
+    }
+}
+
+pub(crate) fn websocket_now_unix_ms() -> u128 {
+    match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+        Ok(duration) => duration.as_millis(),
+        Err(_) => 0,
     }
 }

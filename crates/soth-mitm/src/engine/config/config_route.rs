@@ -1,3 +1,6 @@
+use super::{MitmConfig, MitmConfigError};
+use serde::{Deserialize, Serialize};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RouteMode {
@@ -8,7 +11,7 @@ pub enum RouteMode {
 }
 
 impl RouteMode {
-    fn as_str(self) -> &'static str {
+    pub(super) fn as_str(self) -> &'static str {
         match self {
             Self::Direct => "direct",
             Self::Reverse => "reverse",
@@ -31,7 +34,7 @@ pub struct RouteEndpointConfig {
     pub port: u16,
 }
 
-fn validate_route_endpoint(
+pub(super) fn validate_route_endpoint(
     endpoint: Option<&RouteEndpointConfig>,
     field: &'static str,
 ) -> Result<(), MitmConfigError> {
@@ -47,7 +50,7 @@ fn validate_route_endpoint(
     Ok(())
 }
 
-fn validate_route_mode_bindings(config: &MitmConfig) -> Result<(), MitmConfigError> {
+pub(super) fn validate_route_mode_bindings(config: &MitmConfig) -> Result<(), MitmConfigError> {
     let mode = config.route_mode.as_str();
     match config.route_mode {
         RouteMode::Direct => {

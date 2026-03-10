@@ -3,8 +3,14 @@ use crate::policy::{FlowAction, PolicyDecision, PolicyOverrideState};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-include!("config_route.rs");
-include!("config_compat.rs");
+mod config_route;
+mod config_compat;
+
+pub use config_route::{RouteMode, RouteEndpointConfig};
+pub use config_compat::CompatibilityOverrideConfig;
+
+use config_route::{validate_route_endpoint, validate_route_mode_bindings};
+use config_compat::{validate_compatibility_overrides, host_matches_pattern};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -463,7 +469,7 @@ fn validate_host_list(hosts: &[String], field: &'static str) -> Result<(), MitmC
     Ok(())
 }
 
-fn require_non_empty(
+pub(super) fn require_non_empty(
     value: Option<&str>,
     _field: &'static str,
     error: MitmConfigError,

@@ -7,15 +7,15 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 
-use crate::protocol::configured_http_alpn_protocols;
 use rcgen::{
     BasicConstraints, CertificateParams, DistinguishedName, DnType, ExtendedKeyUsagePurpose, IsCa,
     Issuer, KeyPair, KeyUsagePurpose, SanType,
 };
-use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::pki_types::pem::PemObject;
-use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, ServerName, UnixTime};
-use rustls::{ClientConfig, DigitallySignedStruct, RootCertStore, ServerConfig, SignatureScheme};
+use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
+use rustls::{ClientConfig, ServerConfig};
+
+use crate::protocol::configured_http_alpn_protocols;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TlsFailureReason {
@@ -304,10 +304,25 @@ struct CaMaterial {
     key_pem: String,
 }
 
+mod certificate_store_openssl;
+mod certificate_store_verifier;
+mod tls_profile_policy;
+
+// Kept as include!() because the impl block requires direct access to the private
+// fields CertStoreState, CachedLeaf, and CaMaterial defined in this module.
 include!("certificate_store_impl.rs");
-include!("certificate_store_openssl.rs");
-include!("certificate_store_verifier.rs");
-include!("tls_profile_policy.rs");
+
+pub use tls_profile_policy::{
+    build_http_client_config_with_policy,
+    build_http_client_config_with_policy_and_client_auth,
+    parse_upstream_client_auth_material,
+    resolve_upstream_server_name,
+    DownstreamCertProfile,
+    UpstreamClientAuthMode,
+    UpstreamTlsConfigCache,
+    UpstreamTlsProfile,
+    UpstreamTlsSniMode,
+};
 
 #[cfg(test)]
 mod tests {

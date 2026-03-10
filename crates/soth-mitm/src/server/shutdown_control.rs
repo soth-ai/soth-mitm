@@ -1,3 +1,8 @@
+use std::io;
+use crate::observe::EventConsumer;
+use crate::policy::PolicyEngine;
+use super::SidecarServer;
+
 impl<P, S> SidecarServer<P, S>
 where
     P: PolicyEngine + Send + Sync + 'static,

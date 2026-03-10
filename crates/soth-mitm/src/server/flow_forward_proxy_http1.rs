@@ -1,7 +1,33 @@
-include!("flow_forward_proxy_http1_helpers.rs");
+use std::io;
+use std::sync::Arc;
+use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::net::TcpStream;
+use crate::engine::MitmEngine;
+use crate::observe::{EventConsumer, FlowContext};
+use crate::policy::{FlowAction, PolicyEngine};
+use crate::protocol::ApplicationProtocol;
+use crate::types::ProcessInfo;
+use super::{BufferedConn};
+use super::close_codes::CloseReasonCode;
+use super::event_emitters::emit_stream_closed;
+use super::flow_forward_proxy_http1_helpers::{
+    is_self_listener_target,
+    resolve_forward_http_route,
+};
+use super::flow_intercept_http1::relay_http1_mitm_loop;
+use super::flow_policy_snapshot::resolve_flow_policy_snapshot;
+use super::http_head_parser::parse_http_request_head;
+use super::io_timeouts::{
+    copy_bidirectional_with_websocket_idle_timeout, is_idle_watchdog_timeout,
+    is_stream_stage_timeout, shutdown_with_idle_timeout, write_all_with_idle_timeout,
+};
+use super::route_planner_model::{FlowRoutePlanner, RouteConnectIntent};
+use super::route_planner_transport::connect_via_route;
+use super::flow_hooks::FlowHooks;
+use super::runtime_governor;
 
 #[allow(clippy::too_many_arguments)]
-async fn handle_forward_http1_proxy_request<P, S, D>(
+pub(crate) async fn handle_forward_http1_proxy_request<P, S, D>(
     engine: Arc<MitmEngine<P, S>>,
     runtime_governor: Arc<runtime_governor::RuntimeGovernor>,
     flow_hooks: Arc<dyn FlowHooks>,
@@ -315,7 +341,7 @@ where
     }
 }
 
-async fn write_forward_proxy_error_response<D>(
+pub(crate) async fn write_forward_proxy_error_response<D>(
     downstream: &mut D,
     status: &str,
     body: &str,

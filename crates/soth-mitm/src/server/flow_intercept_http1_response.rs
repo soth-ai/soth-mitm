@@ -1,3 +1,27 @@
+use std::sync::Arc;
+use tokio::io::{AsyncRead, AsyncWrite};
+use crate::engine::MitmEngine;
+use crate::observe::{EventConsumer, EventType, FlowContext};
+use crate::policy::PolicyEngine;
+use crate::protocol::ApplicationProtocol;
+use super::{BufferedConn, HttpResponseHead};
+use super::flow_hook_http_helpers::{
+    build_handler_header_map, mark_body_truncated, normalize_response_body_for_handler,
+    relay_http_body_with_capture,
+    is_ndjson_response, is_grpc_response,
+};
+use super::http2_stream_hook_dispatch::{
+    dispatch_sse_chunks_from_buffer, dispatch_ndjson_chunks_from_buffer, dispatch_grpc_chunks_from_buffer,
+};
+use super::flow_intercept_http1::emit_http1_relay_error_close;
+use super::grpc_stream_observer::GrpcStreamObserver;
+use super::http_body_relay::relay_http_body;
+use super::http_head_parser::is_sse_response;
+use super::ndjson_stream_observer::NdjsonStreamObserver;
+use super::sse_stream_observer::SseStreamObserver;
+use super::runtime_governor;
+use super::flow_hooks::{FlowHooks, RawResponse};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Http1StreamingKind {
     Sse,
@@ -6,7 +30,7 @@ enum Http1StreamingKind {
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn relay_http1_response_with_hooks<P, S, D, U>(
+pub(crate) async fn relay_http1_response_with_hooks<P, S, D, U>(
     engine: Arc<MitmEngine<P, S>>,
     runtime_governor: Arc<runtime_governor::RuntimeGovernor>,
     flow_hooks: Arc<dyn FlowHooks>,
@@ -250,7 +274,7 @@ where
     Ok(response_body_bytes)
 }
 
-fn response_has_content_encoding(response: &HttpResponseHead) -> bool {
+pub(crate) fn response_has_content_encoding(response: &HttpResponseHead) -> bool {
     response
         .headers
         .iter()

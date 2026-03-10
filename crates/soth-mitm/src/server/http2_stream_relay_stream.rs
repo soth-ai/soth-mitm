@@ -1,4 +1,36 @@
-async fn relay_http2_stream<P, S>(
+use std::io;
+use std::sync::Arc;
+use std::sync::atomic::Ordering;
+use crate::engine::MitmEngine;
+use crate::observe::{EventConsumer, FlowContext};
+use crate::policy::PolicyEngine;
+use crate::config::InterceptMode;
+use super::runtime_governor;
+use crate::actions::HandlerDecision;
+use super::flow_hooks::{FlowHooks, RawRequest};
+use super::io_timeouts::with_stream_stage_timeout;
+use super::http2_relay_support::{
+    GrpcRequestObservation, enforce_h2_request_header_limit, enforce_h2_response_header_limit,
+    h2_error_to_io, is_h2_nonfatal_stream_error, h2_reason_for_downstream_reset, detect_grpc_request,
+};
+use super::http2_stream_relay::{H2ByteCounters, h2_relay_debug};
+use super::http2_stream_relay_body::send_h2_data_with_backpressure;
+use super::http2_stream_hook_dispatch::{
+    H2CapturedBody, capture_h2_body, tee_h2_request_body, dispatch_h2_response_hooks,
+    send_h2_captured_body, is_sse_h2_response, is_ndjson_h2_response, is_grpc_h2_response,
+};
+use super::http2_stream_response_relay::{
+    relay_h2_response_body_with_incremental_forwarding, h2_response_stream_hook_dispatcher,
+};
+use super::event_emitters_protocol::{emit_grpc_request_headers_event, emit_grpc_response_headers_event, emit_grpc_response_trailers_event};
+use super::flow_hook_http_helpers::{
+    build_handler_header_map_from_h2, ensure_handler_host_header_from_uri,
+    normalize_h2_path_for_handler, normalize_grpc_request_body_for_handler,
+    normalize_request_body_for_handler, mark_body_truncated, sanitize_block_status,
+    strip_hop_by_hop_and_transport_headers,
+};
+
+pub(crate) async fn relay_http2_stream<P, S>(
     engine: Arc<MitmEngine<P, S>>,
     runtime_governor: Arc<runtime_governor::RuntimeGovernor>,
     flow_hooks: Arc<dyn FlowHooks>,

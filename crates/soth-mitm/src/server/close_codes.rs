@@ -1,5 +1,7 @@
+use crate::engine::ConnectParseError;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CloseReasonCode {
+pub(crate) enum CloseReasonCode {
     Blocked,
     ConnectParseFailed,
     TlsHandshakeFailed,
@@ -16,7 +18,7 @@ enum CloseReasonCode {
 }
 
 impl CloseReasonCode {
-    fn as_str(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::Blocked => "blocked",
             Self::ConnectParseFailed => "connect_parse_failed",
@@ -36,7 +38,7 @@ impl CloseReasonCode {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ParseFailureCode {
+pub(crate) enum ParseFailureCode {
     IncompleteHeaders,
     HeaderTooLarge,
     ReadError,
@@ -44,7 +46,7 @@ enum ParseFailureCode {
 }
 
 impl ParseFailureCode {
-    fn as_str(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::IncompleteHeaders => "incomplete_headers",
             Self::HeaderTooLarge => "header_too_large",

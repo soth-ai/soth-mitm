@@ -1,15 +1,17 @@
+use std::io;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct WebSocketHeaderView {
-    fin: bool,
-    opcode: u8,
-    masked: bool,
-    mask: Option<u32>,
-    payload_len: usize,
-    header_len: usize,
+pub(crate) struct WebSocketHeaderView {
+    pub(crate) fin: bool,
+    pub(crate) opcode: u8,
+    pub(crate) masked: bool,
+    pub(crate) mask: Option<u32>,
+    pub(crate) payload_len: usize,
+    pub(crate) header_len: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum WebSocketHeaderDecodeResult {
+pub(crate) enum WebSocketHeaderDecodeResult {
     NeedMore(usize),
     Complete(WebSocketHeaderView),
 }
@@ -21,7 +23,7 @@ struct WebSocketClosePayload {
     reason: Option<String>,
 }
 
-fn decode_websocket_header_soketto(
+pub(crate) fn decode_websocket_header_soketto(
     _codec: &soketto::base::Codec,
     bytes: &[u8],
 ) -> io::Result<WebSocketHeaderDecodeResult> {
@@ -93,7 +95,7 @@ fn decode_websocket_header_soketto(
     }))
 }
 
-fn websocket_payload_len_within_limit(
+pub(crate) fn websocket_payload_len_within_limit(
     payload_len: usize,
     max_frame_payload_bytes: usize,
 ) -> io::Result<()> {
@@ -143,7 +145,7 @@ fn encode_websocket_header_soketto(
     Ok(codec.encode_header(&header).to_vec())
 }
 
-fn validate_websocket_mask_direction(
+pub(crate) fn validate_websocket_mask_direction(
     _direction: crate::protocol::WsDirection,
     _masked: bool,
 ) -> io::Result<()> {

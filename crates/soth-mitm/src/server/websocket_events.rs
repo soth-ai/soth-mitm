@@ -1,6 +1,10 @@
+use crate::engine::MitmEngine;
+use crate::observe::{Event, EventConsumer, EventType, FlowContext};
+use crate::policy::PolicyEngine;
+
 const WEBSOCKET_CODEC_IMPL_LABEL: &str = "soketto";
 
-fn emit_websocket_opened_event<P, S>(engine: &MitmEngine<P, S>, context: FlowContext)
+pub(crate) fn emit_websocket_opened_event<P, S>(engine: &MitmEngine<P, S>, context: FlowContext)
 where
     P: PolicyEngine + Send + Sync + 'static,
     S: EventConsumer + Send + Sync + 'static,
@@ -17,7 +21,7 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-fn emit_websocket_frame_event<P, S>(
+pub(crate) fn emit_websocket_frame_event<P, S>(
     engine: &MitmEngine<P, S>,
     context: FlowContext,
     direction: crate::protocol::WsDirection,
@@ -68,7 +72,7 @@ fn emit_websocket_frame_event<P, S>(
     engine.emit_event(event);
 }
 
-fn emit_websocket_closed_event<P, S>(
+pub(crate) fn emit_websocket_closed_event<P, S>(
     engine: &MitmEngine<P, S>,
     context: FlowContext,
     close_reason: &str,
@@ -103,7 +107,7 @@ fn emit_websocket_closed_event<P, S>(
     engine.emit_event(event);
 }
 
-fn emit_websocket_turn_started_event<P, S>(
+pub(crate) fn emit_websocket_turn_started_event<P, S>(
     engine: &MitmEngine<P, S>,
     context: FlowContext,
     turn_id: u64,
@@ -133,7 +137,7 @@ fn emit_websocket_turn_started_event<P, S>(
     engine.emit_event(event);
 }
 
-fn emit_websocket_turn_completed_event<P, S>(
+pub(crate) fn emit_websocket_turn_completed_event<P, S>(
     engine: &MitmEngine<P, S>,
     context: FlowContext,
     turn: &crate::protocol::WebSocketTurn,

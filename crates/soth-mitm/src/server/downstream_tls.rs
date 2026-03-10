@@ -1,5 +1,9 @@
+use std::io;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::task::{Context, Poll};
+use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::net::TcpStream;
 
 use crate::engine::DownstreamTlsBackend;
 use crate::tls::IssuedServerConfig;

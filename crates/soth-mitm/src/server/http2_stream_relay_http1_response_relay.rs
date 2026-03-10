@@ -1,6 +1,26 @@
-struct Http1ToH2ResponseRelayOutcome {
-    captured: H2CapturedBody,
-    observed_trailers: Option<http::HeaderMap>,
+use std::io;
+use std::sync::Arc;
+use tokio::io::AsyncRead;
+use crate::config::H2ResponseOverflowMode;
+use crate::observe::FlowContext;
+use super::{BufferedConn, HttpBodyMode, IO_CHUNK_SIZE};
+use super::runtime_governor;
+use super::flow_hooks::FlowHooks;
+use super::io_timeouts::with_h2_body_idle_timeout;
+use super::http2_relay_support::h2_error_to_io;
+use super::http2_stream_relay_body::send_h2_data_with_backpressure;
+use super::http2_stream_relay_http1_body::{
+    read_http1_response_chunk_non_eof, read_http1_response_chunk_allow_eof,
+    read_http1_chunked_trailers_as_header_map,
+};
+use super::http_body_relay::{read_chunk_line, parse_chunk_len, read_exact_from_source};
+use super::http2_stream_hook_dispatch::H2CapturedBody;
+use super::http2_stream_response_relay::H2ResponseStreamHookDispatcher;
+use super::flow_hook_http_helpers::strip_trailer_forbidden_and_transport_headers;
+
+pub(crate) struct Http1ToH2ResponseRelayOutcome {
+    pub(crate) captured: H2CapturedBody,
+    pub(crate) observed_trailers: Option<http::HeaderMap>,
 }
 
 struct Http1ResponseCaptureState {
@@ -46,7 +66,7 @@ impl Http1ResponseCaptureState {
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn relay_http1_response_body_with_incremental_forwarding<U>(
+pub(crate) async fn relay_http1_response_body_with_incremental_forwarding<U>(
     source: &mut BufferedConn<U>,
     mode: HttpBodyMode,
     max_http_head_bytes: usize,
