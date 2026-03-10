@@ -86,10 +86,16 @@ pub mod test_protocol {
         // grpc envelope
         GrpcEnvelopeMalformedCode,
         GrpcEnvelopeParser,
+        GrpcEnvelopeParserLimits,
         GrpcEnvelopeRecord,
         LayeredDecoderPipeline,
         SseParser,
         StageProcessOutcome,
+        // websocket
+        WebSocketTurn,
+        WebSocketTurnAggregator,
+        WsDirection,
+        WsFrameKind,
         SANITIZED_ATTRIBUTE,
         SANITIZED_PREFIX_ATTRIBUTE,
         SANITIZED_PROVENANCE_ATTRIBUTE,

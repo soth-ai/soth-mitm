@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 #[cfg(not(target_env = "msvc"))]
 use libfuzzer_sys::fuzz_target;
-use mitm_http::{
+use soth_mitm::test_protocol::{
     DecoderFailureCode, DecoderFrame, DecoderPipelineResult, DecoderStage, DecoderStageProcessor,
     DecoderStageStatus, LayeredDecoderPipeline, StageProcessOutcome,
 };

@@ -1,7 +1,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use mitm_http::{WebSocketTurn, WebSocketTurnAggregator, WsDirection, WsFrameKind};
+use soth_mitm::test_protocol::{WebSocketTurn, WebSocketTurnAggregator, WsDirection, WsFrameKind};
 
 fn assert_turn_invariants(turn: &WebSocketTurn) {
     assert!(turn.first_frame_sequence_no <= turn.last_frame_sequence_no);

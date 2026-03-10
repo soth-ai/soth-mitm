@@ -12,7 +12,9 @@ pub use decoder_chain::{
     DecoderPipelineResult, DecoderStage, DecoderStageProcessor, DecoderStageStatus,
     LayeredDecoderPipeline, StageProcessOutcome,
 };
-pub use grpc_envelope::{GrpcEnvelopeMalformedCode, GrpcEnvelopeParser, GrpcEnvelopeRecord};
+pub use grpc_envelope::{
+    GrpcEnvelopeMalformedCode, GrpcEnvelopeParser, GrpcEnvelopeParserLimits, GrpcEnvelopeRecord,
+};
 pub use sse_parser::{SseEvent, SseParser};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -9,10 +9,7 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
-mitm-core = { path = "../crates/mitm-core" }
-mitm-http = { path = "../crates/mitm-http" }
-mitm-sidecar = { path = "../crates/mitm-sidecar" }
-mitm-tls = { path = "../crates/mitm-tls" }
+soth-mitm = { path = "../crates/soth-mitm" }
 
 [[bin]]
 name = "connect_parser"

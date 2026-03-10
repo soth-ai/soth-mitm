@@ -1,7 +1,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use mitm_http::SseParser;
+use soth_mitm::test_protocol::SseParser;
 
 fuzz_target!(|data: &[u8]| {
     let mut parser = SseParser::new();
