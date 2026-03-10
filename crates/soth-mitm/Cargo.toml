@@ -77,7 +77,7 @@ tracing = { workspace = true }
 dashmap = { workspace = true }
 parking_lot = { workspace = true }
 uuid = { workspace = true }
-lru = "0.12"
+lru = "0.16"
 libc = "0.2"
 plist = "1"
 sysinfo = "0.33"
