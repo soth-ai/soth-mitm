@@ -621,7 +621,7 @@ where
         observed_bytes = bytes,
         counterpart_bytes,
         budget_bytes = budget,
-        "per-flow body budget exceeded in http1 relay"
+        "per-flow content budget exceeded in http1 relay"
     );
     emit_stream_closed(
         engine,

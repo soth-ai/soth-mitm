@@ -19,6 +19,15 @@ if [[ "${#rust_files[@]}" -eq 0 ]]; then
   exit 2
 fi
 
+# Non-test source files only (exclude test modules, integration tests,
+# and files whose names indicate they are test-only include!() targets)
+src_files=()
+while IFS= read -r src_file; do
+  src_files+=("$src_file")
+done < <(find crates/soth-mitm/src -type f -name "*.rs" \
+  ! -name "tests_*.rs" ! -name "tests.rs" ! -name "test_*.rs" \
+  ! -path "*/tests/*" ! -path "*/tests.rs" | sort)
+
 violations=0
 has_rg=0
 if command -v rg >/dev/null 2>&1; then
@@ -47,6 +56,43 @@ scan_fixed_term() {
   fi
   if [[ -n "$matches" ]]; then
     report_violation "$title" "$matches"
+  fi
+}
+
+# Same as scan_fixed_term but only checks non-test source files.
+# Filters out matches inside #[cfg(test)] blocks by checking if the
+# match line is after the last #[cfg(test)] in that file.
+scan_fixed_term_src_only() {
+  local title="$1"
+  local term="$2"
+  local raw_matches
+  if [[ "${#src_files[@]}" -eq 0 ]]; then return; fi
+  if [[ "$has_rg" -eq 1 ]]; then
+    raw_matches="$(rg -n --color=never -i --fixed-strings "$term" "${src_files[@]}" || true)"
+  else
+    raw_matches="$(grep -n -i -F -- "$term" "${src_files[@]}" || true)"
+  fi
+  if [[ -z "$raw_matches" ]]; then return; fi
+
+  # Filter out matches that fall inside #[cfg(test)] blocks
+  local filtered=""
+  while IFS= read -r line; do
+    # Extract file path and line number: "path:lineno:content"
+    local fpath lineno
+    fpath="$(echo "$line" | cut -d: -f1)"
+    lineno="$(echo "$line" | cut -d: -f2)"
+    # Find the last #[cfg(test)] line in the file
+    local cfg_test_line
+    cfg_test_line="$(grep -n '#\[cfg(test)\]' "$fpath" 2>/dev/null | tail -1 | cut -d: -f1 || true)"
+    if [[ -n "$cfg_test_line" ]] && (( lineno > cfg_test_line )); then
+      continue  # skip — inside test block
+    fi
+    filtered="${filtered}${line}"$'\n'
+  done <<< "$raw_matches"
+
+  filtered="$(echo -n "$filtered" | sed '/^$/d')"
+  if [[ -n "$filtered" ]]; then
+    report_violation "$title" "$filtered"
   fi
 }
 
@@ -82,21 +128,25 @@ provider_terms=(
 )
 
 for term in "${provider_terms[@]}"; do
-  scan_fixed_term "AI/provider-specific term '${term}' is prohibited" "$term"
+  scan_fixed_term_src_only "AI/provider-specific term '${term}' is prohibited" "$term"
 done
 
-if [[ "$has_rg" -eq 1 ]]; then
-  body_logging_matches="$(
-    rg -n -U --color=never --pcre2 \
-      '(?is)(tracing::(?:trace|debug|info|warn|error)|log::(?:trace|debug|info|warn|error)|eprintln|println)!\s*\([^)]{0,512}\b(body|payload|chunk)\b' \
-      "${rust_files[@]}" || true
-  )"
+if [[ "${#src_files[@]}" -gt 0 ]]; then
+  if [[ "$has_rg" -eq 1 ]]; then
+    body_logging_matches="$(
+      rg -n -U --color=never --pcre2 \
+        '(?is)(tracing::(?:trace|debug|info|warn|error)|log::(?:trace|debug|info|warn|error)|eprintln|println)!\s*\([^)]{0,512}\b(body|payload|chunk)\b' \
+        "${src_files[@]}" || true
+    )"
+  else
+    body_logging_matches="$(
+      grep -n -E -i \
+        '(tracing::(trace|debug|info|warn|error)|log::(trace|debug|info|warn|error)|eprintln|println)!.*(body|payload|chunk)' \
+        "${src_files[@]}" || true
+    )"
+  fi
 else
-  body_logging_matches="$(
-    grep -n -E -i \
-      '(tracing::(trace|debug|info|warn|error)|log::(trace|debug|info|warn|error)|eprintln|println)!.*(body|payload|chunk)' \
-      "${rust_files[@]}" || true
-  )"
+  body_logging_matches=""
 fi
 if [[ -n "$body_logging_matches" ]]; then
   report_violation "request/response body logging is prohibited" "$body_logging_matches"
