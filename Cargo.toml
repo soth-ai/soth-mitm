@@ -49,7 +49,7 @@ ed25519-dalek = { version = "2", features = ["rand_core"] }
 sha1 = "0.10"
 sha2 = "0.10"
 bs58 = "0.5"
-rand = "0.8"
+rand = "0.9"
 base64 = "0.22"
 
 # Policy (OPA Wasm)
