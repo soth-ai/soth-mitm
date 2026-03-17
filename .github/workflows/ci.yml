@@ -134,8 +134,13 @@ jobs:
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
 
-      - name: Run workspace tests
+      - name: Run workspace tests (non-Windows)
+        if: runner.os != 'Windows'
         run: cargo test --workspace --all-features
+
+      - name: Run workspace tests (Windows, no OpenSSL backend)
+        if: runner.os == 'Windows'
+        run: cargo test --workspace --features soth-mitm/__internal
 
   phase_a_smoke:
     name: phase_a_smoke (${{ matrix.os }})
