@@ -36,11 +36,11 @@ outcome_tsv="$report_dir/outcome.tsv"
 printf 'check\tstatus\tdetail\n' >"$status_tsv"
 
 ac_run_case "$status_tsv" timeout_defaults_to_forward_contract \
-  cargo test --all-features -p soth-mitm request_timeout_cancels_future_and_records_metric -q
+  cargo test --features soth-mitm/__internal -p soth-mitm request_timeout_cancels_future_and_records_metric -q
 ac_run_case "$status_tsv" timeout_checkpoint_contract \
-  cargo test --all-features -p soth-mitm response_timeout_records_metric_without_blocking -q
+  cargo test --features soth-mitm/__internal -p soth-mitm response_timeout_records_metric_without_blocking -q
 ac_run_case "$status_tsv" timeout_metrics_counter_contract \
-  cargo test --all-features -p soth-mitm response_fire_and_forget_does_not_block_forward_path -q
+  cargo test --features soth-mitm/__internal -p soth-mitm response_fire_and_forget_does_not_block_forward_path -q
 
 ac_record_status "$status_tsv" runtime_integration_coverage pass async_runtime_timeout_guard_wired
 

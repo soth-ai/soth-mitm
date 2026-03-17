@@ -47,13 +47,13 @@ fi
 ac_record_status "$status_tsv" platform_gate pass "$platform_label"
 
 ac_run_case "$status_tsv" process_lookup_timeout_contract \
-  cargo test --all-features -p soth-mitm process_lookup_timeout_sets_none -q || true
+  cargo test --features soth-mitm/__internal -p soth-mitm process_lookup_timeout_sets_none -q || true
 ac_run_case "$status_tsv" process_lookup_cache_contract \
-  cargo test --all-features -p soth-mitm process_info_resolved_once_per_connection -q || true
+  cargo test --features soth-mitm/__internal -p soth-mitm process_info_resolved_once_per_connection -q || true
 ac_run_case "$status_tsv" process_identity_cache_contract \
-  cargo test --all-features -p soth-mitm identity_cache_reused_across_connections -q || true
+  cargo test --features soth-mitm/__internal -p soth-mitm identity_cache_reused_across_connections -q || true
 ac_run_case "$status_tsv" socket_pid_matching_contract \
-  cargo test --all-features -p soth-mitm unspecified_expected_ip_matches_any_candidate -q || true
+  cargo test --features soth-mitm/__internal -p soth-mitm unspecified_expected_ip_matches_any_candidate -q || true
 
 # The codesign invocation in process/macos.rs is an audited syscall boundary
 # call — it is the fallback when Info.plist bundle ID resolution fails.
@@ -73,7 +73,7 @@ fi
 
 if [[ "$platform_label" == "macos" ]]; then
   ac_run_case "$status_tsv" macos_bundle_path_contract \
-    cargo test --all-features -p soth-mitm extracts_app_bundle_path_from_binary_path -q || true
+    cargo test --features soth-mitm/__internal -p soth-mitm extracts_app_bundle_path_from_binary_path -q || true
 else
   ac_record_status "$status_tsv" macos_bundle_path_contract pass non_macos_not_required
 fi

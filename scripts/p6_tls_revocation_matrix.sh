@@ -38,10 +38,10 @@ run_case() {
 : >"$status_tsv"
 
 run_case tls_revocation_matrix \
-  cargo test --all-features -p soth-mitm --test tls_revocation_matrix -q || true
+  cargo test --features soth-mitm/__internal -p soth-mitm --test tls_revocation_matrix -q || true
 
 run_case tls_diagnostics_contract \
-  cargo test --all-features -p soth-mitm --lib tls_diagnostics::tests:: -q || true
+  cargo test --features soth-mitm/__internal -p soth-mitm --lib tls_diagnostics::tests:: -q || true
 
 failed="$(awk '$2 != "pass" {print $1}' "$status_tsv" || true)"
 {

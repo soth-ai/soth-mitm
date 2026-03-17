@@ -11,9 +11,9 @@ fi
 
 run_cargo_test() {
   if [[ "${#cargo_args[@]}" -gt 0 ]]; then
-    cargo test --all-features "$@" "${cargo_args[@]}"
+    cargo test --features soth-mitm/__internal "$@" "${cargo_args[@]}"
   else
-    cargo test --all-features "$@"
+    cargo test --features soth-mitm/__internal "$@"
   fi
 }
 

@@ -36,11 +36,11 @@ outcome_tsv="$report_dir/outcome.tsv"
 printf 'check\tstatus\tdetail\n' >"$status_tsv"
 
 ac_run_case "$status_tsv" panic_defaults_to_forward_contract \
-  cargo test --all-features -p soth-mitm request_panic_recover_true_defaults_allow_and_records_metric -q
+  cargo test --features soth-mitm/__internal -p soth-mitm request_panic_recover_true_defaults_allow_and_records_metric -q
 ac_run_case "$status_tsv" panic_recovery_mode_contract \
-  cargo test --all-features -p soth-mitm request_panic_recover_false_bubbles_panic -q
+  cargo test --features soth-mitm/__internal -p soth-mitm request_panic_recover_false_bubbles_panic -q
 ac_run_case "$status_tsv" panic_metrics_counter_contract \
-  cargo test --all-features -p soth-mitm proxy_metrics_counter_contract -q
+  cargo test --features soth-mitm/__internal -p soth-mitm proxy_metrics_counter_contract -q
 
 ac_record_status "$status_tsv" runtime_integration_coverage pass async_runtime_handler_guard_wired
 

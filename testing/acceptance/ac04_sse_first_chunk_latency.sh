@@ -39,10 +39,10 @@ outcome_tsv="$report_dir/outcome.tsv"
 printf 'check\tstatus\tdetail\n' >"$status_tsv"
 
 ac_run_case "$status_tsv" sse_first_chunk_budget_contract \
-  cargo test --all-features -p soth-mitm sse_first_chunk_delta_budget -q || true
+  cargo test --features soth-mitm/__internal -p soth-mitm sse_first_chunk_delta_budget -q || true
 ac_run_case "$status_tsv" sse_first_chunk_benchmark \
   ac_run_with_preferred_bench_linker \
-  cargo bench --all-features -p soth-mitm --bench sse_first_chunk -- \
+  cargo bench --features soth-mitm/__internal -p soth-mitm --bench sse_first_chunk -- \
     --iterations "$iterations" \
     --warmup "$warmup" \
     --threshold-p95-us "$threshold_p95_us" \

@@ -74,19 +74,19 @@ ac_run_case_with_socket_permission_fallback() {
 }
 
 ac_run_case "$status_tsv" request_timeout_cancellation_gate \
-  cargo test --all-features -p soth-mitm request_timeout_cancels_future_and_records_metric -q
+  cargo test --features soth-mitm/__internal -p soth-mitm request_timeout_cancels_future_and_records_metric -q
 ac_run_case "$status_tsv" request_panic_recovery_gate \
-  cargo test --all-features -p soth-mitm request_panic_recover_true_defaults_allow_and_records_metric -q
+  cargo test --features soth-mitm/__internal -p soth-mitm request_panic_recover_true_defaults_allow_and_records_metric -q
 ac_run_case "$status_tsv" request_panic_fail_closed_gate \
-  cargo test --all-features -p soth-mitm request_panic_recover_false_bubbles_panic -q
+  cargo test --features soth-mitm/__internal -p soth-mitm request_panic_recover_false_bubbles_panic -q
 ac_run_case "$status_tsv" response_non_blocking_dispatch_gate \
-  cargo test --all-features -p soth-mitm response_fire_and_forget_does_not_block_forward_path -q
+  cargo test --features soth-mitm/__internal -p soth-mitm response_fire_and_forget_does_not_block_forward_path -q
 ac_run_case "$status_tsv" response_timeout_cancellation_gate \
-  cargo test --all-features -p soth-mitm response_timeout_records_metric_without_blocking -q
+  cargo test --features soth-mitm/__internal -p soth-mitm response_timeout_records_metric_without_blocking -q
 ac_run_case "$status_tsv" stream_close_lifecycle_gate \
-  cargo test --all-features -p soth-mitm stream_end_invokes_connection_close_once -q
+  cargo test --features soth-mitm/__internal -p soth-mitm stream_end_invokes_connection_close_once -q
 ac_run_case "$status_tsv" tls_process_info_plumb_gate \
-  cargo test --all-features -p soth-mitm should_intercept_tls_receives_process_info_from_connect_path -q
+  cargo test --features soth-mitm/__internal -p soth-mitm should_intercept_tls_receives_process_info_from_connect_path -q
 
 if [[ "$long_run" -eq 1 ]]; then
   ac_run_case_with_socket_permission_fallback "$status_tsv" runtime_soak_deadlock_guard "$strict_tools" \
