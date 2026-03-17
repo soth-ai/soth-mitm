@@ -12,7 +12,7 @@ fn build_engine(
 ) -> MitmEngine<DefaultPolicyEngine, VecEventConsumer> {
     let policy =
         DefaultPolicyEngine::new(config.ignore_hosts.clone(), config.blocked_hosts.clone());
-    MitmEngine::new(config, policy, sink)
+    MitmEngine::new_checked(config, policy, sink).expect("valid test config")
 }
 
 fn sidecar_config_for_addr(listen_addr: &str) -> SidecarConfig {

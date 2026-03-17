@@ -26,7 +26,7 @@ fn build_engine(
 ) -> MitmEngine<DefaultPolicyEngine, VecEventConsumer> {
     let policy =
         DefaultPolicyEngine::new(config.ignore_hosts.clone(), config.blocked_hosts.clone());
-    MitmEngine::new(config, policy, sink)
+    MitmEngine::new_checked(config, policy, sink).expect("valid test config")
 }
 
 async fn start_sidecar_with_sink(
@@ -446,7 +446,7 @@ async fn websocket_upgrade_relays_text_and_binary_frames_without_corruption() {
         .filter(|event| event.kind == EventType::WebSocketTurnStarted)
         .collect::<Vec<_>>();
     assert!(
-        turn_started.len() >= 1,
+        !turn_started.is_empty(),
         "expected at least 1 websocket turn start, got {}",
         turn_started.len()
     );
@@ -456,7 +456,7 @@ async fn websocket_upgrade_relays_text_and_binary_frames_without_corruption() {
         .filter(|event| event.kind == EventType::WebSocketTurnCompleted)
         .collect::<Vec<_>>();
     assert!(
-        turn_completed.len() >= 1,
+        !turn_completed.is_empty(),
         "expected at least 1 websocket turn completion, got {}",
         turn_completed.len()
     );
