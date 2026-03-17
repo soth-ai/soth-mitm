@@ -26,6 +26,6 @@ fn builder_constructs_proxy_shell() {
 fn generate_ca_returns_non_empty_material() {
     let ca = generate_ca().expect("generate local CA");
     assert!(!ca.cert_pem.is_empty());
-    assert!(!ca.key_pem.is_empty());
+    assert!(!ca.key_pem().is_empty());
     assert!(!ca.fingerprint.is_empty());
 }

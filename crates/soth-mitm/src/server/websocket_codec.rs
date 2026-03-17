@@ -108,8 +108,7 @@ pub(crate) fn websocket_payload_len_within_limit(
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             format!(
-                "websocket_codec:decode_header:payload_too_large:{}:{}",
-                payload_len, max_frame_payload_bytes
+                "websocket_codec:decode_header:payload_too_large:{payload_len}:{max_frame_payload_bytes}"
             ),
         ));
     }

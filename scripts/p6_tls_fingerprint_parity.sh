@@ -38,10 +38,10 @@ run_case() {
 : >"$status_tsv"
 
 run_case tls_fingerprint_parity \
-  cargo test -p soth-mitm --test tls_fingerprint_parity -q || true
+  cargo test --features soth-mitm/__internal -p soth-mitm --test tls_fingerprint_parity -q || true
 
 run_case fingerprint_capture_contract \
-  cargo test -p soth-mitm --lib fingerprint_capture -q || true
+  cargo test --features soth-mitm/__internal -p soth-mitm --lib fingerprint_capture -q || true
 
 failed="$(awk '$2 != "pass" {print $1}' "$status_tsv" || true)"
 {

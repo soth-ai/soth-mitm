@@ -1,10 +1,11 @@
+use parking_lot::Mutex;
 use std::collections::{HashMap, VecDeque};
 use std::fmt;
 use std::fs;
 use std::net::IpAddr;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::SystemTime;
 
 use rcgen::{

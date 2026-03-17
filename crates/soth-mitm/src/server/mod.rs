@@ -13,6 +13,7 @@ mod runtime_governor;
 mod tls_diagnostics;
 mod tls_learning;
 pub use crate::config::H2ResponseOverflowMode;
+#[cfg(feature = "__internal")]
 pub use crate::types::FrameKind;
 use event_emitters::unknown_context;
 use event_emitters::{ingest_tls_learning_signal_with_audit, tls_error_to_io_invalid_input};
@@ -22,8 +23,10 @@ use flow_intercept::load_upstream_client_auth_pem;
 use io_timeouts::{
     install_io_timeout_config, shutdown_with_idle_timeout, write_all_with_idle_timeout,
 };
+#[cfg(feature = "__internal")]
+pub use mitmproxy_tls_ops::MitmproxyTlsHook;
 pub use mitmproxy_tls_ops::{
-    adapt_mitmproxy_tls_callback, MitmproxyTlsAdapterEvent, MitmproxyTlsCallback, MitmproxyTlsHook,
+    adapt_mitmproxy_tls_callback, MitmproxyTlsAdapterEvent, MitmproxyTlsCallback,
 };
 pub use runtime_governor::{RuntimeBudgetConfig, RuntimeGovernor, RuntimeObservabilitySnapshot};
 use socket_hardening::{
@@ -31,9 +34,10 @@ use socket_hardening::{
     is_benign_socket_close_error,
 };
 pub use tls_diagnostics::{TlsDiagnostics, TlsDiagnosticsSnapshot};
+#[cfg(feature = "__internal")]
+pub use tls_learning::TlsLearningDecision;
 pub use tls_learning::{
-    TlsLearningDecision, TlsLearningGuardrails, TlsLearningOutcome, TlsLearningSignal,
-    TlsLearningSnapshot,
+    TlsLearningGuardrails, TlsLearningOutcome, TlsLearningSignal, TlsLearningSnapshot,
 };
 use tls_profile_mapping::{
     insert_tls_fingerprint_provenance, map_downstream_cert_profile, map_upstream_client_auth_mode,
@@ -376,7 +380,7 @@ where
         let listener = self.bind_listener().await?;
         #[cfg(unix)]
         {
-            return self.run_with_optional_unix_listener(listener).await;
+            self.run_with_optional_unix_listener(listener).await
         }
         #[cfg(not(unix))]
         {
@@ -573,5 +577,6 @@ mod flow_intercept_tls_failure;
 #[cfg(unix)]
 mod local_capture_unix;
 
-// Public re-exports from submodules (needed by lib.rs / external consumers)
+// Re-exports for integration tests via lib.rs test_server module.
+#[cfg(feature = "__internal")]
 pub use http_head_parser_api::{parse_http1_request_head_bytes, parse_http1_response_head_bytes};

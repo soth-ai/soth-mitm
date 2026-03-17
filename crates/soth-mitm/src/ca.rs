@@ -5,13 +5,27 @@ use rcgen::{
 use crate::ca_trust;
 use crate::{CaError, MitmError};
 
+/// A certificate authority used for TLS interception.
+///
+/// Obtain one via [`generate_ca`], [`load_ca`], or [`load_ca_from_files`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CertificateAuthority {
     pub cert_pem: Vec<u8>,
-    pub key_pem: Vec<u8>,
+    pub(crate) key_pem: Vec<u8>,
     pub fingerprint: String,
 }
 
+impl CertificateAuthority {
+    /// Returns the CA private key in PEM format.
+    ///
+    /// This is sensitive material — avoid logging or persisting without
+    /// appropriate access controls.
+    pub fn key_pem(&self) -> &[u8] {
+        &self.key_pem
+    }
+}
+
+/// Generates a new self-signed CA keypair for TLS interception.
 pub fn generate_ca() -> Result<CertificateAuthority, CaError> {
     let key = KeyPair::generate().map_err(|error| CaError::InvalidMaterial(error.to_string()))?;
     let mut params = CertificateParams::default();
@@ -41,6 +55,7 @@ pub fn generate_ca() -> Result<CertificateAuthority, CaError> {
     })
 }
 
+/// Loads a CA from in-memory PEM-encoded certificate and key bytes.
 pub fn load_ca(cert: &[u8], key: &[u8]) -> Result<CertificateAuthority, CaError> {
     if cert.is_empty() {
         return Err(CaError::InvalidMaterial(
@@ -60,6 +75,7 @@ pub fn load_ca(cert: &[u8], key: &[u8]) -> Result<CertificateAuthority, CaError>
     })
 }
 
+/// Loads a CA from PEM files on disk.
 pub fn load_ca_from_files(
     cert_path: impl AsRef<std::path::Path>,
     key_path: impl AsRef<std::path::Path>,
@@ -87,14 +103,17 @@ pub fn load_ca_from_files(
     load_ca(&cert, &key)
 }
 
+/// Installs the CA into the system trust store (platform-specific).
 pub fn install_ca_system_trust(_ca: &CertificateAuthority) -> Result<(), CaError> {
     ca_trust::install(_ca)
 }
 
+/// Removes the soth-mitm CA from the system trust store.
 pub fn uninstall_ca_system_trust() -> Result<(), CaError> {
     ca_trust::uninstall()
 }
 
+/// Checks whether a CA with the given fingerprint is installed in the system trust store.
 pub fn is_ca_trusted(_fingerprint: &str) -> Result<bool, CaError> {
     ca_trust::is_trusted(_fingerprint)
 }

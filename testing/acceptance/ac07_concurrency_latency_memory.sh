@@ -71,7 +71,7 @@ run_soak_with_rss_audit() {
     SOTH_MITM_SOAK_EXCHANGE_TIMEOUT_SECONDS="$soak_exchange_timeout_seconds" \
     SOTH_MITM_SOAK_H2_RETRIES="$soak_h2_retries" \
     SOTH_MITM_SOAK_H2_UPSTREAM_ACCEPT_TIMEOUT_SECONDS="$soak_h2_upstream_accept_timeout_seconds" \
-    cargo test -p soth-mitm --test mixed_traffic_soak \
+    cargo test --features soth-mitm/__internal -p soth-mitm --test mixed_traffic_soak \
       mixed_traffic_soak_respects_runtime_budget_envelope -q \
       >"$log_file" 2>&1 &
   local soak_pid=$!
@@ -111,7 +111,7 @@ run_soak_with_rss_audit() {
 
 ac_run_case "$status_tsv" forwarding_latency_p95_budget \
   ac_run_with_preferred_bench_linker \
-  cargo bench -p soth-mitm --bench forwarding_latency -- \
+  cargo bench --features soth-mitm/__internal -p soth-mitm --bench forwarding_latency -- \
     --iterations "$forward_iterations" \
     --warmup "$forward_warmup" \
     --threshold-p95-us "$forward_p95_us" \
@@ -119,7 +119,7 @@ ac_run_case "$status_tsv" forwarding_latency_p95_budget \
 
 ac_run_case "$status_tsv" tls_handshake_scale_and_latency_budget \
   ac_run_with_preferred_bench_linker \
-  cargo bench -p soth-mitm --bench handshake_overhead -- \
+  cargo bench --features soth-mitm/__internal -p soth-mitm --bench handshake_overhead -- \
     --iterations "$handshake_iterations" \
     --warmup "$handshake_warmup" \
     --threshold-overhead-p95-us "$handshake_overhead_p95_us" \

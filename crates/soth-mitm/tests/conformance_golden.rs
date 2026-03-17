@@ -60,7 +60,8 @@ fn connect_decision_event_stream_matches_golden_fixture() {
         };
         let policy =
             DefaultPolicyEngine::new(config.ignore_hosts.clone(), config.blocked_hosts.clone());
-        let engine = MitmEngine::new(config, policy, sink.clone());
+        let engine =
+            MitmEngine::new_checked(config, policy, sink.clone()).expect("valid test config");
 
         let flow_id = engine.allocate_flow_id();
         let outcome = engine.decide_connect(

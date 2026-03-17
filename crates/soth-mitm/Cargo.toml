@@ -7,7 +7,7 @@ rust-version.workspace = true
 description = "Rust intercepting proxy crate with deterministic handler/event contracts for SOTH."
 readme = "README.md"
 repository = "https://github.com/soth-ai/soth-mitm"
-keywords = ["proxy", "mitm", "http", "tls"]
+keywords = ["proxy", "mitm", "http", "tls", "intercept"]
 categories = ["network-programming"]
 
 [package.metadata.p6_27]
@@ -38,7 +38,15 @@ forbidden_telemetry_deps = [
 
 [features]
 default = []
+# Enables OpenSSL-based CA material validation when loading CA certs from disk.
+# On non-Windows platforms, the openssl crate is always present (used for downstream
+# TLS fingerprinting in the server layer), but this feature controls whether the
+# CA validation code path exercises OpenSSL cross-checks.
 openssl-backend = ["dep:openssl"]
+# Exposes internal sub-crate modules (test_engine, test_policy, test_protocol,
+# test_observe, test_server, test_tls, bench_tls) for integration tests and
+# benchmarks. NOT part of the stable public API -- may change without notice.
+__internal = []
 
 [dependencies]
 # Async runtime
@@ -77,9 +85,15 @@ tracing = { workspace = true }
 dashmap = { workspace = true }
 parking_lot = { workspace = true }
 uuid = { workspace = true }
-lru = "0.12"
+lru = "0.14"
+
+[target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+[target.'cfg(target_os = "macos")'.dependencies]
 plist = "1"
+
+[target.'cfg(target_os = "windows")'.dependencies]
 sysinfo = "0.33"
 
 [target.'cfg(not(windows))'.dependencies]
@@ -104,11 +118,14 @@ h2 = { workspace = true }
 [[bench]]
 name = "forwarding_latency"
 harness = false
+required-features = ["__internal"]
 
 [[bench]]
 name = "handshake_overhead"
 harness = false
+required-features = ["__internal"]
 
 [[bench]]
 name = "sse_first_chunk"
 harness = false
+required-features = ["__internal"]

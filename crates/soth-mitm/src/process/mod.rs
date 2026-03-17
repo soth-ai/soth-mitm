@@ -406,7 +406,7 @@ const RUNTIME_BINARIES: &[&str] = &[
 ];
 
 fn is_runtime_binary(name: &str) -> bool {
-    RUNTIME_BINARIES.iter().any(|&rt| name == rt)
+    RUNTIME_BINARIES.contains(&name)
 }
 
 /// Walk the process tree to derive a meaningful identity for runtime

@@ -1,3 +1,64 @@
+// Internal items are only reachable when __internal is enabled; suppress dead-code
+// warnings for the public build where those modules are gated out.
+#![cfg_attr(not(feature = "__internal"), allow(dead_code))]
+
+//! # soth-mitm
+//!
+//! Rust intercepting proxy crate with deterministic handler/event contracts.
+//!
+//! `soth-mitm` provides a MITM (man-in-the-middle) proxy that intercepts HTTP/1.1,
+//! HTTP/2, WebSocket, gRPC, and SSE traffic over TLS. It exposes a trait-based
+//! handler API that lets you inspect, allow, or block requests in real time.
+//!
+//! ## Quick Start
+//!
+//! ```rust,no_run
+//! use bytes::Bytes;
+//! use soth_mitm::{
+//!     HandlerDecision, InterceptHandler, MitmConfig, MitmProxyBuilder, RawRequest,
+//! };
+//!
+//! struct MyHandler;
+//!
+//! impl InterceptHandler for MyHandler {
+//!     async fn on_request(&self, request: &RawRequest) -> HandlerDecision {
+//!         if request.path.contains("/blocked") {
+//!             return HandlerDecision::Block {
+//!                 status: 403,
+//!                 body: Bytes::from_static(b"blocked"),
+//!             };
+//!         }
+//!         HandlerDecision::Allow
+//!     }
+//! }
+//!
+//! fn main() -> Result<(), Box<dyn std::error::Error>> {
+//!     let mut config = MitmConfig::default();
+//!     config
+//!         .interception
+//!         .destinations
+//!         .push("api.example.com:443".to_string());
+//!
+//!     let _proxy = MitmProxyBuilder::new(config, MyHandler).build()?;
+//!     Ok(())
+//! }
+//! ```
+//!
+//! ## Feature Flags
+//!
+//! | Flag | Default | Description |
+//! |------|---------|-------------|
+//! | `openssl-backend` | off | Enables OpenSSL-based CA material validation on cert load |
+//! | `__internal` | off | Exposes internal modules for integration tests — **not stable API** |
+//!
+//! ## Minimum Supported Rust Version
+//!
+//! This crate requires **Rust 1.88** or later.
+//!
+//! ## License
+//!
+//! Licensed under the [Mozilla Public License 2.0](https://www.mozilla.org/en-US/MPL/2.0/).
+
 // Consolidated sub-crate modules
 pub(crate) mod engine;
 pub(crate) mod observe;
@@ -43,15 +104,24 @@ pub use types::{
     StreamChunk, TlsInfo, TlsVersion,
 };
 
-// TLS helpers re-exported for benchmarks
+// Re-export key transitive types that appear in the public API surface.
+// Users should not need to add separate `bytes`, `http`, or `uuid` deps.
+pub use bytes::Bytes;
+pub use http::HeaderMap;
+pub use uuid::Uuid;
+
+// --- Internal modules gated behind the `__internal` feature ---
+// These expose consolidated sub-crate internals for integration tests and
+// benchmarks. They are NOT part of the stable public API and may change
+// without notice between any versions.
+
+#[cfg(feature = "__internal")]
 #[doc(hidden)]
 pub mod bench_tls {
     pub use crate::tls::{build_http1_client_config, build_http1_server_config_for_host};
 }
 
-// Re-exports for integration tests.  These expose the consolidated sub-crate
-// modules so that `tests/*.rs` (which are external to the crate) can reach
-// internal types that were previously accessible as separate crate deps.
+#[cfg(feature = "__internal")]
 #[doc(hidden)]
 pub mod test_engine {
     pub use crate::engine::{
@@ -63,11 +133,13 @@ pub mod test_engine {
     };
 }
 
+#[cfg(feature = "__internal")]
 #[doc(hidden)]
 pub mod test_policy {
     pub use crate::policy::{DefaultPolicyEngine, FlowAction, PolicyEngine};
 }
 
+#[cfg(feature = "__internal")]
 #[doc(hidden)]
 pub mod test_protocol {
     pub use crate::protocol::{
@@ -102,6 +174,7 @@ pub mod test_protocol {
     };
 }
 
+#[cfg(feature = "__internal")]
 #[doc(hidden)]
 pub mod test_observe {
     pub use crate::observe::event_log_v2::{
@@ -114,6 +187,7 @@ pub mod test_observe {
     };
 }
 
+#[cfg(feature = "__internal")]
 #[doc(hidden)]
 pub mod test_server {
     pub use crate::server::{
@@ -126,6 +200,7 @@ pub mod test_server {
     };
 }
 
+#[cfg(feature = "__internal")]
 #[doc(hidden)]
 pub mod test_tls {
     pub use crate::tls::{

@@ -30,7 +30,7 @@ fn suppresses_duplicate_stream_closed_for_same_flow() {
     let sink = CaptureConsumer::default();
     let config = MitmConfig::default();
     let policy = DefaultPolicyEngine::new(vec![], vec![]);
-    let engine = MitmEngine::new(config, policy, sink.clone());
+    let engine = MitmEngine::new_checked(config, policy, sink.clone()).expect("valid test config");
 
     let context = FlowContext {
         flow_id: FlowId(7),
@@ -72,7 +72,7 @@ fn enforces_max_flow_event_backlog_by_dropping_non_close_events() {
         ..MitmConfig::default()
     };
     let policy = DefaultPolicyEngine::new(vec![], vec![]);
-    let engine = MitmEngine::new(config, policy, sink.clone());
+    let engine = MitmEngine::new_checked(config, policy, sink.clone()).expect("valid test config");
 
     let context = FlowContext {
         flow_id: FlowId(11),
@@ -106,7 +106,7 @@ fn known_pinning_hosts_can_be_forced_to_tunnel_via_ignore_hosts() {
     };
     let policy =
         DefaultPolicyEngine::new(config.ignore_hosts.clone(), config.blocked_hosts.clone());
-    let engine = MitmEngine::new(config, policy, sink);
+    let engine = MitmEngine::new_checked(config, policy, sink).expect("valid test config");
 
     let flow_id = engine.allocate_flow_id();
     let outcome = engine.decide_connect(
@@ -136,7 +136,7 @@ fn compatibility_override_decision_emits_provenance_fields() {
         ..MitmConfig::default()
     };
     let policy = DefaultPolicyEngine::new(vec![], vec![]);
-    let engine = MitmEngine::new(config, policy, sink.clone());
+    let engine = MitmEngine::new_checked(config, policy, sink.clone()).expect("valid test config");
 
     let flow_id = engine.allocate_flow_id();
     let outcome = engine.decide_connect(

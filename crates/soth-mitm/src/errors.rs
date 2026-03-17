@@ -1,5 +1,6 @@
 use thiserror::Error;
 
+/// Top-level error returned by proxy lifecycle operations.
 #[derive(Debug, Error)]
 pub enum MitmError {
     #[error("invalid configuration: {0}")]
@@ -14,6 +15,7 @@ pub enum MitmError {
     Join(#[from] tokio::task::JoinError),
 }
 
+/// Error returned by certificate authority operations (generate, load, trust install).
 #[derive(Debug, Error)]
 pub enum CaError {
     #[error("permission denied while performing {operation}: {detail}")]

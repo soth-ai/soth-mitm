@@ -46,9 +46,9 @@ run_cargo_suite() {
   local suite_name="$1"
   shift
   if [[ "${#cargo_args[@]}" -gt 0 ]]; then
-    run_suite "$suite_name" cargo test "$@" "${cargo_args[@]}"
+    run_suite "$suite_name" cargo test --features soth-mitm/__internal "$@" "${cargo_args[@]}"
   else
-    run_suite "$suite_name" cargo test "$@"
+    run_suite "$suite_name" cargo test --features soth-mitm/__internal "$@"
   fi
 }
 

@@ -33,10 +33,7 @@ impl MitmCertificateStore {
             normalized_host,
             if http2_enabled { 1 } else { 0 }
         );
-        let mut state = self
-            .state
-            .lock()
-            .map_err(|_| TlsConfigError::LockPoisoned)?;
+        let mut state = self.state.lock();
         self.maybe_rotate_locked(&mut state)?;
 
         if let Some((server_config, leaf_cert_der, leaf_identity)) =
@@ -92,10 +89,7 @@ impl MitmCertificateStore {
     }
 
     pub fn force_rotate(&self) -> Result<(), TlsConfigError> {
-        let mut state = self
-            .state
-            .lock()
-            .map_err(|_| TlsConfigError::LockPoisoned)?;
+        let mut state = self.state.lock();
         self.rotate_locked(&mut state)
     }
 
@@ -109,10 +103,7 @@ impl MitmCertificateStore {
     }
 
     pub fn ca_certificate_pem(&self) -> Result<String, TlsConfigError> {
-        let state = self
-            .state
-            .lock()
-            .map_err(|_| TlsConfigError::LockPoisoned)?;
+        let state = self.state.lock();
         Ok(state.ca.cert_pem.clone())
     }
 
@@ -236,8 +227,32 @@ fn persist_ca_material(
     ensure_parent_exists(ca_key_path)?;
 
     fs::write(ca_cert_path, ca.cert_pem.as_bytes())?;
-    fs::write(ca_key_path, ca.key_pem.as_bytes())?;
+    write_key_file_restricted(ca_key_path, ca.key_pem.as_bytes())?;
     Ok(())
+}
+
+fn write_key_file_restricted(path: &str, key_pem: &[u8]) -> Result<(), TlsConfigError> {
+    let path = std::path::Path::new(path);
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        let mut file = fs::OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .mode(0o600)
+            .open(path)?;
+        file.write_all(key_pem)?;
+        file.flush()?;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+        Ok(())
+    }
+    #[cfg(not(unix))]
+    {
+        fs::write(path, key_pem)?;
+        Ok(())
+    }
 }
 
 fn ensure_parent_exists(path: &str) -> Result<(), TlsConfigError> {

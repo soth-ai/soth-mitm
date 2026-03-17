@@ -35,7 +35,8 @@ fn build_engine(
 ) -> MitmEngine<DefaultPolicyEngine, soth_mitm::test_observe::NoopEventConsumer> {
     let policy =
         DefaultPolicyEngine::new(config.ignore_hosts.clone(), config.blocked_hosts.clone());
-    MitmEngine::new(config, policy, soth_mitm::test_observe::NoopEventConsumer)
+    MitmEngine::new_checked(config, policy, soth_mitm::test_observe::NoopEventConsumer)
+        .expect("valid test config")
 }
 
 async fn start_sidecar(
@@ -554,7 +555,7 @@ async fn websocket_chaos_soak_mixed_lanes_settle_without_stuck_flows() {
                         0x9 => {
                             let _ = write_ws_frame(&mut tls, 0xA, &frame.payload, None).await;
                         }
-                        0x1 | 0x2 | 0x0 => {
+                        0x0..=0x2 => {
                             if frame.payload.starts_with(b"drop-now-") {
                                 let _ = tls.shutdown().await;
                                 break;
@@ -791,7 +792,7 @@ async fn websocket_network_fault_lane_settles_without_stuck_flows() {
                         0x9 => {
                             let _ = write_ws_frame(&mut tls, 0xA, &frame.payload, None).await;
                         }
-                        0x1 | 0x2 | 0x0 => {
+                        0x0..=0x2 => {
                             let _ = write_ws_frame_with_fin(
                                 &mut tls,
                                 frame.fin,

@@ -101,7 +101,7 @@ where
 {
     let policy =
         DefaultPolicyEngine::new(config.ignore_hosts.clone(), config.blocked_hosts.clone());
-    MitmEngine::new(config, policy, sink)
+    MitmEngine::new_checked(config, policy, sink).expect("valid test config")
 }
 
 fn build_engine(
@@ -1535,8 +1535,7 @@ async fn mixed_traffic_close_reasons_are_deterministic() {
     );
     assert!(
         unknown_reasons.is_empty(),
-        "unexpected stream_closed reason codes: {:?}",
-        unknown_reasons
+        "unexpected stream_closed reason codes: {unknown_reasons:?}"
     );
 
     proxy_task.abort();

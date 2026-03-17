@@ -119,19 +119,46 @@ where
 
     // Get upstream sender ready and send request headers BEFORE body capture.
     let ready_upstream_sender_result =
-        with_stream_stage_timeout("http2_upstream_sender_ready", async {
+        match with_stream_stage_timeout("http2_upstream_sender_ready", async {
             Ok(upstream_sender.ready().await)
         })
-        .await?;
+        .await
+        {
+            Ok(result) => result,
+            Err(error) => {
+                h2_relay_debug(format!(
+                    "[h2-relay:upstream] host={} sender ready timeout/error: {error}",
+                    stream_context.server_host,
+                ));
+                let _ = send_h2_upstream_error_response(
+                    &mut downstream_respond,
+                    &runtime_governor,
+                    504,
+                )
+                .await;
+                flow_hooks.on_stream_end(stream_context).await;
+                return Ok(());
+            }
+        };
     let mut ready_upstream_sender = match ready_upstream_sender_result {
         Ok(sender) => sender,
         Err(error) => {
             if is_h2_nonfatal_stream_error(&error) {
                 downstream_respond.send_reset(h2_reason_for_downstream_reset(&error));
-                flow_hooks.on_stream_end(stream_context).await;
-                return Ok(());
+            } else {
+                h2_relay_debug(format!(
+                    "[h2-relay:upstream] host={} sender ready failed: {error}",
+                    stream_context.server_host,
+                ));
+                let _ = send_h2_upstream_error_response(
+                    &mut downstream_respond,
+                    &runtime_governor,
+                    502,
+                )
+                .await;
             }
-            return Err(h2_error_to_io("upstream HTTP/2 sender not ready", error));
+            flow_hooks.on_stream_end(stream_context).await;
+            return Ok(());
         }
     };
     let (upstream_response_future, upstream_request_stream) =
@@ -140,10 +167,20 @@ where
             Err(error) => {
                 if is_h2_nonfatal_stream_error(&error) {
                     downstream_respond.send_reset(h2_reason_for_downstream_reset(&error));
-                    flow_hooks.on_stream_end(stream_context).await;
-                    return Ok(());
+                } else {
+                    h2_relay_debug(format!(
+                        "[h2-relay:upstream] host={} send_request failed: {error}",
+                        stream_context.server_host,
+                    ));
+                    let _ = send_h2_upstream_error_response(
+                        &mut downstream_respond,
+                        &runtime_governor,
+                        502,
+                    )
+                    .await;
                 }
-                return Err(h2_error_to_io("forwarding HTTP/2 request failed", error));
+                flow_hooks.on_stream_end(stream_context).await;
+                return Ok(());
             }
         };
 
@@ -173,22 +210,46 @@ where
             trailers: None,
             body_truncated: false,
         };
-        let resp = with_stream_stage_timeout("http2_upstream_response_headers", async {
+        let resp = match with_stream_stage_timeout("http2_upstream_response_headers", async {
             Ok(upstream_response_future.await)
         })
-        .await?;
+        .await
+        {
+            Ok(result) => result,
+            Err(error) => {
+                h2_relay_debug(format!(
+                    "[h2-relay:upstream] host={} response headers timeout: {error}",
+                    stream_context.server_host,
+                ));
+                let _ = send_h2_upstream_error_response(
+                    &mut downstream_respond,
+                    &runtime_governor,
+                    504,
+                )
+                .await;
+                flow_hooks.on_stream_end(stream_context).await;
+                return Ok(());
+            }
+        };
         let response = match resp {
             Ok(response) => response,
             Err(error) => {
                 if is_h2_nonfatal_stream_error(&error) {
                     downstream_respond.send_reset(h2_reason_for_downstream_reset(&error));
-                    flow_hooks.on_stream_end(stream_context).await;
-                    return Ok(());
+                } else {
+                    h2_relay_debug(format!(
+                        "[h2-relay:upstream] host={} response headers error: {error}",
+                        stream_context.server_host,
+                    ));
+                    let _ = send_h2_upstream_error_response(
+                        &mut downstream_respond,
+                        &runtime_governor,
+                        502,
+                    )
+                    .await;
                 }
-                return Err(h2_error_to_io(
-                    "awaiting upstream HTTP/2 response failed",
-                    error,
-                ));
+                flow_hooks.on_stream_end(stream_context).await;
+                return Ok(());
             }
         };
         let (parts, body) = response.into_parts();
@@ -210,20 +271,59 @@ where
 
             // Tee finished first — normal case. Use streaming relay.
             tee_result = &mut tee_fut => {
-                let request_captured = tee_result?;
-                let resp = resp_fut.await?;
+                let request_captured = match tee_result {
+                    Ok(captured) => captured,
+                    Err(error) => {
+                        h2_relay_debug(format!(
+                            "[h2-relay:upstream] host={} request body tee failed: {error}",
+                            stream_context.server_host,
+                        ));
+                        let _ = send_h2_upstream_error_response(
+                            &mut downstream_respond,
+                            &runtime_governor,
+                            502,
+                        )
+                        .await;
+                        flow_hooks.on_stream_end(stream_context).await;
+                        return Ok(());
+                    }
+                };
+                let resp = match resp_fut.await {
+                    Ok(result) => result,
+                    Err(error) => {
+                        h2_relay_debug(format!(
+                            "[h2-relay:upstream] host={} response headers timeout (post-tee): {error}",
+                            stream_context.server_host,
+                        ));
+                        let _ = send_h2_upstream_error_response(
+                            &mut downstream_respond,
+                            &runtime_governor,
+                            504,
+                        )
+                        .await;
+                        flow_hooks.on_stream_end(stream_context).await;
+                        return Ok(());
+                    }
+                };
                 let response = match resp {
                     Ok(response) => response,
                     Err(error) => {
                         if is_h2_nonfatal_stream_error(&error) {
                             downstream_respond.send_reset(h2_reason_for_downstream_reset(&error));
-                            flow_hooks.on_stream_end(stream_context).await;
-                            return Ok(());
+                        } else {
+                            h2_relay_debug(format!(
+                                "[h2-relay:upstream] host={} response headers error (post-tee): {error}",
+                                stream_context.server_host,
+                            ));
+                            let _ = send_h2_upstream_error_response(
+                                &mut downstream_respond,
+                                &runtime_governor,
+                                502,
+                            )
+                            .await;
                         }
-                        return Err(h2_error_to_io(
-                            "awaiting upstream HTTP/2 response failed",
-                            error,
-                        ));
+                        flow_hooks.on_stream_end(stream_context).await;
+                        return Ok(());
                     }
                 };
                 let (parts, body) = response.into_parts();
@@ -232,7 +332,24 @@ where
 
             // Response arrived before tee finished — early response scenario.
             resp_result = &mut resp_fut => {
-                let resp = resp_result?;
+                let resp = match resp_result {
+                    Ok(result) => result,
+                    Err(error) => {
+                        let _ = tee_fut.await;
+                        h2_relay_debug(format!(
+                            "[h2-relay:upstream] host={} response headers timeout (early): {error}",
+                            stream_context.server_host,
+                        ));
+                        let _ = send_h2_upstream_error_response(
+                            &mut downstream_respond,
+                            &runtime_governor,
+                            504,
+                        )
+                        .await;
+                        flow_hooks.on_stream_end(stream_context).await;
+                        return Ok(());
+                    }
+                };
                 let response = match resp {
                     Ok(response) => response,
                     Err(error) => {
@@ -240,13 +357,20 @@ where
                         let _ = tee_fut.await;
                         if is_h2_nonfatal_stream_error(&error) {
                             downstream_respond.send_reset(h2_reason_for_downstream_reset(&error));
-                            flow_hooks.on_stream_end(stream_context).await;
-                            return Ok(());
+                        } else {
+                            h2_relay_debug(format!(
+                                "[h2-relay:upstream] host={} response headers error (early): {error}",
+                                stream_context.server_host,
+                            ));
+                            let _ = send_h2_upstream_error_response(
+                                &mut downstream_respond,
+                                &runtime_governor,
+                                502,
+                            )
+                            .await;
                         }
-                        return Err(h2_error_to_io(
-                            "awaiting upstream HTTP/2 response failed",
-                            error,
-                        ));
+                        flow_hooks.on_stream_end(stream_context).await;
+                        return Ok(());
                     }
                 };
                 let (parts, mut recv_body) = response.into_parts();
@@ -260,7 +384,23 @@ where
                     || !has_finite_content_length(&parts);
 
                 if is_streaming_response {
-                    let request_captured = tee_fut.await?;
+                    let request_captured = match tee_fut.await {
+                        Ok(captured) => captured,
+                        Err(error) => {
+                            h2_relay_debug(format!(
+                                "[h2-relay:upstream] host={} request body tee failed (early streaming): {error}",
+                                stream_context.server_host,
+                            ));
+                            let _ = send_h2_upstream_error_response(
+                                &mut downstream_respond,
+                                &runtime_governor,
+                                502,
+                            )
+                            .await;
+                            flow_hooks.on_stream_end(stream_context).await;
+                            return Ok(());
+                        }
+                    };
                     (request_captured, UpstreamResponseCapture::Streaming(parts, recv_body))
                 } else {
                     // Non-streaming early response (e.g. 401 with small body).
@@ -273,7 +413,23 @@ where
                             trailers: None,
                             body_truncated: false,
                         });
-                    let request_captured = tee_fut.await?;
+                    let request_captured = match tee_fut.await {
+                        Ok(captured) => captured,
+                        Err(error) => {
+                            h2_relay_debug(format!(
+                                "[h2-relay:upstream] host={} request body tee failed (early buffered): {error}",
+                                stream_context.server_host,
+                            ));
+                            let _ = send_h2_upstream_error_response(
+                                &mut downstream_respond,
+                                &runtime_governor,
+                                502,
+                            )
+                            .await;
+                            flow_hooks.on_stream_end(stream_context).await;
+                            return Ok(());
+                        }
+                    };
                     (request_captured, UpstreamResponseCapture::Buffered(parts, response_captured))
                 }
             }
@@ -399,6 +555,41 @@ where
             .await
         }
     }
+}
+
+/// Send an HTTP error response (502/504) to downstream when the upstream connection
+/// fails. This prevents the h2 crate from sending RST_STREAM(INTERNAL_ERROR) when
+/// the `SendResponse` is dropped without a response, which Chrome surfaces as
+/// ERR_HTTP2_PROTOCOL_ERROR.
+async fn send_h2_upstream_error_response(
+    downstream_respond: &mut h2::server::SendResponse<bytes::Bytes>,
+    runtime_governor: &Arc<runtime_governor::RuntimeGovernor>,
+    status_code: u16,
+) -> io::Result<()> {
+    let body_text = match status_code {
+        504 => "upstream timeout",
+        _ => "upstream connection error",
+    };
+    let body = bytes::Bytes::from(body_text);
+    let response = http::Response::builder()
+        .status(status_code)
+        .header("content-type", "text/plain")
+        .header("content-length", body.len().to_string())
+        .body(())
+        .map_err(|error| {
+            io::Error::other(format!(
+                "build upstream error HTTP/2 response ({status_code}): {error}"
+            ))
+        })?;
+    let mut stream = downstream_respond
+        .send_response(response, false)
+        .map_err(|error| {
+            h2_error_to_io(
+                &format!("sending upstream error HTTP/2 response ({status_code}) failed"),
+                error,
+            )
+        })?;
+    send_h2_data_with_backpressure(&mut stream, runtime_governor, body, true).await
 }
 
 /// Returns true if the response has a finite content-length header (non-streaming).

@@ -16,6 +16,9 @@ use crate::handler::InterceptHandler;
 use crate::metrics::{ProxyMetrics, ProxyMetricsStore};
 use crate::runtime::{build_runtime_server, RuntimeConfigHandle};
 
+/// The intercepting proxy instance, ready to run or start as a background task.
+///
+/// Constructed via [`MitmProxyBuilder`](crate::MitmProxyBuilder).
 pub struct MitmProxy<H: InterceptHandler> {
     config: MitmConfig,
     handler: Arc<H>,
@@ -38,8 +41,9 @@ impl<H: InterceptHandler> MitmProxy<H> {
         }
     }
 
+    /// Runs the proxy, blocking until it shuts down or encounters a fatal error.
     pub async fn run(self) -> Result<(), MitmError> {
-        self.prepare_ca_material()?;
+        self.prepare_ca_material().await?;
         let runtime_bundle = build_runtime_server(
             &self.config,
             Arc::clone(&self.handler),
@@ -48,8 +52,9 @@ impl<H: InterceptHandler> MitmProxy<H> {
         runtime_bundle.server.run().await.map_err(MitmError::from)
     }
 
+    /// Starts the proxy as a background task and returns a handle for shutdown and metrics.
     pub async fn start(self) -> Result<MitmProxyHandle, MitmError> {
-        self.prepare_ca_material()?;
+        self.prepare_ca_material().await?;
         let runtime_bundle = build_runtime_server(
             &self.config,
             Arc::clone(&self.handler),
@@ -75,28 +80,37 @@ impl<H: InterceptHandler> MitmProxy<H> {
         })
     }
 
-    fn prepare_ca_material(&self) -> Result<(), MitmError> {
-        let Some(ca) = &self.ca else {
+    async fn prepare_ca_material(&self) -> Result<(), MitmError> {
+        let ca = self.ca.clone();
+        let cert_path = self.config.tls.ca_cert_path.clone();
+        let key_path = self.config.tls.ca_key_path.clone();
+
+        if ca.is_none() {
             return Ok(());
-        };
-
-        if let Some(parent) = self.config.tls.ca_cert_path.parent() {
-            if !parent.as_os_str().is_empty() {
-                fs::create_dir_all(parent)?;
-            }
         }
-        if let Some(parent) = self.config.tls.ca_key_path.parent() {
-            if !parent.as_os_str().is_empty() {
-                fs::create_dir_all(parent)?;
-            }
-        }
+        let ca = ca.unwrap();
 
-        fs::write(&self.config.tls.ca_cert_path, &ca.cert_pem)?;
-        write_private_key_file(&self.config.tls.ca_key_path, &ca.key_pem)?;
-        Ok(())
+        tokio::task::spawn_blocking(move || -> Result<(), MitmError> {
+            if let Some(parent) = cert_path.parent() {
+                if !parent.as_os_str().is_empty() {
+                    fs::create_dir_all(parent)?;
+                }
+            }
+            if let Some(parent) = key_path.parent() {
+                if !parent.as_os_str().is_empty() {
+                    fs::create_dir_all(parent)?;
+                }
+            }
+            fs::write(&cert_path, &ca.cert_pem)?;
+            write_private_key_file(&key_path, &ca.key_pem)?;
+            Ok(())
+        })
+        .await
+        .map_err(MitmError::Join)?
     }
 }
 
+/// Handle to a running proxy, providing shutdown, config reload, and metrics access.
 pub struct MitmProxyHandle {
     join_handle: Arc<Mutex<Option<JoinHandle<Result<(), MitmError>>>>>,
     metrics_store: Arc<ProxyMetricsStore>,
@@ -106,15 +120,19 @@ pub struct MitmProxyHandle {
 }
 
 impl MitmProxyHandle {
+    /// Hot-reloads the proxy configuration. Currently only interception scope
+    /// changes are supported; other field changes will return an error.
     pub async fn reload(&self, next_config: MitmConfig) -> Result<(), MitmError> {
         self.runtime_config.apply_reload(&next_config)?;
         Ok(())
     }
 
+    /// Returns a snapshot of the currently active configuration.
     pub async fn current_config(&self) -> MitmConfig {
         self.runtime_config.current_config()
     }
 
+    /// Gracefully shuts down the proxy, draining active flows before the deadline.
     pub async fn shutdown(self, timeout: Duration) -> Result<(), MitmError> {
         let mut guard = self.join_handle.lock().await;
         let Some(handle) = guard.take() else {
@@ -193,7 +211,7 @@ fn write_private_key_file(path: &Path, key_pem: &[u8]) -> std::io::Result<()> {
         file.write_all(key_pem)?;
         file.flush()?;
         fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
-        return Ok(());
+        Ok(())
     }
 
     #[cfg(not(unix))]

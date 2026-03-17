@@ -117,6 +117,11 @@ fn tls_info_from_protocol_hints(context: &FlowContext) -> Option<TlsInfo> {
     };
 
     if sni.is_none() && negotiated_proto.is_none() {
+        tracing::trace!(
+            host = %context.server_host,
+            protocol = ?context.protocol,
+            "no TLS metadata available for flow"
+        );
         None
     } else {
         Some(TlsInfo {

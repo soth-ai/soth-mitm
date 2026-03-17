@@ -21,12 +21,12 @@ struct BenchHttpHandler {
 }
 
 impl HttpHandler for BenchHttpHandler {
-    fn handle_request(
+    async fn handle_request(
         &mut self,
         _ctx: &HttpContext,
         req: Request<Body>,
-    ) -> impl Future<Output = RequestOrResponse> + Send {
-        async move { req.into() }
+    ) -> RequestOrResponse {
+        req.into()
     }
 
     fn should_intercept(

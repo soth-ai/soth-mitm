@@ -6,6 +6,8 @@ use crate::MitmError;
 use crate::TlsVersion;
 
 /// Controls whether the proxy runs in observe-only or store-and-forward mode.
+///
+/// See [`MitmConfig::intercept_mode`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum InterceptMode {
@@ -17,6 +19,12 @@ pub enum InterceptMode {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// Top-level proxy configuration.
+///
+/// Use [`MitmConfig::default()`] and override individual fields.
+/// At minimum, [`interception.destinations`](InterceptionScope::destinations)
+/// must contain at least one entry before the config will pass validation.
+#[non_exhaustive]
 pub struct MitmConfig {
     pub bind: SocketAddr,
     pub unix_socket_path: Option<PathBuf>,
@@ -40,12 +48,14 @@ pub struct MitmConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct InterceptionScope {
     pub destinations: Vec<String>,
     pub passthrough_unlisted: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct TlsConfig {
     pub ca_cert_path: PathBuf,
     pub ca_key_path: PathBuf,
@@ -54,6 +64,7 @@ pub struct TlsConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct ProcessAttributionConfig {
     pub enabled: bool,
     pub lookup_timeout_ms: u64,
@@ -62,6 +73,7 @@ pub struct ProcessAttributionConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct UpstreamConfig {
     pub timeout_ms: u64,
     pub h2_header_stage_timeout_ms: u64,
@@ -80,6 +92,7 @@ pub enum H2ResponseOverflowMode {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct ConnectionPoolConfig {
     pub max_connections_per_host: u32,
     pub idle_timeout_ms: u64,
@@ -87,12 +100,14 @@ pub struct ConnectionPoolConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct BodyConfig {
     pub max_size_bytes: usize,
     pub buffer_request_bodies: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct HandlerConfig {
     pub request_timeout_ms: u64,
     pub response_timeout_ms: u64,
@@ -100,6 +115,7 @@ pub struct HandlerConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct FlowRuntimeConfig {
     pub dispatch_queue_capacity: Option<usize>,
     pub closed_flow_lru_capacity: Option<usize>,
@@ -163,7 +179,7 @@ impl Default for ProcessAttributionConfig {
             enabled: true,
             lookup_timeout_ms: 5_000,
             cache_capacity: 4_096,
-            cache_ttl_ms: None,
+            cache_ttl_ms: Some(300_000), // 5-min TTL; prevents stale entries under high PID churn
         }
     }
 }
@@ -215,12 +231,12 @@ impl Default for HandlerConfig {
 impl Default for FlowRuntimeConfig {
     fn default() -> Self {
         Self {
-            dispatch_queue_capacity: None,
-            closed_flow_lru_capacity: None,
-            stale_flow_ttl_ms: None,
-            stale_reap_max_batch: None,
-            dispatch_queue_send_timeout_ms: None,
-            dispatch_close_join_timeout_ms: None,
+            dispatch_queue_capacity: None, // auto-calculated from expected_live_flows
+            closed_flow_lru_capacity: Some(4_096), // match soth-proxy
+            stale_flow_ttl_ms: Some(60_000), // 60 s; match soth-proxy
+            stale_reap_max_batch: Some(50), // small batches; match soth-proxy
+            dispatch_queue_send_timeout_ms: None, // auto-tune
+            dispatch_close_join_timeout_ms: None, // auto-tune
         }
     }
 }
@@ -393,7 +409,7 @@ mod tests {
         assert_eq!(config.max_in_flight_bytes, 64 * 1024 * 1024);
         assert_eq!(config.max_concurrent_flows, 2_048);
         assert_eq!(config.process_attribution.cache_capacity, 4_096);
-        assert_eq!(config.process_attribution.cache_ttl_ms, None);
+        assert_eq!(config.process_attribution.cache_ttl_ms, Some(300_000));
         assert_eq!(config.upstream.h2_header_stage_timeout_ms, 30_000);
         assert_eq!(config.upstream.h2_body_idle_timeout_ms, 120_000);
         assert_eq!(config.body.max_size_bytes, 32 * 1024 * 1024);

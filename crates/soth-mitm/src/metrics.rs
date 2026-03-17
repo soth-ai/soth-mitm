@@ -3,6 +3,7 @@ use std::sync::OnceLock;
 
 use crate::observe::{EventConsumer, EventEnvelope, EventType};
 
+/// Point-in-time snapshot of proxy operational metrics.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ProxyMetrics {
     pub active_connections: u64,
@@ -21,6 +22,7 @@ pub struct ProxyMetrics {
     pub dropped_dispatch_work_count: u64,
     pub stale_flow_reap_count: u64,
     pub closed_flow_id_eviction_count: u64,
+    pub missing_connection_meta_count: u64,
 }
 
 #[derive(Debug, Default)]
@@ -41,6 +43,7 @@ pub(crate) struct ProxyMetricsStore {
     dropped_dispatch_work_count: AtomicU64,
     stale_flow_reap_count: AtomicU64,
     closed_flow_id_eviction_count: AtomicU64,
+    missing_connection_meta_count: AtomicU64,
 }
 
 impl ProxyMetricsStore {
@@ -73,6 +76,9 @@ impl ProxyMetricsStore {
             stale_flow_reap_count: self.stale_flow_reap_count.load(Ordering::Relaxed),
             closed_flow_id_eviction_count: self
                 .closed_flow_id_eviction_count
+                .load(Ordering::Relaxed),
+            missing_connection_meta_count: self
+                .missing_connection_meta_count
                 .load(Ordering::Relaxed),
         }
     }
@@ -153,6 +159,11 @@ impl ProxyMetricsStore {
 
     pub(crate) fn record_closed_flow_id_eviction(&self) {
         self.closed_flow_id_eviction_count
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub(crate) fn record_missing_connection_meta(&self) {
+        self.missing_connection_meta_count
             .fetch_add(1, Ordering::Relaxed);
     }
 }
@@ -263,6 +274,15 @@ mod tests {
         assert_eq!(snapshot.dropped_dispatch_work_count, 0);
         assert_eq!(snapshot.stale_flow_reap_count, 0);
         assert_eq!(snapshot.closed_flow_id_eviction_count, 0);
+        assert_eq!(snapshot.missing_connection_meta_count, 0);
+    }
+
+    #[test]
+    fn missing_connection_meta_counter_increments() {
+        let store = ProxyMetricsStore::default();
+        store.record_missing_connection_meta();
+        store.record_missing_connection_meta();
+        assert_eq!(store.snapshot().missing_connection_meta_count, 2);
     }
 
     #[test]

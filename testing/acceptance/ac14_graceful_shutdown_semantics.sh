@@ -38,13 +38,13 @@ outcome_tsv="$report_dir/outcome.tsv"
 printf 'check\tstatus\tdetail\n' >"$status_tsv"
 
 ac_run_case "$status_tsv" shutdown_noop_when_handle_missing \
-  cargo test -p soth-mitm shutdown_noop_when_handle_already_consumed -q
+  cargo test --features soth-mitm/__internal -p soth-mitm shutdown_noop_when_handle_already_consumed -q
 ac_run_case "$status_tsv" shutdown_drains_active_flows \
-  cargo test -p soth-mitm shutdown_drains_active_flows_before_joining_runtime -q
+  cargo test --features soth-mitm/__internal -p soth-mitm shutdown_drains_active_flows_before_joining_runtime -q
 ac_run_case "$status_tsv" shutdown_timeout_when_flows_stuck \
-  cargo test -p soth-mitm shutdown_returns_timeout_when_active_flows_do_not_drain -q
+  cargo test --features soth-mitm/__internal -p soth-mitm shutdown_returns_timeout_when_active_flows_do_not_drain -q
 ac_run_case "$status_tsv" stream_close_once_lifecycle_contract \
-  cargo test -p soth-mitm stream_end_invokes_connection_close_once -q
+  cargo test --features soth-mitm/__internal -p soth-mitm stream_end_invokes_connection_close_once -q
 
 config_md=$'- strict_tools: '"${strict_tools}"$'\n- long_run: '"${long_run}"$'\n- scope: shutdown abort semantics, timeout fallback, and close-once lifecycle'
 
