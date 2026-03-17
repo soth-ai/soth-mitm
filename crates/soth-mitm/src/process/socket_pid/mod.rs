@@ -43,7 +43,7 @@ pub(crate) fn lookup_established_tcp_pid(connection: &ConnectionInfo) -> Option<
 
     #[cfg(target_os = "macos")]
     {
-        return macos::lookup_established_tcp_pid_macos(query);
+        macos::lookup_established_tcp_pid_macos(query)
     }
 
     #[cfg(target_os = "linux")]

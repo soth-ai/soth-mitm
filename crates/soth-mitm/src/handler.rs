@@ -3,6 +3,11 @@ use std::future::Future;
 use crate::{HandlerDecision, ProcessInfo, RawRequest, RawResponse, StreamChunk};
 use uuid::Uuid;
 
+/// Trait for intercepting and inspecting proxy traffic.
+///
+/// Implement this trait to receive callbacks for requests, responses,
+/// streaming frames, and connection lifecycle events. All methods have
+/// default no-op implementations so you only override what you need.
 pub trait InterceptHandler: Send + Sync + 'static {
     fn should_intercept_tls(&self, _host: &str, _process_info: Option<&ProcessInfo>) -> bool {
         true

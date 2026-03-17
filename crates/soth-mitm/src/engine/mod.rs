@@ -1,7 +1,7 @@
+use parking_lot::Mutex;
 use std::collections::VecDeque;
 use std::net::IpAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Mutex;
 use std::time::Instant;
 
 use crate::observe::{Event, EventConsumer, EventEnvelope, EventType, FlowContext};
@@ -13,10 +13,12 @@ mod config;
 mod flow_state;
 pub mod server;
 pub use crate::config::InterceptMode;
+#[cfg(feature = "__internal")]
+pub use config::{CompatibilityOverrideConfig, RouteEndpointConfig};
 pub use config::{
-    CompatibilityOverrideConfig, ConnectParseMode, DownstreamCertProfile, DownstreamTlsBackend,
-    MitmConfig, MitmConfigError, RouteEndpointConfig, RouteMode, TlsFingerprintClass,
-    TlsFingerprintMode, TlsProfile, UpstreamClientAuthMode, UpstreamSniMode,
+    ConnectParseMode, DownstreamCertProfile, DownstreamTlsBackend, MitmConfig, MitmConfigError,
+    RouteMode, TlsFingerprintClass, TlsFingerprintMode, TlsProfile, UpstreamClientAuthMode,
+    UpstreamSniMode,
 };
 #[cfg(test)]
 pub use config::{EventSinkConfig, EventSinkKind};
@@ -254,6 +256,13 @@ where
     P: PolicyEngine,
     S: EventConsumer,
 {
+    /// Creates a new engine, **panicking** if the config is invalid.
+    ///
+    /// Prefer [`MitmEngine::new_checked`] which returns a `Result` instead.
+    #[deprecated(
+        since = "0.1.0",
+        note = "use MitmEngine::new_checked to avoid panics on invalid config"
+    )]
     pub fn new(config: MitmConfig, policy: P, sink: S) -> Self {
         config
             .validate()
@@ -379,10 +388,7 @@ where
 
     fn register_stream_closed(&self, flow_id: FlowId) -> bool {
         const RECENT_CLOSED_FLOW_IDS: usize = 16_384;
-        let mut closed = self
-            .recently_closed_flows
-            .lock()
-            .expect("recently_closed_flows lock poisoned");
+        let mut closed = self.recently_closed_flows.lock();
         if closed.iter().any(|existing| *existing == flow_id) {
             return false;
         }

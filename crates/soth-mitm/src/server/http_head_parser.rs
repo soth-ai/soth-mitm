@@ -39,13 +39,10 @@ where
 
             data.push(byte[0]);
             if looks_like_tls_client_hello_prefix(&data) {
-                return Err(io::Error::new(
-                    io::ErrorKind::Other,
-                    format!(
-                        "proxy expected HTTP CONNECT but received TLS ClientHello ({})",
-                        describe_connect_head_prefix(&data)
-                    ),
-                ));
+                return Err(io::Error::other(format!(
+                    "proxy expected HTTP CONNECT but received TLS ClientHello ({})",
+                    describe_connect_head_prefix(&data)
+                )));
             }
             if data.len() > max_connect_head_bytes {
                 return Err(io::Error::new(

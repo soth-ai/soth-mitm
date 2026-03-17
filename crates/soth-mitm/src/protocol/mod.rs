@@ -3,19 +3,26 @@ mod decoder_chain;
 mod grpc_envelope;
 mod sse_parser;
 
+pub use sse_parser::{SseEvent, SseParser};
+
+// Used by anti_hijack (always compiled) — must stay unconditional.
+pub use decoder_chain::{DecoderFrame, DecoderStageProcessor, StageProcessOutcome};
+
+// Test-only re-exports gated behind __internal.
+#[cfg(feature = "__internal")]
 pub use anti_hijack::{
     AntiHijackSanitizationStage, SANITIZED_ATTRIBUTE, SANITIZED_PREFIX_ATTRIBUTE,
     SANITIZED_PROVENANCE_ATTRIBUTE,
 };
+#[cfg(feature = "__internal")]
 pub use decoder_chain::{
-    validate_stage_order, DecoderFailureCode, DecoderFrame, DecoderPipelineRegistry,
-    DecoderPipelineResult, DecoderStage, DecoderStageProcessor, DecoderStageStatus,
-    LayeredDecoderPipeline, StageProcessOutcome,
+    validate_stage_order, DecoderFailureCode, DecoderPipelineRegistry, DecoderPipelineResult,
+    DecoderStage, DecoderStageStatus, LayeredDecoderPipeline,
 };
+#[cfg(feature = "__internal")]
 pub use grpc_envelope::{
     GrpcEnvelopeMalformedCode, GrpcEnvelopeParser, GrpcEnvelopeParserLimits, GrpcEnvelopeRecord,
 };
-pub use sse_parser::{SseEvent, SseParser};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ApplicationProtocol {

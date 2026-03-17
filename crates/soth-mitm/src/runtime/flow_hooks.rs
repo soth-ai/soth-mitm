@@ -99,9 +99,7 @@ impl<H: InterceptHandler> FlowHooks for HandlerFlowHooks<H> {
         let process_lookup = self.flow_state.process_lookup.clone();
         let metrics_store = Arc::clone(&self.flow_state.metrics_store);
         Box::pin(async move {
-            let Some(lookup) = process_lookup.as_ref() else {
-                return None;
-            };
+            let lookup = process_lookup.as_ref()?;
             if let Some(uds_process_info) = process_info_from_unix_client_addr(&context.client_addr)
             {
                 return Some(uds_process_info);
@@ -300,6 +298,11 @@ impl<H: InterceptHandler> FlowHooks for HandlerFlowHooks<H> {
             )
             .await
             else {
+                tracing::debug!(
+                    flow_id = context.flow_id.as_u64(),
+                    "skipping flow processing: connection metadata unavailable"
+                );
+                flow_state.metrics_store.record_missing_connection_meta();
                 return;
             };
             let raw_request = RawRequest {
@@ -337,6 +340,11 @@ impl<H: InterceptHandler> FlowHooks for HandlerFlowHooks<H> {
             )
             .await
             else {
+                tracing::debug!(
+                    flow_id = context.flow_id.as_u64(),
+                    "skipping flow processing: connection metadata unavailable"
+                );
+                flow_state.metrics_store.record_missing_connection_meta();
                 return;
             };
             let raw_response = RawResponse {
@@ -372,6 +380,11 @@ impl<H: InterceptHandler> FlowHooks for HandlerFlowHooks<H> {
             )
             .await
             else {
+                tracing::debug!(
+                    flow_id = context.flow_id.as_u64(),
+                    "skipping flow processing: connection metadata unavailable"
+                );
+                flow_state.metrics_store.record_missing_connection_meta();
                 return;
             };
             let raw_response = RawResponse {

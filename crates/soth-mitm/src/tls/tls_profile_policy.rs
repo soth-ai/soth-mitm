@@ -220,7 +220,7 @@ pub struct UpstreamTlsConfigCache {
     client_auth_mode: UpstreamClientAuthMode,
     /// Raw PEM bytes for client auth, re-parsed on each cache miss (≤8 times).
     client_auth_pem: Option<(Vec<u8>, Vec<u8>)>,
-    configs: std::sync::Mutex<std::collections::HashMap<(bool, bool, bool), Arc<ClientConfig>>>,
+    configs: parking_lot::Mutex<std::collections::HashMap<(bool, bool, bool), Arc<ClientConfig>>>,
 }
 
 impl UpstreamTlsConfigCache {
@@ -235,7 +235,7 @@ impl UpstreamTlsConfigCache {
             sni_mode,
             client_auth_mode,
             client_auth_pem,
-            configs: std::sync::Mutex::new(std::collections::HashMap::new()),
+            configs: parking_lot::Mutex::new(std::collections::HashMap::new()),
         }
     }
 
@@ -251,7 +251,7 @@ impl UpstreamTlsConfigCache {
     ) -> Result<Arc<ClientConfig>, TlsConfigError> {
         let enable_sni = should_enable_sni_for_target(target_host, self.sni_mode)?;
         let key = (insecure_skip_verify, http2_enabled, enable_sni);
-        let mut cache = self.configs.lock().unwrap();
+        let mut cache = self.configs.lock();
         if let Some(config) = cache.get(&key) {
             return Ok(Arc::clone(config));
         }

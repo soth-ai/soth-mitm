@@ -35,6 +35,7 @@ impl std::fmt::Display for FlowId {
     }
 }
 
+/// TLS protocol version.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TlsVersion {
     Tls12,
@@ -56,6 +57,7 @@ impl std::fmt::Display for TlsVersion {
     }
 }
 
+/// An intercepted HTTP request passed to the handler.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RawRequest {
     pub method: String,
@@ -65,6 +67,7 @@ pub struct RawRequest {
     pub connection_meta: Arc<ConnectionMeta>,
 }
 
+/// An intercepted HTTP response passed to the handler.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RawResponse {
     pub status: u16,
@@ -73,6 +76,7 @@ pub struct RawResponse {
     pub connection_meta: Arc<ConnectionMeta>,
 }
 
+/// Discriminant for streaming frame types delivered via [`StreamChunk`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FrameKind {
     SseData,
@@ -102,6 +106,7 @@ impl std::fmt::Display for FrameKind {
     }
 }
 
+/// A streaming data frame (SSE, NDJSON, gRPC, or WebSocket) delivered to the handler.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StreamChunk {
     pub connection_id: Uuid,
@@ -110,12 +115,14 @@ pub struct StreamChunk {
     pub frame_kind: FrameKind,
 }
 
+/// TLS metadata for the downstream connection.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TlsInfo {
     pub sni: Option<String>,
     pub negotiated_proto: Option<String>,
 }
 
+/// Metadata about the downstream connection (socket, TLS, process attribution).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConnectionMeta {
     pub connection_id: Uuid,
@@ -124,6 +131,7 @@ pub struct ConnectionMeta {
     pub tls_info: Option<TlsInfo>,
 }
 
+/// Socket address family for the downstream connection.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SocketFamily {
     TcpV4 {
@@ -181,6 +189,7 @@ pub struct TlsClientFingerprint {
     pub elliptic_curves: Vec<u16>,
 }
 
+/// Information about the local process that owns the downstream socket.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProcessInfo {
     pub pid: u32,

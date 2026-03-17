@@ -24,7 +24,7 @@ pub(super) async fn connection_meta_for_context(
             "connection {} missing ConnectionMeta in flow map",
             context.flow_id
         );
-        tracing::error!(
+        tracing::warn!(
             flow_id = context.flow_id.as_u64(),
             host = %context.server_host,
             port = context.server_port,

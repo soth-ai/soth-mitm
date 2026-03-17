@@ -20,6 +20,10 @@ use tokio::io::{AsyncRead, AsyncWrite};
 pub(crate) const WS_FRAME_COPY_CHUNK_SIZE: usize = 8 * 1024;
 pub(crate) const WS_OPCODE_CLOSE: u8 = 0x8;
 pub(crate) const WS_TURN_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(750);
+/// Maximum time to wait for the reverse close frame after forwarding a close
+/// frame from the peer. Per RFC 6455 Section 5.5.1, the remote endpoint MUST
+/// reply with a close frame, but we bound the wait to avoid hanging forever.
+const WS_CLOSE_HANDSHAKE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 const WS_OBSERVER_CHANNEL_CAPACITY: usize = 1024;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct WebSocketRelayOutcome {
@@ -109,6 +113,11 @@ where
     let frame_sequence = Arc::new(std::sync::atomic::AtomicU64::new(0));
     let max_payload_capture_bytes = engine.config.max_flow_decoder_buffer_bytes.max(1);
     let max_frame_payload_bytes = engine.config.max_flow_body_buffer_bytes.max(1);
+    // Shared close-handshake signaling: when one direction forwards a close
+    // frame, it notifies the peer direction so it can apply a bounded timeout
+    // for the reverse close frame (RFC 6455 Section 5.5.1).
+    let (close_tx, close_rx) = tokio::sync::watch::channel(false);
+    let close_tx = Arc::new(close_tx);
     let client_task = tokio::spawn(relay_websocket_direction(
         crate::protocol::WsDirection::ClientToServer,
         PrefixedReader::new(downstream_prefetch, downstream_read),
@@ -118,6 +127,8 @@ where
         observer_tx.clone(),
         max_payload_capture_bytes,
         max_frame_payload_bytes,
+        Arc::clone(&close_tx),
+        close_rx.clone(),
     ));
     let server_task = tokio::spawn(relay_websocket_direction(
         crate::protocol::WsDirection::ServerToClient,
@@ -128,6 +139,8 @@ where
         observer_tx.clone(),
         max_payload_capture_bytes,
         max_frame_payload_bytes,
+        close_tx,
+        close_rx,
     ));
     let (client_join, server_join) = tokio::join!(client_task, server_task);
     let client_result = map_joined_direction_result("client_to_server", client_join);
@@ -202,6 +215,8 @@ async fn relay_websocket_direction<R, WF>(
     observer_tx: tokio::sync::mpsc::Sender<WebSocketObserverMessage>,
     max_payload_capture_bytes: usize,
     max_frame_payload_bytes: usize,
+    close_tx: Arc<tokio::sync::watch::Sender<bool>>,
+    mut close_rx: tokio::sync::watch::Receiver<bool>,
 ) -> io::Result<WebSocketDirectionOutcome>
 where
     R: AsyncRead + Unpin,
@@ -211,8 +226,37 @@ where
     let mut frame_codec = soketto::base::Codec::new();
     frame_codec.set_max_data_size(max_frame_payload_bytes);
     loop {
-        let next_frame =
-            read_websocket_frame_header(&mut source, &frame_codec, max_frame_payload_bytes).await?;
+        // If the peer direction already forwarded a close frame, apply a
+        // bounded timeout for the reverse close frame from this source.
+        let peer_closed = *close_rx.borrow_and_update();
+        let next_frame = if peer_closed {
+            match tokio::time::timeout(
+                WS_CLOSE_HANDSHAKE_TIMEOUT,
+                read_websocket_frame_header(&mut source, &frame_codec, max_frame_payload_bytes),
+            )
+            .await
+            {
+                Ok(result) => result?,
+                Err(_elapsed) => {
+                    tracing::trace!(
+                        ?direction,
+                        "websocket close handshake timed out waiting for reverse close frame"
+                    );
+                    let mut sink = forward_sink.lock().await;
+                    let _ = shutdown_with_websocket_idle_timeout(
+                        &mut *sink,
+                        "websocket_close_handshake_timeout_shutdown",
+                    )
+                    .await;
+                    return Ok(WebSocketDirectionOutcome {
+                        bytes_forwarded,
+                        close_frame_seen: false,
+                    });
+                }
+            }
+        } else {
+            read_websocket_frame_header(&mut source, &frame_codec, max_frame_payload_bytes).await?
+        };
         let Some((frame_header, header_view)) = next_frame else {
             let mut sink = forward_sink.lock().await;
             shutdown_with_websocket_idle_timeout(&mut *sink, "websocket_sink_shutdown").await?;
@@ -295,6 +339,9 @@ where
         if opcode == WS_OPCODE_CLOSE {
             let mut sink = forward_sink.lock().await;
             flush_with_websocket_idle_timeout(&mut *sink, "websocket_close_flush").await?;
+            // Signal the peer direction that a close frame was forwarded so it
+            // can start a bounded wait for the reverse close frame.
+            let _ = close_tx.send(true);
             return Ok(WebSocketDirectionOutcome {
                 bytes_forwarded,
                 close_frame_seen: true,

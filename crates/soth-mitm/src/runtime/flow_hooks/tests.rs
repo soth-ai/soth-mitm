@@ -625,13 +625,8 @@ where
 struct PanicRequestHandler;
 
 impl InterceptHandler for PanicRequestHandler {
-    fn on_request(
-        &self,
-        _request: &RawRequest,
-    ) -> impl std::future::Future<Output = HandlerDecision> + Send {
-        async move {
-            panic!("intentional panic in on_request");
-        }
+    async fn on_request(&self, _request: &RawRequest) -> HandlerDecision {
+        panic!("intentional panic in on_request");
     }
 }
 
@@ -642,11 +637,8 @@ struct DelayedResponseHandler {
 }
 
 impl InterceptHandler for DelayedResponseHandler {
-    fn on_request(
-        &self,
-        _request: &RawRequest,
-    ) -> impl std::future::Future<Output = HandlerDecision> + Send {
-        async { HandlerDecision::Allow }
+    async fn on_request(&self, _request: &RawRequest) -> HandlerDecision {
+        HandlerDecision::Allow
     }
 
     fn on_response(&self, _response: &RawResponse) -> impl std::future::Future<Output = ()> + Send {
@@ -666,11 +658,8 @@ struct StreamLifecycleHandler {
 }
 
 impl InterceptHandler for StreamLifecycleHandler {
-    fn on_request(
-        &self,
-        _request: &RawRequest,
-    ) -> impl std::future::Future<Output = HandlerDecision> + Send {
-        async { HandlerDecision::Allow }
+    async fn on_request(&self, _request: &RawRequest) -> HandlerDecision {
+        HandlerDecision::Allow
     }
 
     fn on_stream_end(&self, _connection_id: Uuid) -> impl std::future::Future<Output = ()> + Send {
@@ -692,11 +681,8 @@ struct SlowLifecycleCloseHandler {
 }
 
 impl InterceptHandler for SlowLifecycleCloseHandler {
-    fn on_request(
-        &self,
-        _request: &RawRequest,
-    ) -> impl std::future::Future<Output = HandlerDecision> + Send {
-        async { HandlerDecision::Allow }
+    async fn on_request(&self, _request: &RawRequest) -> HandlerDecision {
+        HandlerDecision::Allow
     }
 
     fn on_connection_close(&self, _connection_id: Uuid) {

@@ -3,8 +3,7 @@ use std::future::Future;
 use std::mem;
 use std::num::NonZeroU32;
 use std::os::unix::ffi::OsStrExt;
-use std::path::Component;
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 use std::pin::Pin;
 
 use libc::{c_int, gid_t, uid_t, MAXCOMLEN};
@@ -108,7 +107,7 @@ fn process_snapshot(pid: u32) -> Option<ProcessSnapshot> {
     let bsd_info = read_bsd_info(pid)?;
     let exe_path = read_process_path(pid);
     let parent_pid = NonZeroU32::new(bsd_info.pbi_ppid).map(NonZeroU32::get);
-    let path_name = exe_path.as_ref().and_then(process_name_from_path);
+    let path_name = exe_path.as_ref().and_then(|p| process_name_from_path(p));
     let exe_name = super::derive_identity_walking_parents(
         pid,
         path_name.as_deref(),
@@ -281,7 +280,7 @@ fn process_name_from_bsd_info(info: &ProcBsdInfo) -> Option<String> {
     c_char_array_to_string(&info.pbi_name).or_else(|| c_char_array_to_string(&info.pbi_comm))
 }
 
-fn process_name_from_path(path: &PathBuf) -> Option<String> {
+fn process_name_from_path(path: &Path) -> Option<String> {
     path.file_name().and_then(normalize_text)
 }
 
@@ -334,7 +333,7 @@ fn lookup_codesign_identity(process_path: &PathBuf) -> Option<String> {
     None
 }
 
-fn app_bundle_path(process_path: &PathBuf) -> Option<PathBuf> {
+fn app_bundle_path(process_path: &Path) -> Option<PathBuf> {
     let mut bundle = PathBuf::new();
     for component in process_path.components() {
         match component {
@@ -366,8 +365,8 @@ struct ProcBsdInfo {
     pbi_svuid: uid_t,
     pbi_svgid: gid_t,
     rfu_1: u32,
-    pbi_comm: [i8; MAXCOMLEN as usize],
-    pbi_name: [i8; (2 * MAXCOMLEN) as usize],
+    pbi_comm: [i8; MAXCOMLEN],
+    pbi_name: [i8; 2 * MAXCOMLEN],
     pbi_nfiles: u32,
     pbi_pgid: u32,
     pbi_pjobc: u32,
@@ -393,8 +392,8 @@ impl Default for ProcBsdInfo {
             pbi_svuid: 0,
             pbi_svgid: 0,
             rfu_1: 0,
-            pbi_comm: [0; MAXCOMLEN as usize],
-            pbi_name: [0; (2 * MAXCOMLEN) as usize],
+            pbi_comm: [0; MAXCOMLEN],
+            pbi_name: [0; (2 * MAXCOMLEN)],
             pbi_nfiles: 0,
             pbi_pgid: 0,
             pbi_pjobc: 0,

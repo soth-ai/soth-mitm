@@ -131,8 +131,9 @@ pub(crate) async fn tee_h2_request_body(
         // Forward to upstream immediately. If upstream rejects (e.g. early response),
         // stop forwarding but continue reading from downstream to drain the body.
         if !upstream_send_failed {
-            if let Err(_) =
-                send_h2_data_with_backpressure(&mut sink, &runtime_governor, data, false).await
+            if send_h2_data_with_backpressure(&mut sink, &runtime_governor, data, false)
+                .await
+                .is_err()
             {
                 upstream_send_failed = true;
             }
@@ -389,7 +390,13 @@ pub(crate) fn is_sse_h2_response(parts: &http::response::Parts) -> bool {
     parts
         .headers
         .get("content-type")
-        .and_then(|value| value.to_str().ok())
+        .and_then(|value| match value.to_str() {
+            Ok(s) => Some(s),
+            Err(_) => {
+                tracing::debug!("non-UTF-8 content-type header; treating as non-SSE");
+                None
+            }
+        })
         .map(|value| value.split(';').next().unwrap_or("").trim())
         .map(|value| value.eq_ignore_ascii_case("text/event-stream"))
         .unwrap_or(false)
@@ -399,7 +406,13 @@ pub(crate) fn is_ndjson_h2_response(parts: &http::response::Parts) -> bool {
     parts
         .headers
         .get("content-type")
-        .and_then(|value| value.to_str().ok())
+        .and_then(|value| match value.to_str() {
+            Ok(s) => Some(s),
+            Err(_) => {
+                tracing::debug!("non-UTF-8 content-type header; treating as non-NDJSON");
+                None
+            }
+        })
         .map(|value| value.split(';').next().unwrap_or("").trim())
         .map(|value| {
             value.eq_ignore_ascii_case("application/x-ndjson")

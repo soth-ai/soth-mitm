@@ -197,8 +197,7 @@ where
             context,
             CloseReasonCode::RoutePlannerFailed,
             Some(format!(
-                "connect self-target loop detected: listener {}:{}",
-                listen_addr, listen_port
+                "connect self-target loop detected: listener {listen_addr}:{listen_port}"
             )),
             None,
             None,
