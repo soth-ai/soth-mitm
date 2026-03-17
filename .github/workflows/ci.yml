@@ -77,10 +77,7 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all --check
 
-      - name: Lint (default features smell scan)
-        run: cargo clippy --workspace --all-targets -- -W clippy::all
-
-      - name: Lint (all features smell scan)
+      - name: Lint (all features)
         run: cargo clippy --workspace --all-targets --all-features -- -W clippy::all
 
   compliance:
@@ -138,7 +135,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Run workspace tests
-        run: cargo test --workspace
+        run: cargo test --workspace --all-features
 
   phase_a_smoke:
     name: phase_a_smoke (${{ matrix.os }})
