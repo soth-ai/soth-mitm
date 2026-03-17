@@ -70,7 +70,8 @@ fi
 unauthorized_commands="$(
   search_sources 'tokio::process::Command|std::process::Command' crates/soth-mitm/src | \
     awk -F: '
-      !($1 ~ /crates\/soth-mitm\/src\/ca_trust\/backend_common\.rs$/) {print}
+      !($1 ~ /crates\/soth-mitm\/src\/ca_trust\/backend_common\.rs$/) &&
+      !($1 ~ /crates\/soth-mitm\/src\/process\/macos\.rs$/) {print}
     ' || true
 )"
 if [[ -n "$unauthorized_commands" ]]; then

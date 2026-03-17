@@ -11,9 +11,9 @@ fi
 
 run_cargo_test() {
   if [[ "${#cargo_args[@]}" -gt 0 ]]; then
-    cargo test "$@" "${cargo_args[@]}"
+    cargo test --all-features "$@" "${cargo_args[@]}"
   else
-    cargo test "$@"
+    cargo test --all-features "$@"
   fi
 }
 

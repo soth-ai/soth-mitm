@@ -132,7 +132,7 @@ sse_result="$report_dir/sse_first_chunk.tsv"
 
 run_case forwarding_latency_bench \
   run_with_preferred_bench_linker \
-  cargo bench -p soth-mitm --bench forwarding_latency -- \
+  cargo bench --all-features -p soth-mitm --bench forwarding_latency -- \
     --iterations "$iterations" \
     --warmup "$warmup" \
     --threshold-p50-us "$forward_p50_us" \
@@ -142,7 +142,7 @@ run_case forwarding_latency_bench \
 
 run_case handshake_overhead_bench \
   run_with_preferred_bench_linker \
-  cargo bench -p soth-mitm --bench handshake_overhead -- \
+  cargo bench --all-features -p soth-mitm --bench handshake_overhead -- \
     --iterations "$iterations" \
     --warmup "$warmup" \
     --threshold-overhead-p95-us "$tls_overhead_p95_us" \
@@ -152,7 +152,7 @@ run_case handshake_overhead_bench \
 
 run_case sse_first_chunk_bench \
   run_with_preferred_bench_linker \
-  cargo bench -p soth-mitm --bench sse_first_chunk -- \
+  cargo bench --all-features -p soth-mitm --bench sse_first_chunk -- \
     --iterations "$iterations" \
     --warmup "$warmup" \
     --threshold-p95-us "$sse_p95_us" \
@@ -160,7 +160,7 @@ run_case sse_first_chunk_bench \
 
 run_case connection_scale_core_1000 \
   env MITM_CORE_CONCURRENCY="$core_scale_connections" \
-    cargo test -p soth-mitm --test server_concurrency \
+    cargo test --all-features -p soth-mitm --test server_concurrency \
       flow_lifecycle_server_handles_500_parallel_short_lived_connections -q || true
 
 append_metrics forwarding_latency "$forward_result"

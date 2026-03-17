@@ -43,7 +43,7 @@ fi
 
 if "${reload_search_cmd[@]}" >/dev/null 2>&1; then
   ac_record_status "$status_tsv" reload_api_surface pass present
-  if cargo test -p soth-mitm config_reload_inflight_requests_contract -q; then
+  if cargo test --all-features -p soth-mitm config_reload_inflight_requests_contract -q; then
     ac_record_status "$status_tsv" reload_inflight_contract pass ok
   else
     ac_record_status "$status_tsv" reload_inflight_contract fail command_failed
