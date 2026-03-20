@@ -1,10 +1,18 @@
 use super::flow_hooks::{FlowHooks, StreamChunk};
+use crate::types::FrameDirection;
+
+fn ws_direction_to_frame(dir: crate::protocol::WsDirection) -> Option<FrameDirection> {
+    match dir {
+        crate::protocol::WsDirection::ClientToServer => Some(FrameDirection::ClientToServer),
+        crate::protocol::WsDirection::ServerToClient => Some(FrameDirection::ServerToClient),
+    }
+}
 use super::websocket_events::{
     emit_websocket_frame_event, emit_websocket_turn_completed_event,
     emit_websocket_turn_started_event,
 };
 use super::websocket_relay::{
-    WebSocketFrameObservation, WebSocketObserverMessage, WebSocketTurnTrackerState,
+    DeflateConfig, WebSocketFrameObservation, WebSocketObserverMessage, WebSocketTurnTrackerState,
     WS_OPCODE_CLOSE, WS_TURN_IDLE_TIMEOUT,
 };
 use crate::engine::MitmEngine;
@@ -19,6 +27,7 @@ pub(crate) async fn observe_websocket_frames<P, S>(
     websocket_context: FlowContext,
     flow_hooks: Arc<dyn FlowHooks>,
     mut observer_rx: tokio::sync::mpsc::Receiver<WebSocketObserverMessage>,
+    deflate_config: Option<DeflateConfig>,
 ) -> io::Result<()>
 where
     P: PolicyEngine + Send + Sync + 'static,
@@ -27,6 +36,17 @@ where
     let mut turn_aggregator = crate::protocol::WebSocketTurnAggregator::new();
     let mut turn_state = WebSocketTurnTrackerState::default();
     let mut message_assemblers = WebSocketMessageAssemblers::default();
+    // Per-direction inflate state for permessage-deflate decompression.
+    let mut client_inflate = if deflate_config.is_some() {
+        Some(flate2::Decompress::new(false))
+    } else {
+        None
+    };
+    let mut server_inflate = if deflate_config.is_some() {
+        Some(flate2::Decompress::new(false))
+    } else {
+        None
+    };
     let mut final_flush_reason: Option<&'static str> = None;
     let idle_deadline = tokio::time::Instant::now() + WS_TURN_IDLE_TIMEOUT;
     let idle_sleep = tokio::time::sleep_until(idle_deadline);
@@ -38,6 +58,10 @@ where
             message = observer_rx.recv() => {
                 match message {
                     Some(WebSocketObserverMessage::Frame(frame)) => {
+                        let inflate = match frame.direction {
+                            crate::protocol::WsDirection::ClientToServer => client_inflate.as_mut(),
+                            crate::protocol::WsDirection::ServerToClient => server_inflate.as_mut(),
+                        };
                         track_websocket_frame(
                             &engine,
                             websocket_context.clone(),
@@ -46,6 +70,8 @@ where
                             &mut turn_state,
                             &mut message_assemblers,
                             frame,
+                            inflate,
+                            deflate_config,
                         )
                         .await;
 
@@ -107,6 +133,8 @@ struct WebSocketMessageAssemblers {
 struct WebSocketMessageAssembler {
     frame_kind: Option<FrameKind>,
     payload: Vec<u8>,
+    /// True if the first frame of this message had RSV1 set (permessage-deflate).
+    rsv1_compressed: bool,
 }
 
 fn assembler_for_direction_mut(
@@ -116,6 +144,38 @@ fn assembler_for_direction_mut(
     match direction {
         crate::protocol::WsDirection::ClientToServer => &mut assemblers.client_to_server,
         crate::protocol::WsDirection::ServerToClient => &mut assemblers.server_to_client,
+    }
+}
+
+/// Inflate a compressed message if an inflate state is available.
+/// Falls back to passing the raw bytes if decompression fails.
+/// When `reset_after` is true (no_context_takeover), resets the
+/// decompressor after each successful decompression.
+fn maybe_inflate(
+    compressed: &[u8],
+    inflate: Option<&mut flate2::Decompress>,
+    max_output_bytes: usize,
+    reset_after: bool,
+) -> bytes::Bytes {
+    let Some(decompressor) = inflate else {
+        return bytes::Bytes::from(compressed.to_vec());
+    };
+    let result = super::websocket_relay::inflate_permessage_deflate(
+        compressed,
+        decompressor,
+        max_output_bytes,
+    );
+    match result {
+        Some(bytes) => {
+            if reset_after {
+                decompressor.reset(false);
+            }
+            bytes
+        }
+        None => {
+            // inflate_permessage_deflate already resets the decompressor on error.
+            bytes::Bytes::from(compressed.to_vec())
+        }
     }
 }
 
@@ -135,6 +195,8 @@ async fn track_websocket_frame<P, S>(
     turn_state: &mut WebSocketTurnTrackerState,
     message_assemblers: &mut WebSocketMessageAssemblers,
     frame: WebSocketFrameObservation,
+    inflate: Option<&mut flate2::Decompress>,
+    deflate_config: Option<DeflateConfig>,
 ) where
     P: PolicyEngine + Send + Sync + 'static,
     S: EventConsumer + Send + Sync + 'static,
@@ -153,6 +215,15 @@ async fn track_websocket_frame<P, S>(
     );
 
     let max_message_bytes = engine.config.max_flow_decoder_buffer_bytes.max(1);
+    // Determine if the decompressor should be reset after this message
+    // (RFC 7692 no_context_takeover — sender resets context per message,
+    // so our decompressor must also reset to stay in sync).
+    let reset_after_inflate = deflate_config
+        .map(|cfg| match frame.direction {
+            crate::protocol::WsDirection::ServerToClient => cfg.server_no_context_takeover,
+            crate::protocol::WsDirection::ClientToServer => cfg.client_no_context_takeover,
+        })
+        .unwrap_or(false);
     let assembler = assembler_for_direction_mut(message_assemblers, frame.direction);
     match frame.opcode {
         0x1 | 0x2 => {
@@ -162,15 +233,27 @@ async fn track_websocket_frame<P, S>(
                 FrameKind::WebSocketBinary
             };
             if frame.fin {
+                // Single-frame complete message — decompress if RSV1 set.
+                let payload = if frame.rsv1 {
+                    maybe_inflate(
+                        frame.payload.as_ref(),
+                        inflate,
+                        max_message_bytes,
+                        reset_after_inflate,
+                    )
+                } else {
+                    frame.payload.clone()
+                };
                 let sequence = turn_state.next_chunk_sequence;
                 turn_state.next_chunk_sequence += 1;
                 flow_hooks
                     .on_stream_chunk(
                         websocket_context.clone(),
                         StreamChunk {
-                            payload: frame.payload.clone(),
+                            payload,
                             sequence,
                             frame_kind,
+                            direction: ws_direction_to_frame(frame.direction),
                         },
                     )
                     .await;
@@ -178,6 +261,7 @@ async fn track_websocket_frame<P, S>(
                 assembler.payload.clear();
             } else {
                 assembler.frame_kind = Some(frame_kind);
+                assembler.rsv1_compressed = frame.rsv1;
                 assembler.payload.clear();
                 append_with_cap(
                     &mut assembler.payload,
@@ -194,19 +278,28 @@ async fn track_websocket_frame<P, S>(
                     max_message_bytes,
                 );
                 if frame.fin {
+                    // Multi-frame assembled message — decompress if first frame had RSV1.
+                    let raw = std::mem::take(&mut assembler.payload);
+                    let payload = if assembler.rsv1_compressed {
+                        maybe_inflate(&raw, inflate, max_message_bytes, reset_after_inflate)
+                    } else {
+                        bytes::Bytes::from(raw)
+                    };
                     let sequence = turn_state.next_chunk_sequence;
                     turn_state.next_chunk_sequence += 1;
                     flow_hooks
                         .on_stream_chunk(
                             websocket_context.clone(),
                             StreamChunk {
-                                payload: bytes::Bytes::from(std::mem::take(&mut assembler.payload)),
+                                payload,
                                 sequence,
                                 frame_kind,
+                                direction: ws_direction_to_frame(frame.direction),
                             },
                         )
                         .await;
                     assembler.frame_kind = None;
+                    assembler.rsv1_compressed = false;
                 }
             }
         }
@@ -221,6 +314,7 @@ async fn track_websocket_frame<P, S>(
                         payload: frame.payload.clone(),
                         sequence,
                         frame_kind: FrameKind::WebSocketClose,
+                        direction: ws_direction_to_frame(frame.direction),
                     },
                 )
                 .await;

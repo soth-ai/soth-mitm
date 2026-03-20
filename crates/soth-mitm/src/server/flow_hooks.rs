@@ -27,6 +27,7 @@ pub struct StreamChunk {
     pub payload: Bytes,
     pub sequence: u64,
     pub frame_kind: FrameKind,
+    pub direction: Option<crate::types::FrameDirection>,
 }
 
 pub trait FlowHooks: Send + Sync + 'static {
@@ -103,6 +104,16 @@ pub trait FlowHooks: Send + Sync + 'static {
 
     fn on_stream_end(&self, _context: FlowContext) -> Pin<Box<dyn Future<Output = ()> + Send>> {
         Box::pin(async {})
+    }
+
+    /// Register the abort handle for a spawned connection task so the stale
+    /// flow reaper can kill stuck tasks and release their semaphore permits.
+    fn register_task_abort_handle(
+        &self,
+        _flow_id: crate::types::FlowId,
+        _abort_handle: tokio::task::AbortHandle,
+    ) {
+        // Default: no-op. The runtime implementation stores the handle.
     }
 }
 

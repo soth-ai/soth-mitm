@@ -71,6 +71,7 @@ where
                     payload: bytes::Bytes::from(event.data),
                     sequence: sequence_no,
                     frame_kind: FrameKind::SseData,
+                    direction: None,
                 },
             )
             .await;

@@ -539,6 +539,9 @@ where
                 )
                 .await;
 
+            // Detect permessage-deflate from the 101 response headers.
+            let deflate_config = super::websocket_relay::parse_deflate_config(&response.headers);
+
             return finalize_websocket_upgrade(
                 Arc::clone(&engine),
                 Arc::clone(&runtime_governor),
@@ -548,6 +551,7 @@ where
                 upstream_conn,
                 bytes_from_client,
                 bytes_from_server,
+                deflate_config,
             )
             .await;
         }

@@ -27,6 +27,10 @@ pub(super) struct FlowStateContext<H: InterceptHandler> {
     pub(super) process_lookup: Option<Arc<ProcessLookupService<PlatformProcessAttributor>>>,
     pub(super) handler: Arc<H>,
     pub(super) callback_guard: Arc<HandlerCallbackGuard>,
+    /// Abort handles for spawned connection tasks. When the reaper detects a
+    /// stale flow, it aborts the task — which drops the `FlowRuntimeGuard` and
+    /// releases the semaphore permit back to the pool.
+    pub(super) task_abort_handles: Arc<DashMap<FlowId, tokio::task::AbortHandle>>,
 }
 
 pub(super) async fn schedule_stale_flow_reap<H: InterceptHandler>(
@@ -118,6 +122,16 @@ pub(super) async fn finalize_flow<H: InterceptHandler>(
     };
     if !should_finalize {
         return;
+    }
+
+    // Abort the stuck connection task. This drops the FlowRuntimeGuard
+    // inside it, which releases the semaphore permit back to the pool.
+    if let Some((_, abort_handle)) = flow_state.task_abort_handles.remove(&flow_id) {
+        abort_handle.abort();
+        tracing::debug!(
+            flow_id = flow_id.as_u64(),
+            "aborted stuck connection task to release flow permit"
+        );
     }
 
     flow_state.flow_dispatchers.close_and_drain(flow_id).await;

@@ -100,8 +100,8 @@ pub use handler::InterceptHandler;
 pub use metrics::ProxyMetrics;
 pub use proxy::{MitmProxy, MitmProxyHandle};
 pub use types::{
-    ConnectionMeta, FlowId, FrameKind, ProcessInfo, RawRequest, RawResponse, SocketFamily,
-    StreamChunk, TlsInfo, TlsVersion,
+    ConnectionMeta, FlowId, FrameDirection, FrameKind, ProcessInfo, RawRequest, RawResponse,
+    SocketFamily, StreamChunk, TlsInfo, TlsVersion,
 };
 
 // Re-export key transitive types that appear in the public API surface.

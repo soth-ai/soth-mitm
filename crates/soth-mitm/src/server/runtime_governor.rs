@@ -110,7 +110,7 @@ impl RuntimeGovernor {
         FlowRuntimeGuard {
             governor: Arc::clone(self),
             started_at: Instant::now(),
-            _permit: permit,
+            permit: Some(permit),
         }
     }
 
@@ -293,11 +293,31 @@ pub fn set_event_queue_depth_global(depth: u64) {
 pub struct FlowRuntimeGuard {
     governor: Arc<RuntimeGovernor>,
     started_at: Instant,
-    _permit: OwnedSemaphorePermit,
+    permit: Option<OwnedSemaphorePermit>,
+}
+
+impl FlowRuntimeGuard {
+    /// Release the semaphore permit back to the pool without dropping the
+    /// guard. The flow continues to be tracked for metrics (active_flows,
+    /// duration) but no longer counts against the intercept concurrency
+    /// limit. Used for tunnel/passthrough connections that don't need the
+    /// detect+classify pipeline.
+    pub fn release_permit(&mut self) {
+        if let Some(permit) = self.permit.take() {
+            drop(permit);
+            tracing::trace!("flow permit released early (tunnel/passthrough)");
+        }
+    }
+
+    /// Returns `true` if this guard still holds a semaphore permit.
+    pub fn holds_permit(&self) -> bool {
+        self.permit.is_some()
+    }
 }
 
 impl Drop for FlowRuntimeGuard {
     fn drop(&mut self) {
+        // permit (if still held) is dropped here, returning it to the pool
         self.governor.active_flows.fetch_sub(1, Ordering::SeqCst);
         self.governor.flow_count.fetch_add(1, Ordering::Relaxed);
 

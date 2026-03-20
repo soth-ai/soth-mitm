@@ -443,10 +443,11 @@ where
             let max_connect_head_bytes = self.config.max_connect_head_bytes;
             let max_http_head_bytes = self.config.max_http_head_bytes;
             let client_addr = client_addr.to_string();
-            tokio::spawn(async move {
-                let _flow_guard = runtime.runtime_governor.begin_flow(flow_permit);
-                let flow_id = runtime.engine.allocate_flow_id();
-                let accept_context = unknown_context(flow_id, client_addr.clone());
+            let flow_hooks_for_register = Arc::clone(&self.flow_hooks);
+            let flow_id_pre = self.engine.allocate_flow_id();
+            let join_handle = tokio::spawn(async move {
+                let mut flow_guard = runtime.runtime_governor.begin_flow(flow_permit);
+                let accept_context = unknown_context(flow_id_pre, client_addr.clone());
                 let process_info = runtime
                     .flow_hooks
                     .resolve_process_info(accept_context.clone())
@@ -459,10 +460,11 @@ where
                     runtime,
                     stream,
                     client_addr,
-                    flow_id,
+                    flow_id_pre,
                     process_info,
                     max_connect_head_bytes,
                     max_http_head_bytes,
+                    &mut flow_guard,
                 )
                 .await
                 {
@@ -470,7 +472,10 @@ where
                         tracing::warn!(error = %error, "connection handling failed");
                     }
                 }
+                drop(flow_guard);
             });
+            flow_hooks_for_register
+                .register_task_abort_handle(flow_id_pre, join_handle.abort_handle());
         }
     }
 }

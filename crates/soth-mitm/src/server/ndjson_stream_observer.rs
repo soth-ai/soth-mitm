@@ -69,6 +69,7 @@ where
                     payload: bytes::Bytes::from(line),
                     sequence,
                     frame_kind: FrameKind::NdjsonLine,
+                    direction: None,
                 },
             )
             .await;

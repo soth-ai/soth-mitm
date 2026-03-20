@@ -34,6 +34,7 @@ pub(crate) async fn handle_client<P, S>(
     process_info: Option<ProcessInfo>,
     max_connect_head_bytes: usize,
     max_http_head_bytes: usize,
+    flow_guard: &mut crate::server::runtime_governor::FlowRuntimeGuard,
 ) -> io::Result<()>
 where
     P: PolicyEngine + Send + Sync + 'static,
@@ -50,6 +51,7 @@ where
         process_info,
         max_connect_head_bytes,
         max_http_head_bytes,
+        flow_guard,
     )
     .await;
     clear_flow_policy_snapshot(engine_instance_id, flow_id);
@@ -65,6 +67,7 @@ async fn handle_client_inner<P, S>(
     process_info: Option<ProcessInfo>,
     max_connect_head_bytes: usize,
     max_http_head_bytes: usize,
+    flow_guard: &mut crate::server::runtime_governor::FlowRuntimeGuard,
 ) -> io::Result<()>
 where
     P: PolicyEngine + Send + Sync + 'static,
@@ -140,6 +143,7 @@ where
                     input,
                     max_http_head_bytes,
                     listener_addr,
+                    Some(flow_guard),
                 )
                 .await;
             }
@@ -286,6 +290,7 @@ where
 
     match action {
         FlowAction::Block => {
+            flow_guard.release_permit();
             write_proxy_response(&mut downstream, "403 Forbidden", &policy_snapshot.reason).await?;
             emit_stream_closed(
                 &engine,
@@ -298,6 +303,9 @@ where
             Ok(())
         }
         FlowAction::Tunnel => {
+            // Release the intercept permit — tunnel connections are blind
+            // byte-copy and don't use the detect/classify pipeline.
+            flow_guard.release_permit();
             tunnel_connection(
                 engine,
                 context,

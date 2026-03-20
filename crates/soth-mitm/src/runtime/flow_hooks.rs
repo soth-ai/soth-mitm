@@ -79,6 +79,7 @@ impl<H: InterceptHandler> HandlerFlowHooks<H> {
             process_lookup,
             handler,
             callback_guard,
+            task_abort_handles: Arc::new(DashMap::new()),
         });
         let stale_reap_interval = (stale_flow_ttl / 4).max(Duration::from_secs(15));
         Self {
@@ -426,6 +427,7 @@ impl<H: InterceptHandler> FlowHooks for HandlerFlowHooks<H> {
                 payload: chunk.payload,
                 sequence,
                 frame_kind: chunk.frame_kind,
+                direction: chunk.direction,
             };
             let enqueued = flow_state
                 .flow_dispatchers
@@ -470,6 +472,16 @@ impl<H: InterceptHandler> FlowHooks for HandlerFlowHooks<H> {
             }
             finalize_flow(context.flow_id, Arc::clone(&flow_state)).await;
         })
+    }
+
+    fn register_task_abort_handle(
+        &self,
+        flow_id: crate::types::FlowId,
+        abort_handle: tokio::task::AbortHandle,
+    ) {
+        self.flow_state
+            .task_abort_handles
+            .insert(flow_id, abort_handle);
     }
 }
 

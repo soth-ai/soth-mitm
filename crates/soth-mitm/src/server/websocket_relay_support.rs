@@ -3,7 +3,7 @@ use super::event_emitters::emit_stream_closed;
 use super::flow_hooks::FlowHooks;
 use super::io_timeouts::{is_idle_watchdog_timeout, is_stream_stage_timeout};
 use super::runtime_governor;
-use super::websocket_relay::relay_websocket_connection;
+use super::websocket_relay::{relay_websocket_connection, DeflateConfig};
 use super::BufferedConn;
 use crate::engine::MitmEngine;
 use crate::observe::{EventConsumer, FlowContext};
@@ -22,6 +22,7 @@ pub(crate) async fn finalize_websocket_upgrade<P, S, D, U>(
     upstream: BufferedConn<U>,
     mut bytes_from_client: u64,
     mut bytes_from_server: u64,
+    deflate_config: Option<DeflateConfig>,
 ) -> io::Result<()>
 where
     P: PolicyEngine + Send + Sync + 'static,
@@ -40,6 +41,7 @@ where
         websocket_context.clone(),
         downstream,
         upstream,
+        deflate_config,
     )
     .await
     {

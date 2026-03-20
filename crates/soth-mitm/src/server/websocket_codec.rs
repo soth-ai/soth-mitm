@@ -3,6 +3,8 @@ use std::io;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct WebSocketHeaderView {
     pub(crate) fin: bool,
+    /// RSV1 bit — set when permessage-deflate compression is applied to this frame.
+    pub(crate) rsv1: bool,
     pub(crate) opcode: u8,
     pub(crate) masked: bool,
     pub(crate) mask: Option<u32>,
@@ -37,6 +39,7 @@ pub(crate) fn decode_websocket_header_soketto(
     let first = bytes[0];
     let second = bytes[1];
     let fin = (first & 0x80) != 0;
+    let rsv1 = (first & 0x40) != 0;
     let opcode = first & 0x0F;
     let masked = (second & 0x80) != 0;
 
@@ -92,6 +95,7 @@ pub(crate) fn decode_websocket_header_soketto(
 
     Ok(WebSocketHeaderDecodeResult::Complete(WebSocketHeaderView {
         fin,
+        rsv1,
         opcode,
         masked,
         mask,

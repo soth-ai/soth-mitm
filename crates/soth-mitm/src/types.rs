@@ -106,6 +106,15 @@ impl std::fmt::Display for FrameKind {
     }
 }
 
+/// Direction of a WebSocket frame.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FrameDirection {
+    /// Client → server (request: model, prompt, tools).
+    ClientToServer,
+    /// Server → client (response: content deltas, usage).
+    ServerToClient,
+}
+
 /// A streaming data frame (SSE, NDJSON, gRPC, or WebSocket) delivered to the handler.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StreamChunk {
@@ -113,6 +122,8 @@ pub struct StreamChunk {
     pub payload: Bytes,
     pub sequence: u64,
     pub frame_kind: FrameKind,
+    /// Direction for WebSocket frames. `None` for SSE/NDJSON/gRPC (always server→client).
+    pub direction: Option<FrameDirection>,
 }
 
 /// TLS metadata for the downstream connection.

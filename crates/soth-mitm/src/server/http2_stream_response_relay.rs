@@ -55,6 +55,7 @@ impl H2ResponseStreamHookDispatcher {
                                 payload: bytes::Bytes::from(event.data),
                                 sequence: *sequence,
                                 frame_kind: FrameKind::SseData,
+                                direction: None,
                             },
                         )
                         .await;
@@ -93,6 +94,7 @@ impl H2ResponseStreamHookDispatcher {
                                 payload,
                                 sequence: *sequence,
                                 frame_kind: FrameKind::NdjsonLine,
+                                direction: None,
                             },
                         )
                         .await;
@@ -124,6 +126,7 @@ impl H2ResponseStreamHookDispatcher {
                                 payload,
                                 sequence: *sequence,
                                 frame_kind: FrameKind::GrpcMessage,
+                                direction: None,
                             },
                         )
                         .await;
@@ -156,6 +159,7 @@ impl H2ResponseStreamHookDispatcher {
                                 payload: bytes::Bytes::from(event.data),
                                 sequence: *sequence,
                                 frame_kind: FrameKind::SseData,
+                                direction: None,
                             },
                         )
                         .await;
@@ -190,6 +194,7 @@ impl H2ResponseStreamHookDispatcher {
                                 payload,
                                 sequence: *sequence,
                                 frame_kind: FrameKind::NdjsonLine,
+                                direction: None,
                             },
                         )
                         .await;

@@ -20,6 +20,35 @@ use tokio::io::{AsyncRead, AsyncWrite};
 pub(crate) const WS_FRAME_COPY_CHUNK_SIZE: usize = 8 * 1024;
 pub(crate) const WS_OPCODE_CLOSE: u8 = 0x8;
 pub(crate) const WS_TURN_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(750);
+
+/// Negotiated permessage-deflate parameters parsed from the
+/// `Sec-WebSocket-Extensions` response header (RFC 7692).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct DeflateConfig {
+    /// Server resets compression context after each message.
+    pub(crate) server_no_context_takeover: bool,
+    /// Client resets compression context after each message.
+    pub(crate) client_no_context_takeover: bool,
+}
+
+/// Parse `DeflateConfig` from a 101 response's `Sec-WebSocket-Extensions` header.
+/// Returns `None` if permessage-deflate was not negotiated.
+pub(crate) fn parse_deflate_config(headers: &[super::HttpHeader]) -> Option<DeflateConfig> {
+    for h in headers {
+        if !h.name.eq_ignore_ascii_case("sec-websocket-extensions") {
+            continue;
+        }
+        let value = h.value.to_ascii_lowercase();
+        if !value.contains("permessage-deflate") {
+            continue;
+        }
+        return Some(DeflateConfig {
+            server_no_context_takeover: value.contains("server_no_context_takeover"),
+            client_no_context_takeover: value.contains("client_no_context_takeover"),
+        });
+    }
+    None
+}
 /// Maximum time to wait for the reverse close frame after forwarding a close
 /// frame from the peer. Per RFC 6455 Section 5.5.1, the remote endpoint MUST
 /// reply with a close frame, but we bound the wait to avoid hanging forever.
@@ -42,6 +71,8 @@ pub(crate) struct WebSocketFrameObservation {
     pub(crate) sequence_no: u64,
     pub(crate) opcode: u8,
     pub(crate) fin: bool,
+    /// RSV1 bit — set on the first frame of a compressed message (permessage-deflate).
+    pub(crate) rsv1: bool,
     pub(crate) masked: bool,
     pub(crate) payload_len: u64,
     pub(crate) frame_len: u64,
@@ -77,6 +108,7 @@ pub(crate) async fn relay_websocket_connection<P, S, D, U>(
     websocket_context: FlowContext,
     downstream: BufferedConn<D>,
     upstream: BufferedConn<U>,
+    deflate_config: Option<DeflateConfig>,
 ) -> io::Result<WebSocketRelayOutcome>
 where
     P: PolicyEngine + Send + Sync + 'static,
@@ -103,6 +135,7 @@ where
             observer_context,
             observer_hooks,
             observer_rx,
+            deflate_config,
         )
         .await
     });
@@ -266,6 +299,7 @@ where
             });
         };
         let fin = header_view.fin;
+        let rsv1 = header_view.rsv1;
         let opcode = header_view.opcode;
         let masked = header_view.masked;
         validate_websocket_mask_direction(direction, masked)?;
@@ -311,6 +345,7 @@ where
             sequence_no,
             opcode,
             fin,
+            rsv1,
             masked,
             payload_len,
             frame_len: frame_header.len() as u64 + payload_len,
@@ -389,5 +424,84 @@ pub(crate) fn websocket_now_unix_ms() -> u128 {
     match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
         Ok(duration) => duration.as_millis(),
         Err(_) => 0,
+    }
+}
+
+/// Inflate a permessage-deflate compressed WebSocket message payload.
+///
+/// Per RFC 7692, the compressed payload has the 4-byte trailer
+/// `0x00 0x00 0xff 0xff` stripped. We re-append it before decompressing.
+///
+/// `max_output_bytes` caps the decompressed size to prevent zip-bomb DoS.
+/// Called after message assembly (all fragments concatenated), so the input
+/// is a complete compressed message.
+pub(crate) fn inflate_permessage_deflate(
+    compressed: &[u8],
+    decompressor: &mut flate2::Decompress,
+    max_output_bytes: usize,
+) -> Option<bytes::Bytes> {
+    if compressed.is_empty() {
+        return Some(bytes::Bytes::new());
+    }
+
+    let mut input = Vec::with_capacity(compressed.len() + 4);
+    input.extend_from_slice(compressed);
+    input.extend_from_slice(&[0x00, 0x00, 0xff, 0xff]);
+
+    let cap = max_output_bytes.min(16 * 1024 * 1024); // hard cap 16 MB
+    let mut output = Vec::with_capacity(compressed.len().saturating_mul(4).min(cap));
+
+    // decompress_vec makes a single inflate() call — loop until all input
+    // is consumed or the output cap is reached.
+    let mut consumed = 0usize;
+    loop {
+        let before_in = decompressor.total_in();
+        let before_out = decompressor.total_out();
+        let result = decompressor.decompress_vec(
+            &input[consumed..],
+            &mut output,
+            flate2::FlushDecompress::Sync,
+        );
+        let ate = (decompressor.total_in() - before_in) as usize;
+        let produced = (decompressor.total_out() - before_out) as usize;
+        consumed += ate;
+
+        match result {
+            Ok(flate2::Status::Ok | flate2::Status::StreamEnd) => {
+                if output.len() > cap {
+                    output.truncate(cap);
+                }
+                return Some(bytes::Bytes::from(output));
+            }
+            Ok(flate2::Status::BufError) => {
+                if output.len() >= cap {
+                    output.truncate(cap);
+                    return Some(bytes::Bytes::from(output));
+                }
+                if ate == 0 && produced == 0 {
+                    // No progress — avoid infinite loop.
+                    output.reserve(4096.min(cap - output.len()));
+                    if output.capacity() == output.len() {
+                        return Some(bytes::Bytes::from(output));
+                    }
+                } else {
+                    output.reserve(compressed.len().saturating_mul(2).min(cap - output.len()));
+                }
+            }
+            Err(error) => {
+                tracing::debug!(
+                    compressed_len = compressed.len(),
+                    consumed,
+                    output_len = output.len(),
+                    error = %error,
+                    "permessage-deflate inflate failed"
+                );
+                // Reset the decompressor to prevent cascade failures —
+                // after an error the internal zlib state is invalid and
+                // every subsequent call would also fail.
+                decompressor.reset(false);
+                return None;
+            }
+        }
     }
 }

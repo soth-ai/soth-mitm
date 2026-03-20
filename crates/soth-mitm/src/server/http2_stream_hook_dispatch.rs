@@ -293,6 +293,7 @@ pub(crate) async fn dispatch_sse_chunks_from_buffer(
                     payload: bytes::Bytes::from(event.data),
                     sequence,
                     frame_kind: FrameKind::SseData,
+                    direction: None,
                 },
             )
             .await;
@@ -311,6 +312,7 @@ pub(crate) async fn dispatch_sse_chunks_from_buffer(
                     payload: bytes::Bytes::from(event.data),
                     sequence,
                     frame_kind: FrameKind::SseData,
+                    direction: None,
                 },
             )
             .await;
@@ -344,6 +346,7 @@ pub(crate) async fn dispatch_ndjson_chunks_from_buffer(
                     payload,
                     sequence,
                     frame_kind: FrameKind::NdjsonLine,
+                    direction: None,
                 },
             )
             .await;
@@ -377,6 +380,7 @@ pub(crate) async fn dispatch_grpc_chunks_from_buffer(
                     payload,
                     sequence,
                     frame_kind: FrameKind::GrpcMessage,
+                    direction: None,
                 },
             )
             .await;

@@ -66,6 +66,7 @@ where
                     payload: bytes::Bytes::from(payload),
                     sequence,
                     frame_kind: FrameKind::GrpcMessage,
+                    direction: None,
                 },
             )
             .await;
