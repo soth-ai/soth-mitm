@@ -34,7 +34,7 @@ pub(crate) async fn handle_client<P, S>(
     process_info: Option<ProcessInfo>,
     max_connect_head_bytes: usize,
     max_http_head_bytes: usize,
-    flow_guard: &mut crate::server::runtime_governor::FlowRuntimeGuard,
+    flow_guard: &mut Option<crate::server::runtime_governor::FlowRuntimeGuard>,
 ) -> io::Result<()>
 where
     P: PolicyEngine + Send + Sync + 'static,
@@ -67,7 +67,7 @@ async fn handle_client_inner<P, S>(
     process_info: Option<ProcessInfo>,
     max_connect_head_bytes: usize,
     max_http_head_bytes: usize,
-    flow_guard: &mut crate::server::runtime_governor::FlowRuntimeGuard,
+    flow_guard: &mut Option<crate::server::runtime_governor::FlowRuntimeGuard>,
 ) -> io::Result<()>
 where
     P: PolicyEngine + Send + Sync + 'static,
@@ -143,7 +143,7 @@ where
                     input,
                     max_http_head_bytes,
                     listener_addr,
-                    Some(flow_guard),
+                    flow_guard,
                 )
                 .await;
             }
@@ -290,7 +290,7 @@ where
 
     match action {
         FlowAction::Block => {
-            flow_guard.release_permit();
+            // No permit to release — tunnel/block paths never acquire one.
             write_proxy_response(&mut downstream, "403 Forbidden", &policy_snapshot.reason).await?;
             emit_stream_closed(
                 &engine,
@@ -303,9 +303,7 @@ where
             Ok(())
         }
         FlowAction::Tunnel => {
-            // Release the intercept permit — tunnel connections are blind
-            // byte-copy and don't use the detect/classify pipeline.
-            flow_guard.release_permit();
+            // No permit needed — tunnel connections are blind byte-copy.
             tunnel_connection(
                 engine,
                 context,
@@ -317,6 +315,29 @@ where
             .await
         }
         FlowAction::Intercept => {
+            // Acquire permit only for the intercept path — this is the
+            // only path that uses the detect+classify pipeline.
+            let permit = match runtime_governor.try_acquire_flow_permit() {
+                Some(p) => p,
+                None => {
+                    runtime_governor.mark_flow_permit_denial();
+                    tracing::warn!(
+                        flow_id = context.flow_id.as_u64(),
+                        "intercept permit denied; falling back to tunnel"
+                    );
+                    // Graceful degradation: tunnel instead of 503
+                    return tunnel_connection(
+                        engine,
+                        context,
+                        route,
+                        &mut downstream,
+                        &mut input,
+                        header_len,
+                    )
+                    .await;
+                }
+            };
+            *flow_guard = Some(runtime_governor.begin_flow(permit));
             intercept_http_connection(
                 engine,
                 cert_store,

@@ -37,7 +37,7 @@ pub(crate) async fn handle_forward_http1_proxy_request<P, S, D>(
     initial_head: Vec<u8>,
     max_http_head_bytes: usize,
     listener_addr: Option<std::net::SocketAddr>,
-    flow_guard: Option<&mut crate::server::runtime_governor::FlowRuntimeGuard>,
+    flow_guard: &mut Option<crate::server::runtime_governor::FlowRuntimeGuard>,
 ) -> io::Result<()>
 where
     P: PolicyEngine + Send + Sync + 'static,
@@ -223,9 +223,7 @@ where
     };
 
     if policy_snapshot.action == FlowAction::Tunnel {
-        if let Some(guard) = flow_guard {
-            guard.release_permit();
-        }
+        // No permit needed for tunnel — never acquired.
         return tunnel_http1_forward_stream(
             engine,
             context,

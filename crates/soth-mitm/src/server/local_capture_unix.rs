@@ -6,7 +6,6 @@ use super::flow_forward_proxy_http1::write_forward_proxy_error_response;
 use super::flow_forward_proxy_http1_helpers::is_forward_http1_request_candidate;
 use super::flow_policy_snapshot::clear_flow_policy_snapshot;
 use super::http_head_parser::read_connect_head;
-use super::io_timeouts::{shutdown_with_idle_timeout, write_all_with_idle_timeout};
 use super::socket_hardening::{
     apply_per_connection_socket_hardening, bind_unix_listener_with_socket_hardening,
     is_benign_socket_close_error,
@@ -59,29 +58,8 @@ where
         loop {
             tokio::select! {
                 accepted = listener.accept() => {
-                    let (mut stream, client_addr) = accepted?;
+                    let (stream, client_addr) = accepted?;
                     apply_per_connection_socket_hardening(&stream);
-                    let Some(flow_permit) = self.runtime_governor.try_acquire_flow_permit() else {
-                        self.runtime_governor.mark_flow_permit_denial();
-                        let snapshot = self.runtime_governor.snapshot();
-                        tracing::error!(
-                            active_flows = snapshot.active_flows,
-                            max_active_flows = snapshot.max_active_flows,
-                            flow_permit_denial_count = snapshot.flow_permit_denial_count,
-                            budget_denial_count = snapshot.budget_denial_count,
-                            event_queue_depth = snapshot.event_queue_depth,
-                            "runtime governor denied flow permit on tcp listener; returning 503"
-                        );
-                        let _ = write_all_with_idle_timeout(
-                            &mut stream,
-                            b"HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\nContent-Length: 36\r\n\r\nproxy flow capacity exceeded; try later",
-                            "flow_capacity_denied_write",
-                        )
-                        .await;
-                        let _ =
-                            shutdown_with_idle_timeout(&mut stream, "flow_capacity_denied_shutdown").await;
-                        continue;
-                    };
                     let runtime = RuntimeHandles {
                         engine: Arc::clone(&self.engine),
                         cert_store: Arc::clone(&self.cert_store),
@@ -97,7 +75,6 @@ where
                     let flow_hooks_for_register = Arc::clone(&self.flow_hooks);
                     let flow_id_pre = self.engine.allocate_flow_id();
                     let join_handle = tokio::spawn(async move {
-                        let mut flow_guard = runtime.runtime_governor.begin_flow(flow_permit);
                         let accept_context = unknown_context(flow_id_pre, client_addr.clone());
                         let process_info = runtime
                             .flow_hooks
@@ -115,7 +92,7 @@ where
                             process_info,
                             max_connect_head_bytes,
                             max_http_head_bytes,
-                            &mut flow_guard,
+                            &mut None,
                         )
                         .await
                         {
@@ -123,7 +100,6 @@ where
                                 tracing::warn!(error = %error, "connection handling failed");
                             }
                         }
-                        drop(flow_guard);
                     });
                     flow_hooks_for_register.register_task_abort_handle(flow_id_pre, join_handle.abort_handle());
                 }
@@ -134,26 +110,6 @@ where
                         self.config.unix_socket_path.as_deref(),
                         peer_addr.as_pathname(),
                     );
-                    let Some(flow_permit) = self.runtime_governor.try_acquire_flow_permit() else {
-                        self.runtime_governor.mark_flow_permit_denial();
-                        let snapshot = self.runtime_governor.snapshot();
-                        tracing::error!(
-                            active_flows = snapshot.active_flows,
-                            max_active_flows = snapshot.max_active_flows,
-                            flow_permit_denial_count = snapshot.flow_permit_denial_count,
-                            budget_denial_count = snapshot.budget_denial_count,
-                            event_queue_depth = snapshot.event_queue_depth,
-                            "runtime governor denied flow permit on unix listener; returning 503"
-                        );
-                        let mut stream = stream;
-                        let _ = write_forward_proxy_error_response(
-                            &mut stream,
-                            "503 Service Unavailable",
-                            "proxy flow capacity exceeded; try later",
-                        )
-                        .await;
-                        continue;
-                    };
                     let runtime = RuntimeHandles {
                         engine: Arc::clone(&self.engine),
                         cert_store: Arc::clone(&self.cert_store),
@@ -168,7 +124,6 @@ where
                     let flow_hooks_for_register = Arc::clone(&self.flow_hooks);
                     let flow_id_pre = self.engine.allocate_flow_id();
                     let join_handle = tokio::spawn(async move {
-                        let _flow_guard = runtime.runtime_governor.begin_flow(flow_permit);
                         let accept_context = unknown_context(flow_id_pre, client_addr.clone());
                         let process_info = runtime
                             .flow_hooks
@@ -354,7 +309,7 @@ where
         input,
         max_http_head_bytes,
         None,
-        None, // unix local-capture: no flow permit to release
+        &mut None, // unix local-capture: no flow permit
     )
     .await
 }

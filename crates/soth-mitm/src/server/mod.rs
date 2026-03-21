@@ -20,9 +20,7 @@ use event_emitters::{ingest_tls_learning_signal_with_audit, tls_error_to_io_inva
 use flow_connect_tunnel::handle_client;
 pub use flow_hooks::{FlowHooks, NoopFlowHooks, RawRequest, RawResponse, StreamChunk};
 use flow_intercept::load_upstream_client_auth_pem;
-use io_timeouts::{
-    install_io_timeout_config, shutdown_with_idle_timeout, write_all_with_idle_timeout,
-};
+use io_timeouts::install_io_timeout_config;
 #[cfg(feature = "__internal")]
 pub use mitmproxy_tls_ops::MitmproxyTlsHook;
 pub use mitmproxy_tls_ops::{
@@ -395,7 +393,7 @@ where
     pub async fn run_with_listener(self, listener: TcpListener) -> io::Result<()> {
         let accept_retry_backoff_ms = self.config.accept_retry_backoff_ms.max(1);
         loop {
-            let (mut stream, client_addr) = match listener.accept().await {
+            let (stream, client_addr) = match listener.accept().await {
                 Ok(parts) => parts,
                 Err(error) if is_transient_listener_accept_error(&error) => {
                     tracing::warn!(
@@ -410,27 +408,9 @@ where
                 Err(error) => return Err(error),
             };
             apply_per_connection_socket_hardening(&stream);
-            let Some(flow_permit) = self.runtime_governor.try_acquire_flow_permit() else {
-                self.runtime_governor.mark_flow_permit_denial();
-                let snapshot = self.runtime_governor.snapshot();
-                tracing::error!(
-                    active_flows = snapshot.active_flows,
-                    max_active_flows = snapshot.max_active_flows,
-                    flow_permit_denial_count = snapshot.flow_permit_denial_count,
-                    budget_denial_count = snapshot.budget_denial_count,
-                    event_queue_depth = snapshot.event_queue_depth,
-                    "runtime governor denied flow permit; returning 503"
-                );
-                let _ = write_all_with_idle_timeout(
-                    &mut stream,
-                    b"HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\nContent-Length: 36\r\n\r\nproxy flow capacity exceeded; try later",
-                    "flow_capacity_denied_write",
-                )
-                .await;
-                let _ =
-                    shutdown_with_idle_timeout(&mut stream, "flow_capacity_denied_shutdown").await;
-                continue;
-            };
+            // No permit acquired here — the accept loop must never block.
+            // Permits are acquired lazily inside handle_client only when the
+            // intercept path is taken. Tunnel/block paths never need a permit.
             let runtime = RuntimeHandles {
                 engine: Arc::clone(&self.engine),
                 cert_store: Arc::clone(&self.cert_store),
@@ -446,7 +426,6 @@ where
             let flow_hooks_for_register = Arc::clone(&self.flow_hooks);
             let flow_id_pre = self.engine.allocate_flow_id();
             let join_handle = tokio::spawn(async move {
-                let mut flow_guard = runtime.runtime_governor.begin_flow(flow_permit);
                 let accept_context = unknown_context(flow_id_pre, client_addr.clone());
                 let process_info = runtime
                     .flow_hooks
@@ -464,7 +443,7 @@ where
                     process_info,
                     max_connect_head_bytes,
                     max_http_head_bytes,
-                    &mut flow_guard,
+                    &mut None,
                 )
                 .await
                 {
@@ -472,7 +451,6 @@ where
                         tracing::warn!(error = %error, "connection handling failed");
                     }
                 }
-                drop(flow_guard);
             });
             flow_hooks_for_register
                 .register_task_abort_handle(flow_id_pre, join_handle.abort_handle());
