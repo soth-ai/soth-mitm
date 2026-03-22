@@ -56,7 +56,10 @@ where
     let skip_upstream_verify_for_flow = engine.config.upstream_tls_insecure_skip_verify
         || policy_override_state.skip_upstream_verify;
     let upstream_tcp = match connect_via_route(&route, RouteConnectIntent::TargetTunnel).await {
-        Ok(stream) => stream,
+        Ok(stream) => {
+            super::socket_hardening::apply_upstream_socket_hardening(&stream);
+            stream
+        }
         Err(error) => {
             let detail = format!(
                 "upstream_connect_failed[{}]: {error}",

@@ -20,6 +20,8 @@ pub use config::{
     RouteMode, TlsFingerprintClass, TlsFingerprintMode, TlsProfile, UpstreamClientAuthMode,
     UpstreamSniMode,
 };
+#[cfg(all(test, not(feature = "__internal")))]
+pub use config::{CompatibilityOverrideConfig, RouteEndpointConfig};
 #[cfg(test)]
 pub use config::{EventSinkConfig, EventSinkKind};
 use flow_state::FlowStateTracker;

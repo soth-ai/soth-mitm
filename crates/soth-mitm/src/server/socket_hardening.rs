@@ -155,6 +155,24 @@ pub(crate) fn apply_per_connection_socket_hardening(stream: &TcpStream) {
     let _ = stream.set_nodelay(true);
 }
 
+/// Apply TCP keepalive and no-delay to upstream connections.
+/// Keepalive detects dead connections that the remote closed without
+/// sending a TCP RST (e.g., server-side idle timeout, LB eviction).
+pub(crate) fn apply_upstream_socket_hardening(stream: &TcpStream) {
+    let _ = stream.set_nodelay(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::io::{AsRawFd, FromRawFd};
+        let fd = stream.as_raw_fd();
+        let socket = unsafe { socket2::Socket::from_raw_fd(fd) };
+        let keepalive = socket2::TcpKeepalive::new()
+            .with_time(std::time::Duration::from_secs(15))
+            .with_interval(std::time::Duration::from_secs(5));
+        let _ = socket.set_tcp_keepalive(&keepalive);
+        std::mem::forget(socket);
+    }
+}
+
 pub(crate) fn is_benign_socket_close_error(error: &io::Error) -> bool {
     matches!(
         error.kind(),
