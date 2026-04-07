@@ -29,6 +29,10 @@ pub(crate) struct DeflateConfig {
     pub(crate) server_no_context_takeover: bool,
     /// Client resets compression context after each message.
     pub(crate) client_no_context_takeover: bool,
+    /// Server max window bits (default 15).
+    pub(crate) server_max_window_bits: u8,
+    /// Client max window bits (default 15).
+    pub(crate) client_max_window_bits: u8,
 }
 
 /// Parse `DeflateConfig` from a 101 response's `Sec-WebSocket-Extensions` header.
@@ -42,13 +46,34 @@ pub(crate) fn parse_deflate_config(headers: &[super::HttpHeader]) -> Option<Defl
         if !value.contains("permessage-deflate") {
             continue;
         }
+        let server_bits = parse_window_bits(&value, "server_max_window_bits");
+        let client_bits = parse_window_bits(&value, "client_max_window_bits");
         return Some(DeflateConfig {
             server_no_context_takeover: value.contains("server_no_context_takeover"),
             client_no_context_takeover: value.contains("client_no_context_takeover"),
+            server_max_window_bits: server_bits,
+            client_max_window_bits: client_bits,
         });
     }
     None
 }
+/// Parse `server_max_window_bits=N` or `client_max_window_bits=N` from the extension header.
+/// Returns 15 (default) if not specified or invalid.
+fn parse_window_bits(header: &str, param: &str) -> u8 {
+    if let Some(pos) = header.find(param) {
+        let rest = &header[pos + param.len()..];
+        if let Some(rest) = rest.strip_prefix('=') {
+            let num: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+            if let Ok(bits) = num.parse::<u8>() {
+                if (8..=15).contains(&bits) {
+                    return bits;
+                }
+            }
+        }
+    }
+    15
+}
+
 /// Maximum time to wait for the reverse close frame after forwarding a close
 /// frame from the peer. Per RFC 6455 Section 5.5.1, the remote endpoint MUST
 /// reply with a close frame, but we bound the wait to avoid hanging forever.
@@ -500,6 +525,12 @@ pub(crate) fn inflate_permessage_deflate(
                 // after an error the internal zlib state is invalid and
                 // every subsequent call would also fail.
                 decompressor.reset(false);
+                // Return partial output if we got any — partial decompression
+                // is better than nothing for content inspection (WebSocket
+                // message parsing can work with incomplete JSON).
+                if !output.is_empty() {
+                    return Some(bytes::Bytes::from(output));
+                }
                 return None;
             }
         }
