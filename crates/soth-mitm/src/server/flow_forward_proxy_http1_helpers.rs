@@ -193,6 +193,12 @@ pub(crate) fn build_upstream_http1_request_head(
         if header.name.eq_ignore_ascii_case("proxy-connection") {
             continue;
         }
+        // Strip WebSocket compression extension to force uncompressed frames.
+        // This avoids permessage-deflate decompression issues in the observer
+        // that cause content inspection to fail for WebSocket-based AI apps.
+        if header.name.eq_ignore_ascii_case("sec-websocket-extensions") {
+            continue;
+        }
         out.extend_from_slice(header.name.as_bytes());
         out.extend_from_slice(b": ");
         out.extend_from_slice(header.value.as_bytes());
