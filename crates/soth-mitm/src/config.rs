@@ -83,6 +83,7 @@ pub struct UpstreamConfig {
     pub retry_on_failure: bool,
     pub retry_delay_ms: u64,
     pub verify_upstream_tls: bool,
+    pub dns_nameservers: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -195,6 +196,7 @@ impl Default for UpstreamConfig {
             retry_on_failure: false,
             retry_delay_ms: 200,
             verify_upstream_tls: true,
+            dns_nameservers: None,
         }
     }
 }

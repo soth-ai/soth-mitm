@@ -61,6 +61,7 @@ pub(crate) fn build_runtime_server<H: InterceptHandler>(
         ),
         h2_body_idle_timeout: Duration::from_millis(config.upstream.h2_body_idle_timeout_ms.max(1)),
         h2_response_overflow_mode: config.upstream.h2_response_overflow_mode,
+        dns_nameservers: config.upstream.dns_nameservers.clone(),
         unix_socket_path: config
             .unix_socket_path
             .as_ref()

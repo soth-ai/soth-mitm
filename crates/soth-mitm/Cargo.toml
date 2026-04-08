@@ -75,6 +75,9 @@ soketto = { workspace = true }
 pin-project-lite = "0.2"
 socket2 = "0.5"
 
+# DNS
+hickory-resolver = { workspace = true }
+
 # Compression
 brotli = "8.0.2"
 flate2 = "1"

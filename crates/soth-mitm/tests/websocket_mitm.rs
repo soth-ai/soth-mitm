@@ -49,6 +49,7 @@ async fn start_sidecar_with_sink(
         stream_stage_timeout: std::time::Duration::from_secs(5),
         h2_body_idle_timeout: std::time::Duration::from_secs(5),
         h2_response_overflow_mode: soth_mitm::test_server::H2ResponseOverflowMode::TruncateContinue,
+        dns_nameservers: None,
         unix_socket_path: None,
     };
     start_sidecar_with_sink_and_config(sink, config, sidecar_config).await
@@ -1489,6 +1490,7 @@ async fn websocket_idle_session_survives_when_within_ws_timeout_policy() {
         stream_stage_timeout: std::time::Duration::from_secs(5),
         h2_body_idle_timeout: std::time::Duration::from_secs(5),
         h2_response_overflow_mode: soth_mitm::test_server::H2ResponseOverflowMode::TruncateContinue,
+        dns_nameservers: None,
         unix_socket_path: None,
     };
     let (proxy_addr, proxy_task, sink) =

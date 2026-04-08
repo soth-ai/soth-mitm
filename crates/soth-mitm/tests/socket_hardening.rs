@@ -28,6 +28,7 @@ fn sidecar_config_for_addr(listen_addr: &str) -> SidecarConfig {
         stream_stage_timeout: Duration::from_secs(5),
         h2_body_idle_timeout: Duration::from_secs(5),
         h2_response_overflow_mode: soth_mitm::test_server::H2ResponseOverflowMode::TruncateContinue,
+        dns_nameservers: None,
         unix_socket_path: None,
     }
 }

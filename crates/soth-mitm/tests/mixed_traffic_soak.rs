@@ -192,6 +192,7 @@ async fn start_sidecar_with_timeouts(
         stream_stage_timeout,
         h2_body_idle_timeout,
         h2_response_overflow_mode: soth_mitm::test_server::H2ResponseOverflowMode::TruncateContinue,
+        dns_nameservers: None,
         unix_socket_path: None,
     };
     let engine = build_engine(config);
@@ -244,6 +245,7 @@ async fn start_sidecar_with_vec_sink_and_timeouts(
         stream_stage_timeout,
         h2_body_idle_timeout,
         h2_response_overflow_mode: soth_mitm::test_server::H2ResponseOverflowMode::TruncateContinue,
+        dns_nameservers: None,
         unix_socket_path: None,
     };
     let engine = build_engine_with_sink(config, sink.clone());

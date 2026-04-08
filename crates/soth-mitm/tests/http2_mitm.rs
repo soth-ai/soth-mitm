@@ -92,6 +92,7 @@ async fn start_sidecar_with_sink_and_h2_reliability(
         stream_stage_timeout,
         h2_body_idle_timeout,
         h2_response_overflow_mode,
+        dns_nameservers: None,
         unix_socket_path: None,
     };
     let mut config = config;
@@ -128,6 +129,7 @@ async fn start_sidecar_with_flow_hooks(
         stream_stage_timeout: std::time::Duration::from_secs(5),
         h2_body_idle_timeout: std::time::Duration::from_secs(5),
         h2_response_overflow_mode: soth_mitm::test_server::H2ResponseOverflowMode::TruncateContinue,
+        dns_nameservers: None,
         unix_socket_path: None,
     };
     let engine = build_engine(config, sink.clone());

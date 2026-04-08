@@ -60,6 +60,7 @@ pub struct SidecarConfig {
     pub stream_stage_timeout: Duration,
     pub h2_body_idle_timeout: Duration,
     pub h2_response_overflow_mode: H2ResponseOverflowMode,
+    pub dns_nameservers: Option<Vec<String>>,
     pub unix_socket_path: Option<String>,
 }
 impl Default for SidecarConfig {
@@ -76,6 +77,7 @@ impl Default for SidecarConfig {
             stream_stage_timeout: Duration::from_secs(30),
             h2_body_idle_timeout: Duration::from_secs(120),
             h2_response_overflow_mode: H2ResponseOverflowMode::TruncateContinue,
+            dns_nameservers: None,
             unix_socket_path: None,
         }
     }
@@ -211,11 +213,13 @@ where
             config.h2_body_idle_timeout,
             config.h2_response_overflow_mode,
         );
+        dns_resolver::install_dns_resolver(config.dns_nameservers.as_deref());
         tracing::info!(
             stream_stage_timeout_ms = config.stream_stage_timeout.as_millis() as u64,
             h2_body_idle_timeout_ms = config.h2_body_idle_timeout.as_millis() as u64,
             h2_response_overflow_mode = ?config.h2_response_overflow_mode,
-            "installed sidecar IO timeout config"
+            dns_nameservers = ?config.dns_nameservers,
+            "installed sidecar IO timeout and DNS config"
         );
         let tls_diagnostics = Arc::new(TlsDiagnostics::default());
         let tls_learning = Arc::new(TlsLearningGuardrails::new());
@@ -512,6 +516,7 @@ mod downstream_tls;
 mod tls_profile_mapping;
 mod tls_revocation_metadata;
 // IO utilities
+mod dns_resolver;
 mod io_timeouts;
 mod shutdown_control;
 mod socket_hardening;
