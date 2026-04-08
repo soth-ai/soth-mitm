@@ -38,14 +38,30 @@ pub(crate) async fn resolve_host(host: &str, port: u16) -> std::io::Result<Vec<S
 
     let resolver = DNS_RESOLVER.get_or_init(|| build_resolver(None));
 
+    let start = std::time::Instant::now();
     let response = resolver.lookup_ip(host).await.map_err(|error| {
+        let elapsed = start.elapsed();
+        tracing::warn!(
+            host,
+            elapsed_ms = elapsed.as_millis() as u64,
+            error = %error,
+            "dns resolution failed"
+        );
         std::io::Error::new(
             resolve_error_kind(&error),
             format!("dns resolution failed for {host}: {error}"),
         )
     })?;
 
+    let elapsed = start.elapsed();
     let addrs: Vec<SocketAddr> = response.iter().map(|ip| SocketAddr::new(ip, port)).collect();
+    tracing::debug!(
+        host,
+        port,
+        elapsed_ms = elapsed.as_millis() as u64,
+        addr_count = addrs.len(),
+        "dns resolution succeeded"
+    );
     Ok(addrs)
 }
 
@@ -72,6 +88,17 @@ fn build_resolver(nameservers: Option<&[String]>) -> TokioResolver {
     } else {
         system_config()
     };
+
+    let nameserver_addrs: Vec<String> = config
+        .name_servers()
+        .iter()
+        .map(|ns| format!("{}:{}", ns.socket_addr, ns.protocol))
+        .collect();
+    tracing::info!(
+        nameservers = ?nameserver_addrs,
+        custom = has_custom,
+        "initializing dns resolver"
+    );
 
     let opts = resolver_opts();
     let mut builder =

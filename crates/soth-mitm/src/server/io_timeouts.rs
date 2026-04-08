@@ -105,8 +105,18 @@ pub(crate) async fn connect_with_upstream_timeout(
     let timeout = io_timeout_config().upstream_connect_timeout;
     let deadline = tokio::time::Instant::now() + timeout;
 
+    let start = std::time::Instant::now();
     let connect_result = connect_with_happy_eyeballs(host, port, deadline).await;
     if is_connect_timeout_error(&connect_result) {
+        let elapsed = start.elapsed();
+        tracing::warn!(
+            host,
+            port,
+            stage,
+            elapsed_ms = elapsed.as_millis() as u64,
+            timeout_ms = timeout.as_millis() as u64,
+            "upstream connect timed out"
+        );
         runtime_governor::mark_stream_stage_timeout_global();
         runtime_governor::mark_stuck_flow_global();
         return Err(timeout_error(
