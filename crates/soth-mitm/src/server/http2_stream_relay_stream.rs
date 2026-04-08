@@ -8,7 +8,7 @@ use super::flow_hook_http_helpers::{
     normalize_request_body_for_handler, sanitize_block_status,
     strip_hop_by_hop_and_transport_headers,
 };
-use super::flow_hooks::{FlowHooks, RawRequest};
+use super::flow_hooks::{FlowHooks, RawRequest, RawResponse};
 use super::http2_relay_support::{
     detect_grpc_request, enforce_h2_request_header_limit, enforce_h2_response_header_limit,
     h2_error_to_io, h2_reason_for_downstream_reset, is_h2_nonfatal_stream_error,
@@ -656,6 +656,24 @@ where
             }
         };
 
+    // For streaming responses (SSE, NDJSON, gRPC), emit on_response with the
+    // response headers before body relay starts.  This lets the handler
+    // transition from pending → streaming so that on_stream_chunk and
+    // on_stream_end callbacks can be processed correctly.
+    if stream_dispatcher.is_some() {
+        let headers = build_handler_header_map_from_h2(&response_parts.headers);
+        flow_hooks
+            .on_response(
+                stream_context.clone(),
+                RawResponse {
+                    status: response_parts.status.as_u16(),
+                    headers,
+                    body: bytes::Bytes::new(),
+                },
+            )
+            .await;
+    }
+
     let relay_outcome = relay_h2_response_body_with_incremental_forwarding(
         upstream_response_body,
         &mut downstream_response_stream,
@@ -687,6 +705,11 @@ where
             max_handler_body,
         )
         .await;
+    } else {
+        // Streaming responses (SSE, NDJSON, gRPC) need an explicit
+        // on_stream_end after the body relay completes so the handler
+        // can finalize usage tracking and emit the telemetry event.
+        flow_hooks.on_stream_end(stream_context.clone()).await;
     }
     Ok(())
 }

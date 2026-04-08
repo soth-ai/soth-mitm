@@ -154,23 +154,20 @@ async fn resolve_upstream_socket_addrs(
         ));
     }
 
-    let resolved = tokio::time::timeout(
-        remaining,
-        super::dns_resolver::resolve_host(host, port),
-    )
-    .await
-    .map_err(|_| {
-        std::io::Error::new(
-            std::io::ErrorKind::TimedOut,
-            "upstream address resolution timed out",
-        )
-    })?
-    .map_err(|error| {
-        std::io::Error::new(
-            error.kind(),
-            format!("upstream address resolution failed: {error}"),
-        )
-    })?;
+    let resolved = tokio::time::timeout(remaining, super::dns_resolver::resolve_host(host, port))
+        .await
+        .map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "upstream address resolution timed out",
+            )
+        })?
+        .map_err(|error| {
+            std::io::Error::new(
+                error.kind(),
+                format!("upstream address resolution failed: {error}"),
+            )
+        })?;
 
     let addrs = interleave_happy_eyeballs_addrs(resolved);
     if addrs.is_empty() {

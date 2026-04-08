@@ -46,7 +46,27 @@ impl H2ResponseStreamHookDispatcher {
                 if *stream_ended {
                     return;
                 }
-                for event in parser.push_bytes(chunk) {
+                // If the data is compressed (not valid UTF-8), bypass SSE
+                // parsing and emit the raw bytes as an opaque chunk so the
+                // handler can at least accumulate payload byte counts for
+                // token estimation.
+                if std::str::from_utf8(chunk).is_err() {
+                    flow_hooks
+                        .on_stream_chunk(
+                            stream_context.clone(),
+                            StreamChunk {
+                                payload: bytes::Bytes::copy_from_slice(chunk),
+                                sequence: *sequence,
+                                frame_kind: FrameKind::SseData,
+                                direction: None,
+                            },
+                        )
+                        .await;
+                    *sequence += 1;
+                    return;
+                }
+                let events = parser.push_bytes(chunk);
+                for event in events {
                     let done = event.data == "[DONE]";
                     flow_hooks
                         .on_stream_chunk(

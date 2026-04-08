@@ -54,7 +54,10 @@ pub(crate) async fn resolve_host(host: &str, port: u16) -> std::io::Result<Vec<S
     })?;
 
     let elapsed = start.elapsed();
-    let addrs: Vec<SocketAddr> = response.iter().map(|ip| SocketAddr::new(ip, port)).collect();
+    let addrs: Vec<SocketAddr> = response
+        .iter()
+        .map(|ip| SocketAddr::new(ip, port))
+        .collect();
     tracing::debug!(
         host,
         port,
@@ -126,15 +129,14 @@ fn build_custom_config(nameservers: &[String]) -> ResolverConfig {
 }
 
 fn system_config() -> ResolverConfig {
-    let (config, _system_opts) = hickory_resolver::system_conf::read_system_conf().unwrap_or_else(
-        |error| {
+    let (config, _system_opts) =
+        hickory_resolver::system_conf::read_system_conf().unwrap_or_else(|error| {
             tracing::warn!(
                 error = %error,
                 "failed to read system dns config; falling back to Cloudflare public DNS"
             );
             (ResolverConfig::cloudflare(), ResolverOpts::default())
-        },
-    );
+        });
     config
 }
 
