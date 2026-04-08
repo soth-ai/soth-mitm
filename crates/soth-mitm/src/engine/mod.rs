@@ -15,13 +15,13 @@ pub mod server;
 pub use crate::config::InterceptMode;
 #[cfg(feature = "__internal")]
 pub use config::{CompatibilityOverrideConfig, RouteEndpointConfig};
+#[cfg(all(test, not(feature = "__internal")))]
+pub use config::{CompatibilityOverrideConfig, RouteEndpointConfig};
 pub use config::{
     ConnectParseMode, DownstreamCertProfile, DownstreamTlsBackend, MitmConfig, MitmConfigError,
     RouteMode, TlsFingerprintClass, TlsFingerprintMode, TlsProfile, UpstreamClientAuthMode,
     UpstreamSniMode,
 };
-#[cfg(all(test, not(feature = "__internal")))]
-pub use config::{CompatibilityOverrideConfig, RouteEndpointConfig};
 #[cfg(test)]
 pub use config::{EventSinkConfig, EventSinkKind};
 use flow_state::FlowStateTracker;

@@ -507,6 +507,7 @@ mod http_head_parser;
 mod http_head_parser_api;
 mod http_head_parser_smuggling;
 // TLS helpers
+pub(crate) mod clienthello_parser;
 mod downstream_tls;
 mod tls_profile_mapping;
 mod tls_revocation_metadata;

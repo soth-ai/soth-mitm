@@ -5,17 +5,42 @@ use crate::observe::FlowContext;
 use crate::protocol::ApplicationProtocol;
 
 use crate::runtime::connection_id::connection_id_for_flow_id;
-use crate::types::{ConnectionInfo, ConnectionMeta, ProcessInfo, SocketFamily, TlsInfo};
+use crate::types::{
+    ConnectionInfo, ConnectionMeta, ProcessInfo, SocketFamily, TlsClientFingerprint, TlsInfo,
+};
 
 pub(crate) fn connection_meta_from_accept_context(
     context: &FlowContext,
     process_info: Option<ProcessInfo>,
+    fingerprint: Option<&TlsClientFingerprint>,
 ) -> ConnectionMeta {
+    let mut tls_info = tls_info_from_flow_context(context);
+
+    // Merge JA4 fingerprint data if available.
+    if let Some(fp) = fingerprint {
+        match tls_info.as_mut() {
+            Some(info) => {
+                info.ja4_hash = Some(fp.ja4.clone());
+                info.tls_version = Some(fp.tls_version);
+            }
+            None => {
+                tls_info = Some(TlsInfo {
+                    sni: None,
+                    negotiated_proto: None,
+                    ja4_hash: Some(fp.ja4.clone()),
+                    tls_version: Some(fp.tls_version),
+                });
+            }
+        }
+    }
+
     ConnectionMeta {
         connection_id: connection_id_for_flow_id(context.flow_id),
         socket_family: socket_family_from_flow_context(context),
         process_info,
-        tls_info: tls_info_from_flow_context(context),
+        tls_info,
+        h2_connection_id: None,
+        h2_stream_id: None,
     }
 }
 
@@ -127,6 +152,8 @@ fn tls_info_from_protocol_hints(context: &FlowContext) -> Option<TlsInfo> {
         Some(TlsInfo {
             sni,
             negotiated_proto,
+            ja4_hash: None,
+            tls_version: None,
         })
     }
 }

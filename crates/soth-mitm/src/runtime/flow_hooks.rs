@@ -150,7 +150,7 @@ impl<H: InterceptHandler> FlowHooks for HandlerFlowHooks<H> {
             }
             flow_state.closed_flow_live.remove(&context.flow_id);
             flow_state.tls_intercepted_flow_ids.remove(&context.flow_id);
-            let connection_meta = connection_meta_from_accept_context(&context, process_info);
+            let connection_meta = connection_meta_from_accept_context(&context, process_info, None);
             let connection_meta = Arc::new(connection_meta);
             flow_state
                 .connection_meta_by_flow
@@ -471,6 +471,37 @@ impl<H: InterceptHandler> FlowHooks for HandlerFlowHooks<H> {
                 }
             }
             finalize_flow(context.flow_id, Arc::clone(&flow_state)).await;
+        })
+    }
+
+    fn update_connection_fingerprint(
+        &self,
+        flow_id: crate::types::FlowId,
+        fingerprint: &crate::types::TlsClientFingerprint,
+    ) -> Pin<Box<dyn Future<Output = ()> + Send>> {
+        let flow_state = Arc::clone(&self.flow_state);
+        let ja4 = fingerprint.ja4.clone();
+        let tls_version = fingerprint.tls_version;
+        Box::pin(async move {
+            if let Some(mut entry) = flow_state.connection_meta_by_flow.get_mut(&flow_id) {
+                // Replace the Arc with an updated copy containing the fingerprint.
+                let mut meta = (**entry).clone();
+                match meta.tls_info.as_mut() {
+                    Some(info) => {
+                        info.ja4_hash = Some(ja4);
+                        info.tls_version = Some(tls_version);
+                    }
+                    None => {
+                        meta.tls_info = Some(crate::types::TlsInfo {
+                            sni: None,
+                            negotiated_proto: None,
+                            ja4_hash: Some(ja4),
+                            tls_version: Some(tls_version),
+                        });
+                    }
+                }
+                *entry = Arc::new(meta);
+            }
         })
     }
 

@@ -106,6 +106,16 @@ pub trait FlowHooks: Send + Sync + 'static {
         Box::pin(async {})
     }
 
+    /// Update the stored connection metadata with a TLS client fingerprint
+    /// captured after the TLS handshake completes.
+    fn update_connection_fingerprint(
+        &self,
+        _flow_id: crate::types::FlowId,
+        _fingerprint: &crate::types::TlsClientFingerprint,
+    ) -> Pin<Box<dyn Future<Output = ()> + Send>> {
+        Box::pin(async {})
+    }
+
     /// Register the abort handle for a spawned connection task so the stale
     /// flow reaper can kill stuck tasks and release their semaphore permits.
     fn register_task_abort_handle(

@@ -93,18 +93,33 @@ impl AsyncWrite for DownstreamTlsStream {
     }
 }
 
+/// Accept the downstream TLS connection, returning both the TLS stream and
+/// an optional `TlsClientFingerprint` captured from the raw ClientHello
+/// bytes via TCP peek (before the TLS library consumes them).
 pub(crate) async fn accept_downstream_tls(
     backend: DownstreamTlsBackend,
     downstream: TcpStream,
     issued: &IssuedServerConfig,
     http2_enabled: bool,
-) -> io::Result<DownstreamTlsStream> {
-    match backend {
-        DownstreamTlsBackend::Rustls => accept_with_rustls(downstream, issued).await,
+) -> io::Result<(
+    DownstreamTlsStream,
+    Option<crate::types::TlsClientFingerprint>,
+)> {
+    // Peek at the raw ClientHello before the TLS library consumes it.
+    let fingerprint = {
+        let mut peek_buf = [0u8; 16384];
+        match downstream.peek(&mut peek_buf).await {
+            Ok(n) if n > 0 => super::clienthello_parser::parse_and_fingerprint(&peek_buf[..n]),
+            _ => None,
+        }
+    };
+
+    let stream = match backend {
+        DownstreamTlsBackend::Rustls => accept_with_rustls(downstream, issued).await?,
         DownstreamTlsBackend::Openssl => {
             #[cfg(not(target_os = "windows"))]
             {
-                return accept_with_openssl(downstream, issued, http2_enabled).await;
+                accept_with_openssl(downstream, issued, http2_enabled).await?
             }
             #[cfg(target_os = "windows")]
             {
@@ -116,7 +131,9 @@ pub(crate) async fn accept_downstream_tls(
                 ));
             }
         }
-    }
+    };
+
+    Ok((stream, fingerprint))
 }
 
 async fn accept_with_rustls(

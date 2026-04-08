@@ -131,6 +131,8 @@ pub struct StreamChunk {
 pub struct TlsInfo {
     pub sni: Option<String>,
     pub negotiated_proto: Option<String>,
+    pub ja4_hash: Option<String>,
+    pub tls_version: Option<TlsVersion>,
 }
 
 /// Metadata about the downstream connection (socket, TLS, process attribution).
@@ -140,6 +142,8 @@ pub struct ConnectionMeta {
     pub socket_family: SocketFamily,
     pub process_info: Option<ProcessInfo>,
     pub tls_info: Option<TlsInfo>,
+    pub h2_connection_id: Option<String>,
+    pub h2_stream_id: Option<u32>,
 }
 
 /// Socket address family for the downstream connection.

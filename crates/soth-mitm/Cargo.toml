@@ -64,6 +64,7 @@ rustls = { workspace = true }
 webpki-roots = "1"
 openssl = { version = "0.10", optional = true, features = ["vendored"] }
 sha1 = { workspace = true }
+sha2 = { workspace = true }
 base64 = { workspace = true }
 
 # HTTP/Proxy

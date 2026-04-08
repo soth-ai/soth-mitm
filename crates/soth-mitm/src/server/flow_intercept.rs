@@ -133,7 +133,7 @@ where
         "downstream",
         issued_server_config.cache_status.as_str(),
     );
-    let downstream_tls = match accept_downstream_tls(
+    let (downstream_tls, client_fingerprint) = match accept_downstream_tls(
         engine.config.downstream_tls_backend,
         downstream,
         &issued_server_config,
@@ -141,7 +141,7 @@ where
     )
     .await
     {
-        Ok(stream) => stream,
+        Ok(result) => result,
         Err(error) => {
             return fail_tls_and_close(
                 &engine,
@@ -156,6 +156,14 @@ where
             .await;
         }
     };
+
+    // Store the JA4 fingerprint in the connection metadata if available.
+    if let Some(ref fp) = client_fingerprint {
+        flow_hooks
+            .update_connection_fingerprint(tunnel_context.flow_id, fp)
+            .await;
+    }
+
     let downstream_alpn = downstream_tls.negotiated_alpn();
     let downstream_protocol =
         protocol_from_negotiated_alpn(downstream_alpn.as_deref(), http2_enabled_for_flow);
