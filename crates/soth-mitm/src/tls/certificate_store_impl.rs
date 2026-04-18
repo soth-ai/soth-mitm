@@ -248,11 +248,56 @@ fn write_key_file_restricted(path: &str, key_pem: &[u8]) -> Result<(), TlsConfig
         fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
         Ok(())
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    {
+        fs::write(path, key_pem)?;
+        if let Err(error) = restrict_windows_key_acl(path) {
+            // Best-effort: the key exists and is functional; failing here would block
+            // startup, but an over-permissive ACL is still a security risk worth logging.
+            eprintln!(
+                "warning: failed to restrict ACL on CA private key {}: {}. \
+                 The key may be readable by other local users.",
+                path.display(),
+                error
+            );
+        }
+        Ok(())
+    }
+    #[cfg(not(any(unix, windows)))]
     {
         fs::write(path, key_pem)?;
         Ok(())
     }
+}
+
+#[cfg(windows)]
+fn restrict_windows_key_acl(path: &std::path::Path) -> Result<(), String> {
+    use std::os::windows::process::CommandExt;
+    use std::process::Command;
+
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+    let username = std::env::var("USERNAME")
+        .map_err(|error| format!("USERNAME env var not set: {error}"))?;
+    if username.is_empty() {
+        return Err("USERNAME env var is empty".to_string());
+    }
+    let grant = format!("{username}:F");
+
+    let output = Command::new("icacls")
+        .arg(path)
+        .args(["/inheritance:r", "/grant:r", grant.as_str()])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .map_err(|error| format!("failed to spawn icacls: {error}"))?;
+
+    if !output.status.success() {
+        return Err(format!(
+            "icacls failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    Ok(())
 }
 
 fn ensure_parent_exists(path: &str) -> Result<(), TlsConfigError> {

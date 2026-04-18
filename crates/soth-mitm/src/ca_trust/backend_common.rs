@@ -186,6 +186,11 @@ fn base_state_dir() -> Result<PathBuf, CaError> {
         return Ok(PathBuf::from(home).join(".soth-mitm"));
     }
 
+    #[cfg(windows)]
+    if let Some(profile) = std::env::var_os("USERPROFILE") {
+        return Ok(PathBuf::from(profile).join(".soth-mitm"));
+    }
+
     Err(CaError::UnsupportedOperation(
         "unable to determine state directory (set SOTH_MITM_STATE_DIR)".to_string(),
     ))
