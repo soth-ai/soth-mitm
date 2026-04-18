@@ -80,6 +80,38 @@ impl<H: InterceptHandler> MitmProxy<H> {
         })
     }
 
+    /// Like [`start`] but uses a pre-bound TCP listener inherited from a
+    /// supervisor process, enabling zero-downtime restarts.
+    pub async fn start_with_listener(
+        self,
+        listener: tokio::net::TcpListener,
+    ) -> Result<MitmProxyHandle, MitmError> {
+        self.prepare_ca_material().await?;
+        let runtime_bundle = build_runtime_server(
+            &self.config,
+            Arc::clone(&self.handler),
+            Arc::clone(&self.metrics_store),
+        )?;
+        let runtime_config = runtime_bundle.config_handle.clone();
+        let runtime_governor = runtime_bundle.server.runtime_observability_handle();
+        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+
+        let join_handle = tokio::spawn(async move {
+            runtime_bundle
+                .server
+                .run_until_shutdown_with_listener(listener, shutdown_rx)
+                .await
+                .map_err(MitmError::from)
+        });
+        Ok(MitmProxyHandle {
+            join_handle: Arc::new(Mutex::new(Some(join_handle))),
+            metrics_store: Arc::clone(&self.metrics_store),
+            runtime_config,
+            runtime_governor,
+            shutdown_tx,
+        })
+    }
+
     async fn prepare_ca_material(&self) -> Result<(), MitmError> {
         let ca = self.ca.clone();
         let cert_path = self.config.tls.ca_cert_path.clone();

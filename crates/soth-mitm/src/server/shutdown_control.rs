@@ -26,4 +26,23 @@ where
             }
         }
     }
+
+    pub async fn run_until_shutdown_with_listener(
+        self,
+        listener: tokio::net::TcpListener,
+        mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
+    ) -> io::Result<()> {
+        if *shutdown_rx.borrow() {
+            return Ok(());
+        }
+        tokio::select! {
+            result = self.run_with_external_listener(listener) => result,
+            changed = shutdown_rx.changed() => {
+                match changed {
+                    Ok(_) => Ok(()),
+                    Err(_) => Ok(()),
+                }
+            }
+        }
+    }
 }

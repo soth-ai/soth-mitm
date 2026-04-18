@@ -390,6 +390,19 @@ where
         }
     }
 
+    /// Like [`run`] but uses a pre-bound TCP listener instead of binding one.
+    /// This supports the supervisor-owns-socket model for zero-downtime restarts.
+    pub async fn run_with_external_listener(self, listener: TcpListener) -> io::Result<()> {
+        #[cfg(unix)]
+        {
+            self.run_with_optional_unix_listener(listener).await
+        }
+        #[cfg(not(unix))]
+        {
+            self.run_with_listener(listener).await
+        }
+    }
+
     pub async fn bind_listener(&self) -> io::Result<TcpListener> {
         bind_listener_with_socket_hardening(&self.config).await
     }
@@ -516,7 +529,7 @@ mod downstream_tls;
 mod tls_profile_mapping;
 mod tls_revocation_metadata;
 // IO utilities
-mod dns_resolver;
+pub(crate) mod dns_resolver;
 mod io_timeouts;
 mod shutdown_control;
 mod socket_hardening;

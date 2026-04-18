@@ -1,17 +1,24 @@
 use std::net::SocketAddr;
-use std::sync::OnceLock;
+use std::sync::{Arc, LazyLock};
 
+use arc_swap::ArcSwap;
 use hickory_resolver::config::{NameServerConfig, ResolveHosts, ResolverConfig, ResolverOpts};
 use hickory_resolver::name_server::TokioConnectionProvider;
 use hickory_resolver::proto::xfer::Protocol;
 use hickory_resolver::TokioResolver;
 
-/// Global DNS resolver instance, initialized once at server start.
+/// Global DNS resolver instance, hot-swappable at runtime.
+///
 /// Uses hickory-resolver to send DNS queries directly over UDP/TCP to
 /// nameservers, completely bypassing libc `getaddrinfo`. This prevents the
 /// circular dependency where the proxy's own DNS resolution would route back
 /// through itself when acting as the system proxy.
-static DNS_RESOLVER: OnceLock<TokioResolver> = OnceLock::new();
+///
+/// Wrapped in [`ArcSwap`] so the resolver can be replaced without restarting
+/// the proxy. In-flight queries on the previous resolver complete safely via
+/// Arc refcounting.
+static DNS_RESOLVER: LazyLock<ArcSwap<TokioResolver>> =
+    LazyLock::new(|| ArcSwap::from_pointee(build_resolver(None)));
 
 /// Install the global DNS resolver with optional explicit nameservers.
 ///
@@ -24,7 +31,19 @@ static DNS_RESOLVER: OnceLock<TokioResolver> = OnceLock::new();
 /// `"[2606:4700::1111]:53"`).
 pub(crate) fn install_dns_resolver(nameservers: Option<&[String]>) {
     let resolver = build_resolver(nameservers);
-    let _ = DNS_RESOLVER.set(resolver);
+    DNS_RESOLVER.store(Arc::new(resolver));
+}
+
+/// Re-initializes the global DNS resolver with new nameserver configuration.
+///
+/// Unlike [`install_dns_resolver`], this can be called at any time — including
+/// while the proxy is actively handling traffic. In-flight DNS queries on the
+/// previous resolver complete safely via Arc refcounting; new queries
+/// immediately use the replacement resolver.
+pub(crate) fn reinstall_dns_resolver(nameservers: Option<&[String]>) {
+    let resolver = build_resolver(nameservers);
+    DNS_RESOLVER.store(Arc::new(resolver));
+    tracing::info!("dns resolver reloaded");
 }
 
 /// Resolve A/AAAA records for `host` and return socket addresses with `port`.
@@ -36,7 +55,7 @@ pub(crate) async fn resolve_host(host: &str, port: u16) -> std::io::Result<Vec<S
         return Ok(vec![SocketAddr::new(ip, port)]);
     }
 
-    let resolver = DNS_RESOLVER.get_or_init(|| build_resolver(None));
+    let resolver = DNS_RESOLVER.load();
 
     let start = std::time::Instant::now();
     let response = resolver.lookup_ip(host).await.map_err(|error| {
@@ -129,7 +148,7 @@ fn build_custom_config(nameservers: &[String]) -> ResolverConfig {
 }
 
 fn system_config() -> ResolverConfig {
-    let (config, _system_opts) =
+    let (system, _system_opts) =
         hickory_resolver::system_conf::read_system_conf().unwrap_or_else(|error| {
             tracing::warn!(
                 error = %error,
@@ -137,6 +156,13 @@ fn system_config() -> ResolverConfig {
             );
             (ResolverConfig::cloudflare(), ResolverOpts::default())
         });
+    // Rebuild config with only nameservers, dropping search domains (e.g. `.local`)
+    // inherited from the OS. Without this, hickory-resolver appends search suffixes
+    // to bare hostnames, causing lookups like `polymarket.com.local.` which fail.
+    let mut config = ResolverConfig::new();
+    for ns in system.name_servers() {
+        config.add_name_server(ns.clone());
+    }
     config
 }
 

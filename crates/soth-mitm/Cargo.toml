@@ -77,6 +77,7 @@ socket2 = "0.5"
 
 # DNS
 hickory-resolver = { workspace = true }
+arc-swap = { workspace = true }
 
 # Compression
 brotli = "8.0.2"

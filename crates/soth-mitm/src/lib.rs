@@ -110,6 +110,18 @@ pub use bytes::Bytes;
 pub use http::HeaderMap;
 pub use uuid::Uuid;
 
+/// Re-initializes the global DNS resolver with new nameserver configuration.
+///
+/// Safe to call at any time, including while the proxy is handling traffic.
+/// In-flight DNS queries on the previous resolver complete via Arc refcounting;
+/// new queries immediately use the replacement resolver.
+///
+/// Pass `None` to auto-detect system nameservers, or supply explicit entries
+/// such as `"8.8.8.8"`, `"1.1.1.1:53"`, or `"[2606:4700::1111]:53"`.
+pub fn reload_dns_resolver(nameservers: Option<&[String]>) {
+    server::dns_resolver::reinstall_dns_resolver(nameservers);
+}
+
 // --- Internal modules gated behind the `__internal` feature ---
 // These expose consolidated sub-crate internals for integration tests and
 // benchmarks. They are NOT part of the stable public API and may change
