@@ -546,6 +546,7 @@ mod event_emitters_protocol;
 mod grpc_stream_observer;
 mod ndjson_stream_observer;
 mod sse_stream_observer;
+mod stream_content_decoder;
 // WebSocket
 mod websocket_codec;
 mod websocket_events;
