@@ -639,7 +639,11 @@ where
         );
     }
 
-    let mut stream_dispatcher = h2_response_stream_hook_dispatcher(&response_parts);
+    let mut stream_dispatcher = h2_response_stream_hook_dispatcher(
+        &response_parts,
+        Arc::clone(runtime_governor),
+        engine.config.max_flow_decoder_buffer_bytes,
+    );
     let downstream_response = http::Response::from_parts(downstream_response_parts.clone(), ());
     let mut downstream_response_stream =
         match downstream_respond.send_response(downstream_response, false) {

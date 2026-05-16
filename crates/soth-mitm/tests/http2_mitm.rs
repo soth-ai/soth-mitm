@@ -13,8 +13,8 @@ use soth_mitm::test_observe::{Event, EventType, FlowContext, VecEventConsumer};
 use soth_mitm::test_policy::DefaultPolicyEngine;
 use soth_mitm::test_protocol::ApplicationProtocol;
 use soth_mitm::test_server::{
-    FlowHooks, H2ResponseOverflowMode, RawRequest as HookRawRequest,
-    RawResponse as HookRawResponse, SidecarConfig, SidecarServer,
+    FlowHooks, FrameKind, H2ResponseOverflowMode, RawRequest as HookRawRequest,
+    RawResponse as HookRawResponse, SidecarConfig, SidecarServer, StreamChunk,
 };
 use soth_mitm::test_tls::{
     build_http1_server_config_for_host, build_http_client_config, build_http_server_config_for_host,
@@ -230,6 +230,57 @@ impl FlowHooks for Http2StreamEndCounterHooks {
             }
         })
     }
+}
+
+#[derive(Clone, Default)]
+struct StreamChunkCaptureHooks {
+    chunks: Arc<tokio::sync::Mutex<Vec<(ApplicationProtocol, FrameKind, u64, Vec<u8>)>>>,
+    ends: Arc<AtomicUsize>,
+}
+
+impl StreamChunkCaptureHooks {
+    async fn chunks(&self) -> Vec<(ApplicationProtocol, FrameKind, u64, Vec<u8>)> {
+        self.chunks.lock().await.clone()
+    }
+
+    fn end_count(&self) -> usize {
+        self.ends.load(Ordering::Relaxed)
+    }
+}
+
+impl FlowHooks for StreamChunkCaptureHooks {
+    fn on_stream_chunk(
+        &self,
+        context: FlowContext,
+        chunk: StreamChunk,
+    ) -> Pin<Box<dyn Future<Output = ()> + Send>> {
+        let chunks = Arc::clone(&self.chunks);
+        Box::pin(async move {
+            chunks.lock().await.push((
+                context.protocol,
+                chunk.frame_kind,
+                chunk.sequence,
+                chunk.payload.to_vec(),
+            ));
+        })
+    }
+
+    fn on_stream_end(&self, context: FlowContext) -> Pin<Box<dyn Future<Output = ()> + Send>> {
+        let ends = Arc::clone(&self.ends);
+        Box::pin(async move {
+            if context.protocol == ApplicationProtocol::Http2 {
+                ends.fetch_add(1, Ordering::Relaxed);
+            }
+        })
+    }
+}
+
+fn gzip_bytes(input: &[u8]) -> Vec<u8> {
+    use std::io::Write;
+
+    let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+    encoder.write_all(input).expect("write gzip input");
+    encoder.finish().expect("finish gzip")
 }
 
 async fn read_response_head(stream: &mut TcpStream) -> String {
@@ -613,6 +664,147 @@ async fn intercept_http2_over_tls_relays_and_marks_protocol() {
             && event.attributes.get("reason_code").map(String::as_str)
                 == Some("mitm_http_completed")
     }));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn intercept_http2_gzip_sse_emits_decoded_stream_chunks() {
+    let upstream_listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind upstream listener");
+    let upstream_addr = upstream_listener.local_addr().expect("upstream addr");
+    let sse_body = b"data: hello\n\ndata: [DONE]\n\n";
+    let encoded_body = gzip_bytes(sse_body);
+    let expected_encoded_body = encoded_body.clone();
+
+    let upstream_task = tokio::spawn(async move {
+        let server_config =
+            build_http_server_config_for_host("127.0.0.1", true).expect("h2 server config");
+        let acceptor = TlsAcceptor::from(server_config);
+        let (tcp, _) = upstream_listener.accept().await.expect("accept upstream");
+        let tls = acceptor.accept(tcp).await.expect("TLS accept");
+        assert_eq!(tls.get_ref().1.alpn_protocol(), Some(b"h2".as_slice()));
+
+        let mut h2_conn = h2::server::handshake(tls).await.expect("h2 handshake");
+        let Some(stream_result) = h2_conn.accept().await else {
+            panic!("missing h2 request stream");
+        };
+        let (request, mut respond) = stream_result.expect("accept h2 request");
+        assert_eq!(request.method(), http::Method::GET);
+        assert_eq!(request.uri().path(), "/encoded-sse");
+
+        let response = http::Response::builder()
+            .status(200)
+            .header("content-type", "text/event-stream; charset=utf-8")
+            .header("content-encoding", "GZip")
+            .header("content-length", encoded_body.len().to_string())
+            .body(())
+            .expect("response");
+        let mut send = respond
+            .send_response(response, false)
+            .expect("send response headers");
+        let midpoint = encoded_body.len() / 2;
+        send.send_data(Bytes::copy_from_slice(&encoded_body[..midpoint]), false)
+            .expect("send first response data");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        send.send_data(Bytes::copy_from_slice(&encoded_body[midpoint..]), true)
+            .expect("send second response data");
+        h2_conn.graceful_shutdown();
+        let _ = tokio::time::timeout(Duration::from_millis(200), async {
+            let _ = poll_fn(|cx| h2_conn.poll_closed(cx)).await;
+        })
+        .await;
+    });
+
+    let sink = VecEventConsumer::default();
+    let config = MitmConfig {
+        upstream_tls_insecure_skip_verify: true,
+        http2_enabled: true,
+        ..MitmConfig::default()
+    };
+    let hooks = StreamChunkCaptureHooks::default();
+    let (proxy_addr, proxy_task, _) =
+        start_sidecar_with_flow_hooks(sink, config, Arc::new(hooks.clone())).await;
+
+    let mut tcp = TcpStream::connect(proxy_addr)
+        .await
+        .expect("connect sidecar");
+    let connect = format!(
+        "CONNECT 127.0.0.1:{} HTTP/1.1\r\nHost: 127.0.0.1:{}\r\n\r\n",
+        upstream_addr.port(),
+        upstream_addr.port()
+    );
+    tcp.write_all(connect.as_bytes())
+        .await
+        .expect("write CONNECT");
+    let connect_response = read_response_head(&mut tcp).await;
+    assert!(
+        connect_response.starts_with("HTTP/1.1 200 Connection Established"),
+        "{connect_response}"
+    );
+
+    let connector = TlsConnector::from(build_http_client_config(true, true));
+    let server_name = ServerName::try_from("127.0.0.1".to_string()).expect("server name");
+    let tls = connector
+        .connect(server_name, tcp)
+        .await
+        .expect("TLS connect to sidecar");
+    assert_eq!(tls.get_ref().1.alpn_protocol(), Some(b"h2".as_slice()));
+
+    let (mut h2_client, h2_connection) = h2::client::handshake(tls)
+        .await
+        .expect("h2 client handshake");
+    let h2_connection_task = tokio::spawn(async move {
+        let _ = h2_connection.await;
+    });
+
+    let request = http::Request::builder()
+        .method("GET")
+        .uri("https://127.0.0.1/encoded-sse")
+        .header("host", "127.0.0.1")
+        .body(())
+        .expect("request");
+    let (response_future, _send_stream) = h2_client
+        .send_request(request, true)
+        .expect("send h2 request");
+    let response = response_future.await.expect("h2 response");
+    assert_eq!(response.status(), http::StatusCode::OK);
+    assert_eq!(
+        response
+            .headers()
+            .get("content-encoding")
+            .and_then(|value| value.to_str().ok()),
+        Some("GZip")
+    );
+    let mut body = response.into_body();
+    let (payload, trailers) = read_h2_body_and_trailers(&mut body).await;
+    assert_eq!(trailers, None);
+    assert_eq!(payload, expected_encoded_body);
+
+    h2_connection_task.abort();
+    upstream_task.await.expect("upstream task");
+    tokio::time::sleep(Duration::from_millis(30)).await;
+    proxy_task.abort();
+
+    let chunks = hooks.chunks().await;
+    let sse_chunks = chunks
+        .iter()
+        .filter(|(protocol, kind, _, _)| {
+            *protocol == ApplicationProtocol::Http2 && *kind == FrameKind::SseData
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        sse_chunks.len(),
+        2,
+        "expected decoded SSE chunks: {chunks:?}"
+    );
+    assert_eq!(sse_chunks[0].2, 0);
+    assert_eq!(sse_chunks[0].3, b"hello");
+    assert_eq!(sse_chunks[1].2, 1);
+    assert_eq!(sse_chunks[1].3, b"[DONE]");
+    assert!(
+        hooks.end_count() >= 1,
+        "expected at least one HTTP/2 stream end callback"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

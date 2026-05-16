@@ -98,6 +98,14 @@ fn attr<'a>(event: &'a Event, key: &str) -> Option<&'a str> {
     event.attributes.get(key).map(String::as_str)
 }
 
+fn gzip_bytes(input: &[u8]) -> Vec<u8> {
+    use std::io::Write;
+
+    let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+    encoder.write_all(input).expect("write gzip input");
+    encoder.finish().expect("finish gzip")
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn parses_sse_events_incrementally_and_flushes_tail_on_stream_close() {
     let upstream_listener = TcpListener::bind("127.0.0.1:0")
@@ -233,4 +241,125 @@ async fn parses_sse_events_incrementally_and_flushes_tail_on_stream_close() {
             && event.attributes.get("reason_code").map(String::as_str)
                 == Some("mitm_http_completed")
     }));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn decodes_gzip_sse_response_and_emits_stream_chunks() {
+    let upstream_listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind upstream listener");
+    let upstream_addr = upstream_listener.local_addr().expect("upstream addr");
+    let sse_body = b"data: hello\n\ndata: [DONE]\n\n";
+    let encoded_body = gzip_bytes(sse_body);
+    let expected_encoded_body = encoded_body.clone();
+
+    let upstream_task = tokio::spawn(async move {
+        let server_config = build_http1_server_config_for_host("127.0.0.1").expect("server config");
+        let acceptor = TlsAcceptor::from(server_config);
+        let (tcp, _) = upstream_listener.accept().await.expect("accept upstream");
+        let mut tls = acceptor.accept(tcp).await.expect("TLS accept");
+
+        let request_head = read_http_head(&mut tls).await;
+        let request_text = String::from_utf8_lossy(&request_head);
+        assert!(
+            request_text.starts_with("GET /encoded-sse HTTP/1.1"),
+            "{request_text}"
+        );
+
+        let response = format!(
+            concat!(
+                "HTTP/1.1 200 OK\r\n",
+                "Content-Type: text/event-stream; charset=utf-8\r\n",
+                "Content-Encoding: GZip\r\n",
+                "Content-Length: {}\r\n",
+                "Connection: close\r\n",
+                "\r\n"
+            ),
+            encoded_body.len()
+        );
+        tls.write_all(response.as_bytes())
+            .await
+            .expect("write headers");
+        let midpoint = encoded_body.len() / 2;
+        tls.write_all(&encoded_body[..midpoint])
+            .await
+            .expect("write first gzip chunk");
+        tls.flush().await.expect("flush first gzip chunk");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        tls.write_all(&encoded_body[midpoint..])
+            .await
+            .expect("write second gzip chunk");
+        tls.shutdown().await.expect("shutdown upstream TLS");
+    });
+
+    let sink = VecEventConsumer::default();
+    let config = MitmConfig {
+        upstream_tls_insecure_skip_verify: true,
+        http2_enabled: false,
+        ..MitmConfig::default()
+    };
+    let (proxy_addr, proxy_task, sink) = start_sidecar_with_sink(sink, config).await;
+
+    let mut tcp = TcpStream::connect(proxy_addr)
+        .await
+        .expect("connect sidecar");
+    let connect = format!(
+        "CONNECT 127.0.0.1:{} HTTP/1.1\r\nHost: 127.0.0.1:{}\r\n\r\n",
+        upstream_addr.port(),
+        upstream_addr.port()
+    );
+    tcp.write_all(connect.as_bytes())
+        .await
+        .expect("write CONNECT");
+    let connect_response = read_response_head(&mut tcp).await;
+    assert!(
+        connect_response.starts_with("HTTP/1.1 200 Connection Established"),
+        "{connect_response}"
+    );
+
+    let connector = TlsConnector::from(build_http1_client_config(true));
+    let server_name = ServerName::try_from("127.0.0.1".to_string()).expect("server name");
+    let mut tls = connector
+        .connect(server_name, tcp)
+        .await
+        .expect("TLS connect to sidecar");
+    tls.write_all(b"GET /encoded-sse HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+        .await
+        .expect("write request");
+    tls.flush().await.expect("flush request");
+
+    let response = read_to_end_allow_unexpected_eof(&mut tls).await;
+    let response_head_end = response
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .expect("response head terminator")
+        + 4;
+    let response_text = String::from_utf8_lossy(&response[..response_head_end]);
+    assert!(
+        response_text.starts_with("HTTP/1.1 200 OK"),
+        "{response_text}"
+    );
+    assert!(
+        response_text
+            .to_ascii_lowercase()
+            .contains("content-encoding: gzip"),
+        "{response_text}"
+    );
+    assert_eq!(
+        &response[response_head_end..],
+        expected_encoded_body.as_slice()
+    );
+
+    upstream_task.await.expect("upstream task");
+    tokio::time::sleep(Duration::from_millis(30)).await;
+    proxy_task.abort();
+
+    let events = sink.snapshot();
+    let sse_events = events
+        .iter()
+        .filter(|event| event.kind == EventType::SseEvent)
+        .collect::<Vec<_>>();
+    assert_eq!(sse_events.len(), 2, "expected event-log SSE events");
+    assert_eq!(attr(sse_events[0], "data"), Some("hello"));
+    assert_eq!(attr(sse_events[1], "data"), Some("[DONE]"));
 }
