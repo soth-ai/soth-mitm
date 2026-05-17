@@ -9,8 +9,8 @@ use soth_mitm::test_engine::{
 use soth_mitm::test_observe::{EventType, FlowContext, VecEventConsumer};
 use soth_mitm::test_policy::DefaultPolicyEngine;
 use soth_mitm::test_server::{
-    FlowHooks, RawRequest as HookRawRequest, SidecarConfig, SidecarServer, TlsDiagnostics,
-    TlsLearningGuardrails,
+    FlowHooks, RawRequest as HookRawRequest, RawResponse as HookRawResponse, SidecarConfig,
+    SidecarServer, TlsDiagnostics, TlsLearningGuardrails,
 };
 use soth_mitm::test_tls::{build_http1_client_config, build_http1_server_config_for_host};
 use soth_mitm::HandlerDecision;
@@ -126,6 +126,44 @@ impl FlowHooks for RequestHostCaptureHooks {
                 .map(ToOwned::to_owned);
             *seen_host.lock().await = host;
             HandlerDecision::Allow
+        })
+    }
+}
+
+#[derive(Clone, Default)]
+struct LocalRequestHooks {
+    response: Arc<tokio::sync::Mutex<Option<HookRawResponse>>>,
+    seen_request: Arc<tokio::sync::Mutex<Option<HookRawRequest>>>,
+}
+
+impl LocalRequestHooks {
+    fn with_response(response: Option<HookRawResponse>) -> Self {
+        Self {
+            response: Arc::new(tokio::sync::Mutex::new(response)),
+            seen_request: Arc::new(tokio::sync::Mutex::new(None)),
+        }
+    }
+
+    async fn seen_request(&self) -> Option<HookRawRequest> {
+        self.seen_request.lock().await.clone()
+    }
+}
+
+impl FlowHooks for LocalRequestHooks {
+    fn handles_local_requests(&self) -> bool {
+        true
+    }
+
+    fn on_local_request(
+        &self,
+        _context: FlowContext,
+        request: HookRawRequest,
+    ) -> Pin<Box<dyn Future<Output = Option<HookRawResponse>> + Send>> {
+        let response = Arc::clone(&self.response);
+        let seen_request = Arc::clone(&self.seen_request);
+        Box::pin(async move {
+            *seen_request.lock().await = Some(request);
+            response.lock().await.clone()
         })
     }
 }
