@@ -3,6 +3,11 @@ use super::event_emitters::emit_stream_closed;
 use super::flow_forward_proxy_http1_helpers::{
     is_self_listener_target, resolve_forward_http_route,
 };
+use super::flow_hook_http_helpers::{
+    build_handler_header_map, mark_body_truncated, normalize_request_body_for_handler,
+    normalize_request_path_for_handler, relay_http_body_with_capture, sanitize_block_status,
+    strip_hop_by_hop_and_transport_headers,
+};
 use super::flow_hooks::FlowHooks;
 use super::flow_intercept_http1::relay_http1_mitm_loop;
 use super::flow_policy_snapshot::resolve_flow_policy_snapshot;
@@ -16,7 +21,7 @@ use super::route_planner_transport::connect_via_route;
 use super::runtime_governor;
 use super::BufferedConn;
 use crate::engine::MitmEngine;
-use crate::observe::{EventConsumer, FlowContext};
+use crate::observe::{EventConsumer, EventType, FlowContext};
 use crate::policy::{FlowAction, PolicyEngine};
 use crate::protocol::ApplicationProtocol;
 use crate::types::ProcessInfo;
@@ -37,7 +42,7 @@ pub(crate) async fn handle_forward_http1_proxy_request<P, S, D>(
     initial_head: Vec<u8>,
     max_http_head_bytes: usize,
     listener_addr: Option<std::net::SocketAddr>,
-    flow_guard: &mut Option<crate::server::runtime_governor::FlowRuntimeGuard>,
+    _flow_guard: &mut Option<crate::server::runtime_governor::FlowRuntimeGuard>,
 ) -> io::Result<()>
 where
     P: PolicyEngine + Send + Sync + 'static,
@@ -113,6 +118,29 @@ where
             server_port: target.port,
             protocol: ApplicationProtocol::Http1,
         };
+        if flow_hooks.handles_local_requests() {
+            if let Some((bytes_from_client, bytes_from_server)) = try_handle_local_http1_request(
+                Arc::clone(&engine),
+                Arc::clone(&runtime_governor),
+                Arc::clone(&flow_hooks),
+                &context,
+                &request,
+                &mut downstream,
+                max_http_head_bytes,
+            )
+            .await?
+            {
+                emit_stream_closed(
+                    &engine,
+                    context,
+                    CloseReasonCode::MitmHttpCompleted,
+                    Some("local self-target request handled".to_string()),
+                    Some(bytes_from_client),
+                    Some(bytes_from_server),
+                );
+                return Ok(());
+            }
+        }
         emit_stream_closed(
             &engine,
             context,
@@ -249,6 +277,118 @@ where
         policy_snapshot.override_state.strict_header_mode,
     )
     .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn try_handle_local_http1_request<P, S, D>(
+    engine: Arc<MitmEngine<P, S>>,
+    runtime_governor: Arc<runtime_governor::RuntimeGovernor>,
+    flow_hooks: Arc<dyn FlowHooks>,
+    context: &FlowContext,
+    request: &super::HttpRequestHead,
+    downstream: &mut D,
+    max_http_head_bytes: usize,
+) -> io::Result<Option<(u64, u64)>>
+where
+    P: PolicyEngine + Send + Sync + 'static,
+    S: EventConsumer + Send + Sync + 'static,
+    D: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
+    let mut downstream_conn = BufferedConn::new(downstream);
+    let mut request_sink = tokio::io::sink();
+    let (request_body_bytes, request_body, request_body_truncated) = relay_http_body_with_capture(
+        &engine,
+        context,
+        EventType::RequestBodyChunk,
+        &mut downstream_conn,
+        &mut request_sink,
+        request.body_mode,
+        max_http_head_bytes,
+        &runtime_governor,
+        engine.config.max_flow_body_buffer_bytes,
+    )
+    .await?;
+
+    let mut headers = build_handler_header_map(&request.headers);
+    if request_body_truncated {
+        mark_body_truncated(&mut headers);
+    }
+    let body = normalize_request_body_for_handler(&mut headers, request_body);
+    let local_response = flow_hooks
+        .on_local_request(
+            context.clone(),
+            super::flow_hooks::RawRequest {
+                method: request.method.clone(),
+                path: normalize_request_path_for_handler(&request.target),
+                headers,
+                body,
+            },
+        )
+        .await;
+
+    let Some(response) = local_response else {
+        return Ok(None);
+    };
+
+    let bytes_from_server =
+        write_local_http1_response(downstream_conn.stream, &request.method, response).await?;
+    Ok(Some((
+        request.raw.len() as u64 + request_body_bytes,
+        bytes_from_server,
+    )))
+}
+
+async fn write_local_http1_response<D>(
+    mut downstream: D,
+    request_method: &str,
+    response: super::flow_hooks::RawResponse,
+) -> io::Result<u64>
+where
+    D: AsyncWrite + Unpin,
+{
+    let status = sanitize_block_status(response.status);
+    let reason = status_reason(status);
+    let mut headers = response.headers;
+    strip_hop_by_hop_and_transport_headers(&mut headers);
+    headers.remove(http::header::CONTENT_LENGTH);
+
+    let content_length_allowed = !((100..200).contains(&status) || status == 204 || status == 304);
+    let body_allowed = content_length_allowed && !request_method.eq_ignore_ascii_case("HEAD");
+
+    let mut head = Vec::new();
+    head.extend_from_slice(format!("HTTP/1.1 {status} {reason}\r\n").as_bytes());
+    for (name, value) in headers.iter() {
+        head.extend_from_slice(name.as_str().as_bytes());
+        head.extend_from_slice(b": ");
+        head.extend_from_slice(value.as_bytes());
+        head.extend_from_slice(b"\r\n");
+    }
+    if content_length_allowed {
+        head.extend_from_slice(format!("Content-Length: {}\r\n", response.body.len()).as_bytes());
+    }
+    // Local responses terminate the self-target request without entering the
+    // normal forward-proxy relay loop, so close the connection deterministically.
+    head.extend_from_slice(b"Connection: close\r\n\r\n");
+    let mut bytes_written = head.len() as u64;
+    write_all_with_idle_timeout(&mut downstream, &head, "local_http1_response_head_write").await?;
+    if body_allowed && !response.body.is_empty() {
+        bytes_written += response.body.len() as u64;
+        write_all_with_idle_timeout(
+            &mut downstream,
+            &response.body,
+            "local_http1_response_body_write",
+        )
+        .await?;
+    }
+    shutdown_with_idle_timeout(&mut downstream, "local_http1_response_shutdown").await?;
+    Ok(bytes_written)
+}
+
+fn status_reason(status: u16) -> &'static str {
+    http::StatusCode::from_u16(status)
+        .ok()
+        .and_then(|status| status.canonical_reason())
+        .unwrap_or("Unknown")
 }
 
 async fn tunnel_http1_forward_stream<P, S, D>(

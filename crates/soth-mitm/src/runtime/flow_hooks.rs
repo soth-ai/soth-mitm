@@ -281,6 +281,60 @@ impl<H: InterceptHandler> FlowHooks for HandlerFlowHooks<H> {
                 .await
         })
     }
+
+    fn handles_local_requests(&self) -> bool {
+        self.flow_state.handler.handles_local_requests()
+    }
+
+    fn on_local_request(
+        &self,
+        context: FlowContext,
+        request: SidecarRawRequest,
+    ) -> Pin<Box<dyn Future<Output = Option<SidecarRawResponse>> + Send>> {
+        let flow_state = Arc::clone(&self.flow_state);
+        Box::pin(async move {
+            flow_state
+                .flow_last_touched
+                .insert(context.flow_id, Instant::now());
+            let Some(connection_meta) = connection_meta_for_context(
+                &context,
+                &flow_state.connection_meta_by_flow,
+                &flow_state.closed_flow_live,
+                &flow_state.tls_intercepted_flow_ids,
+            )
+            .await
+            else {
+                tracing::debug!(
+                    flow_id = context.flow_id.as_u64(),
+                    "skipping local request handler: connection metadata unavailable"
+                );
+                flow_state.metrics_store.record_missing_connection_meta();
+                return None;
+            };
+            let raw_request = RawRequest {
+                method: request.method,
+                path: request.path,
+                headers: request.headers,
+                body: request.body,
+                connection_meta: Arc::clone(&connection_meta),
+            };
+            let handler = Arc::clone(&flow_state.handler);
+            flow_state
+                .callback_guard
+                .run_request(None, async move {
+                    handler
+                        .on_local_request(&raw_request)
+                        .await
+                        .map(|response| SidecarRawResponse {
+                            status: response.status,
+                            headers: response.headers,
+                            body: response.body,
+                        })
+                })
+                .await
+        })
+    }
+
     fn on_request_observe(
         &self,
         context: FlowContext,
