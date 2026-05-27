@@ -373,7 +373,11 @@ where
         upstream_response.body_mode,
         HttpBodyMode::None | HttpBodyMode::ContentLength(0)
     );
-    let mut stream_dispatcher = h2_response_stream_hook_dispatcher(&response_parts);
+    let mut stream_dispatcher = h2_response_stream_hook_dispatcher(
+        &response_parts,
+        Arc::clone(&runtime_governor),
+        engine.config.max_flow_decoder_buffer_bytes,
+    );
     let downstream_response = http::Response::from_parts(response_parts.clone(), ());
     let mut downstream_response_stream =
         match downstream_respond.send_response(downstream_response, response_end_stream) {
@@ -397,7 +401,7 @@ where
             body_truncated: false,
         };
         if let Some(dispatcher) = stream_dispatcher.as_mut() {
-            dispatcher.finish(&flow_hooks, &stream_context).await;
+            dispatcher.finish(&flow_hooks, &stream_context).await?;
         } else {
             dispatch_h2_response_hooks(
                 &flow_hooks,

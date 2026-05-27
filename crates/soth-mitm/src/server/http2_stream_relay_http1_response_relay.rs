@@ -161,7 +161,7 @@ where
     };
 
     if let Some(dispatcher) = stream_dispatcher.as_mut() {
-        dispatcher.finish(flow_hooks, stream_context).await;
+        dispatcher.finish(flow_hooks, stream_context).await?;
     }
 
     Ok(Http1ToH2ResponseRelayOutcome {
@@ -371,7 +371,7 @@ async fn forward_http1_response_chunk(
     if let (Some(dispatcher), Some(chunk)) = (stream_dispatcher.as_mut(), hook_chunk.as_ref()) {
         dispatcher
             .on_chunk(flow_hooks, stream_context, chunk.as_ref())
-            .await;
+            .await?;
     }
     Ok(())
 }
