@@ -70,6 +70,22 @@ pub trait FlowHooks: Send + Sync + 'static {
         Box::pin(async { HandlerDecision::Allow })
     }
 
+    fn handles_local_requests(&self) -> bool {
+        false
+    }
+
+    /// Called for HTTP/1 forward-proxy requests whose target matches the proxy listener itself.
+    ///
+    /// Return `Some(response)` to serve the request locally. Return `None` to keep
+    /// the proxy's default self-target loop handling.
+    fn on_local_request(
+        &self,
+        _context: FlowContext,
+        _request: RawRequest,
+    ) -> Pin<Box<dyn Future<Output = Option<RawResponse>> + Send>> {
+        Box::pin(async { None })
+    }
+
     fn on_request_observe(
         &self,
         _context: FlowContext,

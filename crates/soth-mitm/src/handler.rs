@@ -19,6 +19,21 @@ pub trait InterceptHandler: Send + Sync + 'static {
         async { HandlerDecision::Allow }
     }
 
+    fn handles_local_requests(&self) -> bool {
+        false
+    }
+
+    /// Called for HTTP/1 forward-proxy requests whose target matches the proxy listener itself.
+    ///
+    /// Return `Some(response)` to serve the request locally. Return `None` to keep
+    /// the proxy's default self-target loop handling.
+    fn on_local_request(
+        &self,
+        _request: &RawRequest,
+    ) -> impl Future<Output = Option<RawResponse>> + Send {
+        async { None }
+    }
+
     /// Called when a WebSocket upgrade completes (server sent 101).
     ///
     /// The `response` carries the 101 status and upgrade headers (empty body).
