@@ -180,7 +180,7 @@ impl H2ResponseStreamHookDispatcher {
                         if let Err(error) =
                             state.on_chunk(flow_hooks, stream_context, &decoded).await
                         {
-                            tracing::debug!(error = %error, "HTTP/2 encoded SSE state.on_chunk failed; observation disabled, forwarding unchanged");
+                            tracing::debug!(error = %error, "HTTP/2 encoded SSE state dispatch failed; observation disabled, forwarding unchanged");
                             state.stream_ended = true;
                         }
                     }
@@ -282,7 +282,7 @@ impl H2ResponseStreamHookDispatcher {
                         if let Err(error) =
                             state.on_chunk(flow_hooks, stream_context, &decoded).await
                         {
-                            tracing::debug!(error = %error, "HTTP/2 encoded SSE final chunk dispatch failed; observation disabled");
+                            tracing::debug!(error = %error, "HTTP/2 encoded SSE final state dispatch failed; observation disabled");
                             state.stream_ended = true;
                             return Ok(());
                         }

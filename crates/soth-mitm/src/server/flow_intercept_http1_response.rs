@@ -391,7 +391,7 @@ where
             };
             if !decoded.is_empty() {
                 if let Err(error) = self.sse_observer.on_chunk(&decoded).await {
-                    tracing::debug!(error = %error, "encoded SSE observer rejected chunk; observation disabled, forwarding unchanged");
+                    tracing::debug!(error = %error, "encoded SSE observer dispatch failed; observation disabled, forwarding unchanged");
                     self.decoder_failed = true;
                 }
             }
@@ -416,7 +416,7 @@ where
             };
             if !decoded.is_empty() {
                 if let Err(error) = self.sse_observer.on_chunk(&decoded).await {
-                    tracing::debug!(error = %error, "encoded SSE observer rejected final chunk; observation disabled");
+                    tracing::debug!(error = %error, "encoded SSE observer final dispatch failed; observation disabled");
                     return Ok(());
                 }
             }
