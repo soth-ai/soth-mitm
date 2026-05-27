@@ -339,6 +339,13 @@ where
     decoder: StreamingContentDecoder,
     runtime_governor: Arc<runtime_governor::RuntimeGovernor>,
     sse_observer: SseStreamObserver<P, S>,
+    // Once the decoder errors (corrupt gzip/br/zstd from upstream, or the
+    // per-chunk budget is exceeded) we stop attempting further decode but
+    // MUST keep returning Ok so the relay continues forwarding the encoded
+    // bytes to the client. The encoded body has already been written to the
+    // wire before on_chunk runs; failing here would tear down the response
+    // mid-flight on attacker-controlled input.
+    decoder_failed: bool,
 }
 
 impl<P, S> DecodedSseStreamObserver<P, S>
@@ -355,6 +362,7 @@ where
             decoder,
             runtime_governor,
             sse_observer,
+            decoder_failed: false,
         }
     }
 }
@@ -369,13 +377,23 @@ where
         chunk: &'a [u8],
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = io::Result<()>> + Send + 'a>> {
         Box::pin(async move {
-            let decoded = self.decoder.decode_chunk(chunk).map_err(|error| {
-                self.runtime_governor.mark_decoder_failure();
-                tracing::debug!(error = %error, "encoded SSE response decode failed");
-                error
-            })?;
+            if self.decoder_failed {
+                return Ok(());
+            }
+            let decoded = match self.decoder.decode_chunk(chunk) {
+                Ok(decoded) => decoded,
+                Err(error) => {
+                    self.runtime_governor.mark_decoder_failure();
+                    tracing::debug!(error = %error, "encoded SSE response decode failed; observation disabled, forwarding unchanged");
+                    self.decoder_failed = true;
+                    return Ok(());
+                }
+            };
             if !decoded.is_empty() {
-                self.sse_observer.on_chunk(&decoded).await?;
+                if let Err(error) = self.sse_observer.on_chunk(&decoded).await {
+                    tracing::debug!(error = %error, "encoded SSE observer rejected chunk; observation disabled, forwarding unchanged");
+                    self.decoder_failed = true;
+                }
             }
             Ok(())
         })
@@ -385,15 +403,27 @@ where
         &'a mut self,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = io::Result<()>> + Send + 'a>> {
         Box::pin(async move {
-            let decoded = self.decoder.finish().map_err(|error| {
-                self.runtime_governor.mark_decoder_failure();
-                tracing::debug!(error = %error, "encoded SSE response decoder finish failed");
-                error
-            })?;
-            if !decoded.is_empty() {
-                self.sse_observer.on_chunk(&decoded).await?;
+            if self.decoder_failed {
+                return Ok(());
             }
-            self.sse_observer.on_complete().await
+            let decoded = match self.decoder.finish() {
+                Ok(decoded) => decoded,
+                Err(error) => {
+                    self.runtime_governor.mark_decoder_failure();
+                    tracing::debug!(error = %error, "encoded SSE response decoder finish failed; observation disabled");
+                    return Ok(());
+                }
+            };
+            if !decoded.is_empty() {
+                if let Err(error) = self.sse_observer.on_chunk(&decoded).await {
+                    tracing::debug!(error = %error, "encoded SSE observer rejected final chunk; observation disabled");
+                    return Ok(());
+                }
+            }
+            if let Err(error) = self.sse_observer.on_complete().await {
+                tracing::debug!(error = %error, "encoded SSE observer on_complete failed; ignored to preserve forwarding");
+            }
+            Ok(())
         })
     }
 }

@@ -169,16 +169,26 @@ impl H2ResponseStreamHookDispatcher {
                 if state.stream_ended {
                     return Ok(());
                 }
+                // Encoded-SSE observation runs AFTER the response data has been
+                // sent downstream (see relay_h2_response_body_with_incremental_forwarding).
+                // Decoder errors or budget-exceeded conditions originate in
+                // attacker-controlled upstream bytes; propagating them would
+                // reset the HTTP/2 stream mid-response. Swallow them, mark the
+                // governor, and disable further observation on this stream.
                 match decoder.decode_chunk(chunk) {
                     Ok(decoded) if !decoded.is_empty() => {
-                        state.on_chunk(flow_hooks, stream_context, &decoded).await?;
+                        if let Err(error) =
+                            state.on_chunk(flow_hooks, stream_context, &decoded).await
+                        {
+                            tracing::debug!(error = %error, "HTTP/2 encoded SSE state.on_chunk failed; observation disabled, forwarding unchanged");
+                            state.stream_ended = true;
+                        }
                     }
                     Ok(_) => {}
                     Err(error) => {
                         state.runtime_governor.mark_decoder_failure();
-                        tracing::debug!(error = %error, "HTTP/2 encoded SSE response decode failed");
+                        tracing::debug!(error = %error, "HTTP/2 encoded SSE response decode failed; observation disabled, forwarding unchanged");
                         state.stream_ended = true;
-                        return Err(error);
                     }
                 }
             }
@@ -265,19 +275,30 @@ impl H2ResponseStreamHookDispatcher {
                 if state.stream_ended {
                     return Ok(());
                 }
+                // Same rationale as on_chunk: end-of-stream decode errors must
+                // not propagate; the response is already fully forwarded.
                 match decoder.finish() {
                     Ok(decoded) if !decoded.is_empty() => {
-                        state.on_chunk(flow_hooks, stream_context, &decoded).await?;
+                        if let Err(error) =
+                            state.on_chunk(flow_hooks, stream_context, &decoded).await
+                        {
+                            tracing::debug!(error = %error, "HTTP/2 encoded SSE final chunk dispatch failed; observation disabled");
+                            state.stream_ended = true;
+                            return Ok(());
+                        }
                     }
                     Ok(_) => {}
                     Err(error) => {
                         state.runtime_governor.mark_decoder_failure();
-                        tracing::debug!(error = %error, "HTTP/2 encoded SSE response decoder finish failed");
+                        tracing::debug!(error = %error, "HTTP/2 encoded SSE response decoder finish failed; observation disabled");
                         state.stream_ended = true;
-                        return Err(error);
+                        return Ok(());
                     }
                 }
-                state.finish(flow_hooks, stream_context).await?;
+                if let Err(error) = state.finish(flow_hooks, stream_context).await {
+                    tracing::debug!(error = %error, "HTTP/2 encoded SSE state.finish failed; observation disabled");
+                    state.stream_ended = true;
+                }
             }
             Self::Ndjson {
                 pending,
