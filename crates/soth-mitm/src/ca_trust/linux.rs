@@ -137,7 +137,11 @@ impl PlatformTrustBackend {
         let outcome = if update_tool == "update-ca-certificates" {
             run_command("uninstall_ca_trust", update_tool, ["--fresh"])?
         } else {
-            run_command("uninstall_ca_trust", update_tool, std::iter::empty::<&str>())?
+            run_command(
+                "uninstall_ca_trust",
+                update_tool,
+                std::iter::empty::<&str>(),
+            )?
         };
         if !outcome.success {
             return Err(operation_error("uninstall_ca_trust", outcome.stderr));

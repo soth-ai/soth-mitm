@@ -2,9 +2,11 @@ use std::net::SocketAddr;
 use std::sync::{Arc, LazyLock};
 
 use arc_swap::ArcSwap;
-use hickory_resolver::config::{NameServerConfig, ResolveHosts, ResolverConfig, ResolverOpts};
-use hickory_resolver::name_server::TokioConnectionProvider;
-use hickory_resolver::proto::xfer::Protocol;
+use hickory_resolver::config::{
+    ConnectionConfig, NameServerConfig, ProtocolConfig, ResolveHosts, ResolverConfig, ResolverOpts,
+    CLOUDFLARE,
+};
+use hickory_resolver::net::runtime::TokioRuntimeProvider;
 use hickory_resolver::TokioResolver;
 
 /// Global DNS resolver instance, hot-swappable at runtime.
@@ -67,7 +69,7 @@ pub(crate) async fn resolve_host(host: &str, port: u16) -> std::io::Result<Vec<S
             "dns resolution failed"
         );
         std::io::Error::new(
-            resolve_error_kind(&error),
+            net_error_kind(&error),
             format!("dns resolution failed for {host}: {error}"),
         )
     })?;
@@ -87,17 +89,11 @@ pub(crate) async fn resolve_host(host: &str, port: u16) -> std::io::Result<Vec<S
     Ok(addrs)
 }
 
-fn resolve_error_kind(error: &hickory_resolver::ResolveError) -> std::io::ErrorKind {
-    use hickory_resolver::ResolveErrorKind;
-    match error.kind() {
-        ResolveErrorKind::Proto(proto) => {
-            use hickory_resolver::proto::ProtoErrorKind;
-            match proto.kind() {
-                ProtoErrorKind::NoRecordsFound { .. } => std::io::ErrorKind::NotFound,
-                ProtoErrorKind::Timeout => std::io::ErrorKind::TimedOut,
-                _ => std::io::ErrorKind::Other,
-            }
-        }
+fn net_error_kind(error: &hickory_resolver::net::NetError) -> std::io::ErrorKind {
+    use hickory_resolver::net::{DnsError, NetError};
+    match error {
+        NetError::Timeout => std::io::ErrorKind::TimedOut,
+        NetError::Dns(DnsError::NoRecordsFound(_)) => std::io::ErrorKind::NotFound,
         _ => std::io::ErrorKind::Other,
     }
 }
@@ -114,7 +110,11 @@ fn build_resolver(nameservers: Option<&[String]>) -> TokioResolver {
     let nameserver_addrs: Vec<String> = config
         .name_servers()
         .iter()
-        .map(|ns| format!("{}:{}", ns.socket_addr, ns.protocol))
+        .flat_map(|ns| {
+            ns.connections
+                .iter()
+                .map(move |c| format!("{}:{}/{:?}", ns.ip, c.port, c.protocol))
+        })
         .collect();
     tracing::info!(
         nameservers = ?nameserver_addrs,
@@ -123,14 +123,15 @@ fn build_resolver(nameservers: Option<&[String]>) -> TokioResolver {
     );
 
     let opts = resolver_opts();
-    let mut builder =
-        TokioResolver::builder_with_config(config, TokioConnectionProvider::default());
+    let mut builder = TokioResolver::builder_with_config(config, TokioRuntimeProvider::default());
     *builder.options_mut() = opts;
-    builder.build()
+    builder
+        .build()
+        .expect("hickory resolver build should succeed with validated config")
 }
 
 fn build_custom_config(nameservers: &[String]) -> ResolverConfig {
-    let mut config = ResolverConfig::new();
+    let mut name_servers: Vec<NameServerConfig> = Vec::new();
     for ns in nameservers {
         let socket_addr = if let Ok(addr) = ns.parse::<SocketAddr>() {
             addr
@@ -141,10 +142,17 @@ fn build_custom_config(nameservers: &[String]) -> ResolverConfig {
             continue;
         };
         // UDP primary, TCP fallback for truncated responses.
-        config.add_name_server(NameServerConfig::new(socket_addr, Protocol::Udp));
-        config.add_name_server(NameServerConfig::new(socket_addr, Protocol::Tcp));
+        let mut udp = ConnectionConfig::new(ProtocolConfig::Udp);
+        udp.port = socket_addr.port();
+        let mut tcp = ConnectionConfig::new(ProtocolConfig::Tcp);
+        tcp.port = socket_addr.port();
+        name_servers.push(NameServerConfig::new(
+            socket_addr.ip(),
+            true,
+            vec![udp, tcp],
+        ));
     }
-    config
+    ResolverConfig::from_parts(None, vec![], name_servers)
 }
 
 fn system_config() -> ResolverConfig {
@@ -154,16 +162,16 @@ fn system_config() -> ResolverConfig {
                 error = %error,
                 "failed to read system dns config; falling back to Cloudflare public DNS"
             );
-            (ResolverConfig::cloudflare(), ResolverOpts::default())
+            (
+                ResolverConfig::udp_and_tcp(&CLOUDFLARE),
+                ResolverOpts::default(),
+            )
         });
     // Rebuild config with only nameservers, dropping search domains (e.g. `.local`)
     // inherited from the OS. Without this, hickory-resolver appends search suffixes
     // to bare hostnames, causing lookups like `polymarket.com.local.` which fail.
-    let mut config = ResolverConfig::new();
-    for ns in system.name_servers() {
-        config.add_name_server(ns.clone());
-    }
-    config
+    let name_servers: Vec<NameServerConfig> = system.name_servers().to_vec();
+    ResolverConfig::from_parts(None, vec![], name_servers)
 }
 
 fn resolver_opts() -> ResolverOpts {
