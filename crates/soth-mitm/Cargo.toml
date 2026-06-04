@@ -80,7 +80,7 @@ hickory-resolver = { workspace = true }
 arc-swap = { workspace = true }
 
 # Compression
-brotli = "8.0.2"
+brotli = "8.0.3"
 flate2 = "1"
 zstd = "0.13"
 
