@@ -57,6 +57,7 @@ pub struct SidecarConfig {
     pub idle_watchdog_timeout: Duration,
     pub websocket_idle_watchdog_timeout: Duration,
     pub upstream_connect_timeout: Duration,
+    pub upstream_connect_retry_delay: Option<Duration>,
     pub stream_stage_timeout: Duration,
     pub h2_body_idle_timeout: Duration,
     pub h2_response_overflow_mode: H2ResponseOverflowMode,
@@ -74,6 +75,7 @@ impl Default for SidecarConfig {
             idle_watchdog_timeout: Duration::from_secs(30),
             websocket_idle_watchdog_timeout: Duration::from_secs(600),
             upstream_connect_timeout: Duration::from_secs(10),
+            upstream_connect_retry_delay: None,
             stream_stage_timeout: Duration::from_secs(30),
             h2_body_idle_timeout: Duration::from_secs(120),
             h2_response_overflow_mode: H2ResponseOverflowMode::TruncateContinue,
@@ -212,6 +214,7 @@ where
             config.stream_stage_timeout,
             config.h2_body_idle_timeout,
             config.h2_response_overflow_mode,
+            config.upstream_connect_retry_delay,
         );
         dns_resolver::install_dns_resolver(config.dns_nameservers.as_deref());
         tracing::info!(

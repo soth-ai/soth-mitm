@@ -10,7 +10,7 @@ use super::flow_intercept_tls_failure::fail_tls_and_close;
 use super::http2_stream_relay::relay_http2_connection;
 use super::http2_stream_relay_http1::relay_http2_downstream_to_http1_upstream;
 use super::http_body_relay::write_proxy_response;
-use super::io_timeouts::write_all_with_idle_timeout;
+use super::io_timeouts::{with_stream_stage_timeout, write_all_with_idle_timeout};
 use super::route_planner_model::{RouteBinding, RouteConnectIntent, UpstreamRequestTargetMode};
 use super::route_planner_transport::connect_via_route;
 use super::runtime_governor;
@@ -217,7 +217,16 @@ where
         upstream_start_context,
         "upstream",
     );
-    let upstream_tls = match connector.connect(server_name.clone(), upstream_tcp).await {
+    // Stage-timeout the upstream handshake: the TCP connect budget has already
+    // been spent by this point, and a lossy link (hotspot handoff, dropped AP)
+    // can otherwise stall the handshake indefinitely. Mirrors the h2→h1
+    // translation path (`http2_stream_relay_http1.rs`).
+    let upstream_tls = match with_stream_stage_timeout(
+        "intercept_upstream_tls_connect",
+        connector.connect(server_name.clone(), upstream_tcp),
+    )
+    .await
+    {
         Ok(stream) => stream,
         Err(error) => {
             return fail_tls_and_close(

@@ -55,6 +55,7 @@ async fn start_sidecar(
         idle_watchdog_timeout: std::time::Duration::from_secs(30),
         websocket_idle_watchdog_timeout: std::time::Duration::from_secs(600),
         upstream_connect_timeout: std::time::Duration::from_secs(10),
+        upstream_connect_retry_delay: None,
         stream_stage_timeout: std::time::Duration::from_secs(15),
         h2_body_idle_timeout: std::time::Duration::from_secs(15),
         h2_response_overflow_mode: soth_mitm::test_server::H2ResponseOverflowMode::TruncateContinue,
