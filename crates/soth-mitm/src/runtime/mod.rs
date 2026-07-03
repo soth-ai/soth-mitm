@@ -56,6 +56,10 @@ pub(crate) fn build_runtime_server<H: InterceptHandler>(
         idle_watchdog_timeout,
         websocket_idle_watchdog_timeout: idle_watchdog_timeout.max(Duration::from_secs(600)),
         upstream_connect_timeout: Duration::from_millis(config.upstream.connect_timeout_ms.max(1)),
+        upstream_connect_retry_delay: config
+            .upstream
+            .retry_on_failure
+            .then(|| Duration::from_millis(config.upstream.retry_delay_ms.max(1))),
         stream_stage_timeout: Duration::from_millis(
             config.upstream.h2_header_stage_timeout_ms.max(1),
         ),

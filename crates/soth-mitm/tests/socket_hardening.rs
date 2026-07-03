@@ -25,6 +25,7 @@ fn sidecar_config_for_addr(listen_addr: &str) -> SidecarConfig {
         idle_watchdog_timeout: Duration::from_secs(5),
         websocket_idle_watchdog_timeout: std::time::Duration::from_secs(120),
         upstream_connect_timeout: std::time::Duration::from_secs(10),
+        upstream_connect_retry_delay: None,
         stream_stage_timeout: Duration::from_secs(5),
         h2_body_idle_timeout: Duration::from_secs(5),
         h2_response_overflow_mode: soth_mitm::test_server::H2ResponseOverflowMode::TruncateContinue,

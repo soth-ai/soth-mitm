@@ -99,7 +99,17 @@ fn bind_listener_with_tokio_socket(listen_addr: std::net::SocketAddr) -> io::Res
     } else {
         tokio::net::TcpSocket::new_v6()?
     };
+    // Unix: SO_REUSEADDR is required to rebind past TIME_WAIT sockets and is
+    // safe (it cannot bind over a live listener). Windows: SO_REUSEADDR means
+    // "allow binding over an actively listening socket" (port stealing) —
+    // during supervisor child rotation that produced two listeners on the
+    // same port with nondeterministic delivery. Use SO_EXCLUSIVEADDRUSE
+    // instead so a conflicting bind fails deterministically with AddrInUse,
+    // which the retry loop above handles.
+    #[cfg(not(windows))]
     let _ = socket.set_reuseaddr(true);
+    #[cfg(windows)]
+    set_exclusive_addr_use(&socket);
     socket.bind(listen_addr)?;
     socket.listen(1024)
 }
@@ -110,13 +120,45 @@ fn bind_dual_stack_listener_socket(listen_addr: std::net::SocketAddr) -> io::Res
         socket2::Type::STREAM,
         Some(socket2::Protocol::TCP),
     )?;
+    // See bind_listener_with_tokio_socket for the platform split rationale.
+    #[cfg(not(windows))]
     socket.set_reuse_address(true)?;
+    #[cfg(windows)]
+    set_exclusive_addr_use(&socket);
     let _ = socket.set_only_v6(false);
     socket.bind(&socket2::SockAddr::from(listen_addr))?;
     socket.listen(1024)?;
     socket.set_nonblocking(true)?;
     let std_listener: std::net::TcpListener = socket.into();
     TcpListener::from_std(std_listener)
+}
+
+/// Set SO_EXCLUSIVEADDRUSE (best-effort). socket2 0.5 does not expose this
+/// option, so call `setsockopt` directly. Failure is non-fatal: the socket
+/// still binds with default (non-stealable-by-default) semantics.
+#[cfg(windows)]
+fn set_exclusive_addr_use<S: std::os::windows::io::AsRawSocket>(socket: &S) {
+    // Values from winsock2.h: SOL_SOCKET = 0xFFFF,
+    // SO_EXCLUSIVEADDRUSE = ((int)(~SO_REUSEADDR)) with SO_REUSEADDR = 0x0004.
+    const SOL_SOCKET: i32 = 0xFFFF;
+    const SO_EXCLUSIVEADDRUSE: i32 = !0x0004;
+    #[link(name = "ws2_32")]
+    extern "system" {
+        fn setsockopt(s: usize, level: i32, optname: i32, optval: *const u8, optlen: i32) -> i32;
+    }
+    let enable: i32 = 1;
+    let result = unsafe {
+        setsockopt(
+            socket.as_raw_socket() as usize,
+            SOL_SOCKET,
+            SO_EXCLUSIVEADDRUSE,
+            std::ptr::addr_of!(enable).cast(),
+            std::mem::size_of::<i32>() as i32,
+        )
+    };
+    if result != 0 {
+        tracing::warn!("failed to set SO_EXCLUSIVEADDRUSE on listener socket (non-fatal)");
+    }
 }
 
 fn is_dual_stack_candidate(listen_addr: &std::net::SocketAddr) -> bool {
@@ -157,17 +199,29 @@ pub(crate) fn apply_per_connection_socket_hardening(stream: &TcpStream) {
 
 /// Apply TCP keepalive and no-delay to upstream connections.
 /// Keepalive detects dead connections that the remote closed without
-/// sending a TCP RST (e.g., server-side idle timeout, LB eviction).
+/// sending a TCP RST (e.g., server-side idle timeout, LB eviction) — and,
+/// on flaky links (hotspot handoffs), sockets whose gateway silently
+/// vanished. This must work on every platform: without it, a half-open
+/// upstream socket hangs until the idle watchdog (minutes) instead of
+/// erroring within ~keepalive time.
 pub(crate) fn apply_upstream_socket_hardening(stream: &TcpStream) {
     let _ = stream.set_nodelay(true);
+    let keepalive = socket2::TcpKeepalive::new()
+        .with_time(std::time::Duration::from_secs(15))
+        .with_interval(std::time::Duration::from_secs(5));
     #[cfg(unix)]
     {
         use std::os::unix::io::{AsRawFd, FromRawFd};
         let fd = stream.as_raw_fd();
         let socket = unsafe { socket2::Socket::from_raw_fd(fd) };
-        let keepalive = socket2::TcpKeepalive::new()
-            .with_time(std::time::Duration::from_secs(15))
-            .with_interval(std::time::Duration::from_secs(5));
+        let _ = socket.set_tcp_keepalive(&keepalive);
+        std::mem::forget(socket);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::io::{AsRawSocket, FromRawSocket};
+        let raw = stream.as_raw_socket();
+        let socket = unsafe { socket2::Socket::from_raw_socket(raw) };
         let _ = socket.set_tcp_keepalive(&keepalive);
         std::mem::forget(socket);
     }

@@ -13,6 +13,9 @@ struct IoTimeoutConfig {
     stream_stage_timeout: std::time::Duration,
     h2_body_idle_timeout: std::time::Duration,
     h2_response_overflow_mode: H2ResponseOverflowMode,
+    /// `Some(delay)` enables a single connect retry after `delay` for
+    /// transient failures (refused / unreachable / reset). `None` disables.
+    upstream_connect_retry_delay: Option<std::time::Duration>,
 }
 
 impl Default for IoTimeoutConfig {
@@ -24,6 +27,7 @@ impl Default for IoTimeoutConfig {
             stream_stage_timeout: std::time::Duration::from_secs(5),
             h2_body_idle_timeout: std::time::Duration::from_secs(5),
             h2_response_overflow_mode: H2ResponseOverflowMode::TruncateContinue,
+            upstream_connect_retry_delay: None,
         }
     }
 }
@@ -74,6 +78,7 @@ fn ensure_bounded_timeout(timeout: std::time::Duration) -> std::time::Duration {
     as_non_zero_duration(timeout, std::time::Duration::from_millis(1))
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn install_io_timeout_config(
     idle_watchdog_timeout: std::time::Duration,
     websocket_idle_watchdog_timeout: std::time::Duration,
@@ -81,6 +86,7 @@ pub(crate) fn install_io_timeout_config(
     stream_stage_timeout: std::time::Duration,
     h2_body_idle_timeout: std::time::Duration,
     h2_response_overflow_mode: H2ResponseOverflowMode,
+    upstream_connect_retry_delay: Option<std::time::Duration>,
 ) {
     let config = IoTimeoutConfig {
         idle_watchdog_timeout: ensure_bounded_timeout(idle_watchdog_timeout),
@@ -89,6 +95,7 @@ pub(crate) fn install_io_timeout_config(
         stream_stage_timeout: ensure_bounded_timeout(stream_stage_timeout),
         h2_body_idle_timeout: ensure_bounded_timeout(h2_body_idle_timeout),
         h2_response_overflow_mode,
+        upstream_connect_retry_delay,
     };
     let mut guard = IO_TIMEOUT_CONFIG
         .get_or_init(|| std::sync::Mutex::new(IoTimeoutConfig::default()))
@@ -102,11 +109,19 @@ pub(crate) async fn connect_with_upstream_timeout(
     port: u16,
     stage: &'static str,
 ) -> std::io::Result<tokio::net::TcpStream> {
-    let timeout = io_timeout_config().upstream_connect_timeout;
+    let config = io_timeout_config();
+    let timeout = config.upstream_connect_timeout;
     let deadline = tokio::time::Instant::now() + timeout;
 
     let start = std::time::Instant::now();
-    let connect_result = connect_with_happy_eyeballs(host, port, deadline).await;
+    let connect_result = connect_with_retry(
+        host,
+        port,
+        stage,
+        deadline,
+        config.upstream_connect_retry_delay,
+    )
+    .await;
     if is_connect_timeout_error(&connect_result) {
         let elapsed = start.elapsed();
         tracing::warn!(
@@ -130,6 +145,60 @@ pub(crate) async fn connect_with_upstream_timeout(
 
 fn is_connect_timeout_error(result: &std::io::Result<tokio::net::TcpStream>) -> bool {
     matches!(result, Err(error) if error.kind() == std::io::ErrorKind::TimedOut)
+}
+
+/// Connect with a single retry for transient failures (hotspot handoffs,
+/// gateway blips). Timeouts are excluded — they already consumed the whole
+/// budget — and the retry only runs when enough budget remains past the
+/// retry delay. `retry_delay: None` disables retrying entirely.
+async fn connect_with_retry(
+    host: &str,
+    port: u16,
+    stage: &'static str,
+    deadline: tokio::time::Instant,
+    retry_delay: Option<std::time::Duration>,
+) -> std::io::Result<tokio::net::TcpStream> {
+    let connect_result = connect_with_happy_eyeballs(host, port, deadline).await;
+    let Some(retry_delay) = retry_delay else {
+        return connect_result;
+    };
+    if !is_transient_connect_error(&connect_result) {
+        return connect_result;
+    }
+    let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+    if remaining <= retry_delay {
+        return connect_result;
+    }
+    tracing::debug!(
+        host,
+        port,
+        stage,
+        retry_delay_ms = retry_delay.as_millis() as u64,
+        "upstream connect failed transiently; retrying once"
+    );
+    tokio::time::sleep(retry_delay).await;
+    connect_with_happy_eyeballs(host, port, deadline).await
+}
+
+/// Transient network errors worth one retry: connection-level rejections and
+/// route/DNS failures that a mid-handoff network produces for a few hundred
+/// milliseconds. Timeouts and permanent errors (invalid input, not found)
+/// are excluded.
+fn is_transient_connect_error(result: &std::io::Result<tokio::net::TcpStream>) -> bool {
+    use std::io::ErrorKind;
+    matches!(
+        result,
+        Err(error) if matches!(
+            error.kind(),
+            ErrorKind::ConnectionRefused
+                | ErrorKind::ConnectionReset
+                | ErrorKind::ConnectionAborted
+                | ErrorKind::NetworkUnreachable
+                | ErrorKind::HostUnreachable
+                | ErrorKind::NetworkDown
+                | ErrorKind::AddrNotAvailable
+        )
+    )
 }
 
 async fn connect_with_happy_eyeballs(
@@ -525,7 +594,10 @@ where
 
 #[cfg(test)]
 mod io_timeout_happy_eyeballs_tests {
-    use super::{connect_with_happy_eyeballs_addrs, interleave_happy_eyeballs_addrs};
+    use super::{
+        connect_with_happy_eyeballs_addrs, connect_with_retry, interleave_happy_eyeballs_addrs,
+        is_transient_connect_error,
+    };
     use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
     use std::time::Duration;
     use tokio::io::AsyncReadExt;
@@ -588,5 +660,66 @@ mod io_timeout_happy_eyeballs_tests {
         .await
         .expect_err("empty address list must fail");
         assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn transient_connect_error_classification() {
+        let transient = std::io::Error::new(std::io::ErrorKind::ConnectionRefused, "refused");
+        assert!(is_transient_connect_error(&Err(transient)));
+        let timeout = std::io::Error::new(std::io::ErrorKind::TimedOut, "timed out");
+        assert!(!is_transient_connect_error(&Err(timeout)));
+        let invalid = std::io::Error::new(std::io::ErrorKind::InvalidInput, "bad input");
+        assert!(!is_transient_connect_error(&Err(invalid)));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn connect_with_retry_recovers_after_transient_refusal() {
+        // Reserve a port, then close the listener so the first attempt is
+        // refused; rebind shortly after so the retry succeeds.
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("bind probe listener");
+        let addr = listener.local_addr().expect("listener addr");
+        drop(listener);
+
+        let rebind = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(30)).await;
+            let listener = TcpListener::bind(addr).await.expect("rebind listener");
+            let (mut stream, _) = listener.accept().await.expect("accept retried connect");
+            let mut one = [0_u8; 1];
+            let _ = stream.read(&mut one).await;
+        });
+
+        let stream = connect_with_retry(
+            "127.0.0.1",
+            addr.port(),
+            "test_retry",
+            tokio::time::Instant::now() + Duration::from_secs(5),
+            Some(Duration::from_millis(100)),
+        )
+        .await
+        .expect("retry should recover after listener rebinds");
+        drop(stream);
+        rebind.await.expect("rebind task join");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn connect_with_retry_disabled_fails_immediately() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("bind probe listener");
+        let addr = listener.local_addr().expect("listener addr");
+        drop(listener);
+
+        let error = connect_with_retry(
+            "127.0.0.1",
+            addr.port(),
+            "test_no_retry",
+            tokio::time::Instant::now() + Duration::from_secs(5),
+            None,
+        )
+        .await
+        .expect_err("closed port must refuse without retry");
+        assert!(is_transient_connect_error(&Err(error)));
     }
 }

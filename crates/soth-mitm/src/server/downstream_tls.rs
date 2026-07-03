@@ -105,35 +105,41 @@ pub(crate) async fn accept_downstream_tls(
     DownstreamTlsStream,
     Option<crate::types::TlsClientFingerprint>,
 )> {
-    // Peek at the raw ClientHello before the TLS library consumes it.
-    let fingerprint = {
-        let mut peek_buf = [0u8; 16384];
-        match downstream.peek(&mut peek_buf).await {
-            Ok(n) if n > 0 => super::clienthello_parser::parse_and_fingerprint(&peek_buf[..n]),
-            _ => None,
-        }
-    };
-
-    let stream = match backend {
-        DownstreamTlsBackend::Rustls => accept_with_rustls(downstream, issued).await?,
-        DownstreamTlsBackend::Openssl => {
-            #[cfg(not(target_os = "windows"))]
-            {
-                accept_with_openssl(downstream, issued, http2_enabled).await?
+    // Stage-timeout the whole accept (ClientHello peek + handshake): a client
+    // that opens the tunnel and then stalls would otherwise pin this flow
+    // task indefinitely; only the flow-permit governor bounded the damage.
+    super::io_timeouts::with_stream_stage_timeout("downstream_tls_accept", async move {
+        // Peek at the raw ClientHello before the TLS library consumes it.
+        let fingerprint = {
+            let mut peek_buf = [0u8; 16384];
+            match downstream.peek(&mut peek_buf).await {
+                Ok(n) if n > 0 => super::clienthello_parser::parse_and_fingerprint(&peek_buf[..n]),
+                _ => None,
             }
-            #[cfg(target_os = "windows")]
-            {
-                let _ = downstream;
-                let _ = issued;
-                let _ = http2_enabled;
-                return Err(io::Error::other(
-                    "downstream openssl backend is not supported on windows builds",
-                ));
-            }
-        }
-    };
+        };
 
-    Ok((stream, fingerprint))
+        let stream = match backend {
+            DownstreamTlsBackend::Rustls => accept_with_rustls(downstream, issued).await?,
+            DownstreamTlsBackend::Openssl => {
+                #[cfg(not(target_os = "windows"))]
+                {
+                    accept_with_openssl(downstream, issued, http2_enabled).await?
+                }
+                #[cfg(target_os = "windows")]
+                {
+                    let _ = downstream;
+                    let _ = issued;
+                    let _ = http2_enabled;
+                    return Err(io::Error::other(
+                        "downstream openssl backend is not supported on windows builds",
+                    ));
+                }
+            }
+        };
+
+        Ok((stream, fingerprint))
+    })
+    .await
 }
 
 async fn accept_with_rustls(

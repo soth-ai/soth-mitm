@@ -35,6 +35,7 @@ async fn start_sidecar_with_sink(
         idle_watchdog_timeout: std::time::Duration::from_secs(30),
         websocket_idle_watchdog_timeout: std::time::Duration::from_secs(120),
         upstream_connect_timeout: std::time::Duration::from_secs(10),
+        upstream_connect_retry_delay: None,
         stream_stage_timeout: std::time::Duration::from_secs(5),
         h2_body_idle_timeout: std::time::Duration::from_secs(5),
         h2_response_overflow_mode: soth_mitm::test_server::H2ResponseOverflowMode::TruncateContinue,
