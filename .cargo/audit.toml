@@ -1,0 +1,17 @@
+# cargo-audit configuration (CI: "Audit dependencies" step in ci.yml).
+#
+# Each ignore must carry a justification and an upstream condition for
+# removal. Re-check on every dependency bump.
+
+[advisories]
+ignore = [
+    # quick-xml 0.39.4 DoS advisories (quadratic duplicate-attribute check;
+    # unbounded NsReader namespace allocation). Reached only via `plist`,
+    # which we use exclusively to read Info.plist files of locally installed
+    # app bundles for macOS process attribution (process/macos.rs) — never
+    # attacker-controlled network XML, so the DoS vectors don't apply.
+    # plist 1.9.0 (latest) pins quick-xml 0.39; remove these when plist
+    # ships a quick-xml >=0.41 release.
+    "RUSTSEC-2026-0194",
+    "RUSTSEC-2026-0195",
+]
