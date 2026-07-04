@@ -22,7 +22,11 @@ impl Default for RuntimeBudgetConfig {
     }
 }
 
+// non_exhaustive so adding observability counters (as this PR does with
+// connection_admission_denial_count) is never a breaking change for external
+// consumers that construct or exhaustively match this snapshot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub struct RuntimeObservabilitySnapshot {
     pub active_flows: u64,
     pub max_active_flows: u64,

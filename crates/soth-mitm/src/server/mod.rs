@@ -269,6 +269,9 @@ where
         // all connections — generous headroom over realistic concurrency,
         // since tunnels take no flow permit, while still bounding a storm.
         // A non-zero config override is used verbatim (tests set a small cap).
+        // Clamped to Semaphore::MAX_PERMITS so a pathological config (or an
+        // 8× multiply that saturates toward usize::MAX) can't panic the
+        // constructor.
         let max_accepted_connections = if config.max_accepted_connections > 0 {
             config.max_accepted_connections
         } else {
@@ -277,7 +280,8 @@ where
                 .max_concurrent_flows
                 .saturating_mul(8)
                 .max(8192)
-        };
+        }
+        .min(tokio::sync::Semaphore::MAX_PERMITS);
         Ok(Self {
             config,
             engine: Arc::new(engine),
