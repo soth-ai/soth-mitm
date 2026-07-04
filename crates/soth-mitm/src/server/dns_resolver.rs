@@ -126,14 +126,37 @@ pub(crate) async fn resolve_host(host: &str, port: u16) -> std::io::Result<Vec<S
     }
 }
 
-/// Fail-open resolution via the OS stub (`getaddrinfo`). Bounded by the
-/// caller's connect deadline (`resolve_host` is invoked under a timeout), and
-/// runs on tokio's blocking pool so it never stalls the runtime.
+/// Caps concurrent `getaddrinfo` fallbacks. `tokio::net::lookup_host`
+/// dispatches libc `getaddrinfo` onto the blocking pool, and the caller's
+/// `tokio::time::timeout` only *drops the future* — it cannot cancel the
+/// in-flight syscall, which keeps running on its thread until the OS stub
+/// returns. On a firewalled-`:53` network (where hickory fails and every
+/// connection then falls back) a burst could otherwise pin the whole blocking
+/// pool. This bounds it: past the cap we skip the fallback and surface the
+/// hickory error rather than pinning more threads.
+static OS_FALLBACK_SLOTS: LazyLock<tokio::sync::Semaphore> =
+    LazyLock::new(|| tokio::sync::Semaphore::new(128));
+
+/// Fail-open resolution via the OS stub (`getaddrinfo`) for the cases the
+/// direct hickory query can't answer (firewalled `:53`, IPv6-only DNS64,
+/// split-horizon, `/etc/hosts`, mDNS/MagicDNS).
+///
+/// NOTE on bounding: the caller wraps this in the connect deadline, which
+/// bounds *latency* but NOT the underlying `getaddrinfo` syscall — that runs
+/// on a blocking-pool thread that is not reclaimed when the deadline fires.
+/// Concurrency is therefore capped via [`OS_FALLBACK_SLOTS`] so a storm on a
+/// resolver-down network can't exhaust the pool.
 async fn resolve_via_os_fallback(
     host: &str,
     port: u16,
     reason: &str,
 ) -> std::io::Result<Vec<SocketAddr>> {
+    let _slot = OS_FALLBACK_SLOTS.try_acquire().map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::WouldBlock,
+            "os resolver fallback concurrency cap reached",
+        )
+    })?;
     let start = std::time::Instant::now();
     let addrs: Vec<SocketAddr> = tokio::net::lookup_host((host, port)).await?.collect();
     if addrs.is_empty() {
