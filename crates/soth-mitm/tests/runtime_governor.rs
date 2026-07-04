@@ -176,14 +176,22 @@ async fn runtime_governor_enforces_concurrent_flow_limit_and_records_metrics() {
     );
 }
 
+/// Blind tunnels no longer carry an application idle watchdog — they must
+/// survive being legitimately idle (SSH, IMAP IDLE, DB keepalives) and only
+/// close on a real peer EOF/error, with dead-peer detection delegated to TCP
+/// keepalive. This guards against reintroducing the old behavior that
+/// force-closed live-but-idle tunnels after the watchdog window.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn idle_watchdog_timeout_closes_stuck_tunnel_and_records_metrics() {
+async fn blind_tunnel_survives_idle_and_closes_on_peer_eof() {
     let _serial_permit = acquire_runtime_governor_test_permit().await;
     let upstream = bind_loopback_listener_with_retry("bind upstream").await;
     let upstream_addr = upstream.local_addr().expect("upstream addr");
+    // Upstream accepts, stays silent (idle) for a while, then closes — the
+    // only thing that should end the tunnel is that final EOF.
     let upstream_task = tokio::spawn(async move {
         let (_stream, _) = upstream.accept().await.expect("accept upstream");
-        sleep(Duration::from_secs(1)).await;
+        sleep(Duration::from_millis(700)).await;
+        // drop closes the connection → EOF propagates to the client.
     });
 
     let sink = VecEventConsumer::default();
@@ -232,7 +240,22 @@ async fn idle_watchdog_timeout_closes_stuck_tunnel_and_records_metrics() {
     let connect_head = read_response_head(&mut client).await;
     assert!(connect_head.starts_with("HTTP/1.1 200"), "{connect_head}");
 
-    timeout(Duration::from_secs(2), async {
+    // For the first 400ms — well past the old 120ms watchdog window — the
+    // idle tunnel must stay open: a read for data should simply time out
+    // (WouldBlock via the outer timeout), not return EOF/error.
+    let early = timeout(Duration::from_millis(400), async {
+        let mut probe = [0_u8; 1];
+        client.read(&mut probe).await
+    })
+    .await;
+    assert!(
+        early.is_err(),
+        "idle tunnel was closed within the old watchdog window: {early:?}"
+    );
+
+    // Once the upstream closes (~700ms), the EOF must propagate and end the
+    // tunnel cleanly.
+    let closed = timeout(Duration::from_secs(3), async {
         let mut probe = [0_u8; 1];
         loop {
             match client.read(&mut probe).await {
@@ -252,38 +275,42 @@ async fn idle_watchdog_timeout_closes_stuck_tunnel_and_records_metrics() {
             }
         }
     })
-    .await
-    .expect("idle watchdog should close stalled tunnel");
+    .await;
+    assert!(closed.is_ok(), "tunnel should close after upstream EOF");
 
+    // The upstream half-closed us; close the client→upstream half too so the
+    // bidirectional copy completes and the flow finalizes (real clients do
+    // this on peer close).
+    use tokio::io::AsyncWriteExt;
+    let _ = client.shutdown().await;
+
+    // The close must be reported as a clean relay EOF, never as an idle
+    // watchdog timeout (which blind tunnels no longer apply).
     timeout(Duration::from_secs(2), async {
         loop {
-            let snapshot = observability.snapshot();
-            if snapshot.idle_timeout_count >= 1 && snapshot.stuck_flow_count >= 1 {
+            if sink_for_assertions
+                .snapshot()
+                .iter()
+                .any(|event| event.kind == EventType::StreamClosed)
+            {
                 break;
             }
             sleep(Duration::from_millis(10)).await;
         }
     })
     .await
-    .expect("timeout counters should be observed");
+    .expect("a stream_closed event should be emitted");
 
-    let snapshot = observability.snapshot();
     assert!(
-        snapshot.idle_timeout_count >= 1,
-        "expected idle timeout counter increment"
-    );
-    assert!(
-        snapshot.stuck_flow_count >= 1,
-        "expected stuck flow counter increment"
-    );
-    assert!(
-        sink_for_assertions.snapshot().iter().any(|event| {
+        !sink_for_assertions.snapshot().iter().any(|event| {
             event.kind == EventType::StreamClosed
                 && event.attributes.get("reason_code").map(String::as_str)
                     == Some("idle_watchdog_timeout")
         }),
-        "expected stream_closed reason_code=idle_watchdog_timeout"
+        "blind tunnel must not be closed by the idle watchdog"
     );
+    // observability handle is still exercised for API stability.
+    let _ = observability.snapshot();
 
     proxy_task.abort();
     upstream_task.abort();

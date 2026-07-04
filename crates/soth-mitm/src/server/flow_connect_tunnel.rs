@@ -11,8 +11,8 @@ use super::flow_policy_snapshot::{clear_flow_policy_snapshot, resolve_flow_polic
 use super::http_body_relay::write_proxy_response;
 use super::http_head_parser::read_connect_head;
 use super::io_timeouts::{
-    copy_bidirectional_with_websocket_idle_timeout, is_idle_watchdog_timeout,
-    is_stream_stage_timeout, write_all_with_idle_timeout,
+    copy_bidirectional_tunnel, is_idle_watchdog_timeout, is_stream_stage_timeout,
+    write_all_with_idle_timeout,
 };
 use super::route_planner_model::{FlowRoutePlanner, RouteBinding, RouteConnectIntent, RouteTarget};
 use super::route_planner_transport::connect_via_route;
@@ -407,7 +407,7 @@ where
         .await?;
     }
 
-    match copy_bidirectional_with_websocket_idle_timeout(downstream, &mut upstream).await {
+    match copy_bidirectional_tunnel(downstream, &mut upstream).await {
         Ok((from_client, from_server)) => {
             // Tunneled flows are blind TCP passthrough — no body inspection,
             // no buffering, no budget.  Always report clean EOF.

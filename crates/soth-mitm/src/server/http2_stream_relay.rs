@@ -6,7 +6,9 @@ use super::http2_relay_support::{
     is_h2_nonfatal_stream_error,
 };
 use super::http2_stream_relay_stream::relay_http2_stream;
-use super::io_timeouts::{is_idle_watchdog_timeout, is_stream_stage_timeout};
+use super::io_timeouts::{
+    is_idle_watchdog_timeout, is_stream_stage_timeout, with_stream_stage_timeout,
+};
 use super::runtime_governor;
 use crate::engine::MitmEngine;
 use crate::observe::{EventConsumer, FlowContext};
@@ -60,28 +62,49 @@ where
 {
     let mut downstream_builder = h2::server::Builder::new();
     configure_h2_server(&mut downstream_builder, max_header_list_size);
-    let mut downstream_connection = match downstream_builder.handshake(downstream_tls).await {
-        Ok(connection) => connection,
-        Err(error) => {
-            emit_stream_closed(
-                &engine,
-                FlowContext {
-                    protocol: ApplicationProtocol::Http2,
-                    ..tunnel_context
-                },
-                CloseReasonCode::MitmHttpError,
-                Some(format!("downstream HTTP/2 handshake failed: {error}")),
-                None,
-                None,
-            );
-            return Ok(());
-        }
+    // Bound the h2 preface/SETTINGS exchange: a peer that finished TLS then
+    // stalls the handshake would otherwise pin this flow task (and its permit)
+    // indefinitely. The TLS layer is already stage-timed; this closes the gap
+    // right after it.
+    let downstream_handshake = async {
+        downstream_builder
+            .handshake(downstream_tls)
+            .await
+            .map_err(|error| {
+                io::Error::other(format!("downstream HTTP/2 handshake failed: {error}"))
+            })
     };
+    let mut downstream_connection =
+        match with_stream_stage_timeout("downstream_h2_handshake", downstream_handshake).await {
+            Ok(connection) => connection,
+            Err(error) => {
+                emit_stream_closed(
+                    &engine,
+                    FlowContext {
+                        protocol: ApplicationProtocol::Http2,
+                        ..tunnel_context
+                    },
+                    CloseReasonCode::MitmHttpError,
+                    Some(error.to_string()),
+                    None,
+                    None,
+                );
+                return Ok(());
+            }
+        };
 
     let mut upstream_builder = h2::client::Builder::new();
     configure_h2_client(&mut upstream_builder, max_header_list_size);
+    // Same bound on the upstream side — the upstream TLS connect is already
+    // stage-timed, but the h2 handshake that follows was not.
+    let upstream_handshake = async {
+        upstream_builder
+            .handshake(upstream_tls)
+            .await
+            .map_err(|error| io::Error::other(format!("upstream HTTP/2 handshake failed: {error}")))
+    };
     let (upstream_sender, upstream_connection) =
-        match upstream_builder.handshake(upstream_tls).await {
+        match with_stream_stage_timeout("upstream_h2_handshake", upstream_handshake).await {
             Ok(connection_parts) => connection_parts,
             Err(error) => {
                 emit_stream_closed(
@@ -91,7 +114,7 @@ where
                         ..tunnel_context
                     },
                     CloseReasonCode::MitmHttpError,
-                    Some(format!("upstream HTTP/2 handshake failed: {error}")),
+                    Some(error.to_string()),
                     None,
                     None,
                 );
