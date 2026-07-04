@@ -83,10 +83,22 @@ impl TlsInterceptBackoff {
         host: &str,
         detail: &str,
     ) -> bool {
-        // Only genuine cert-trust rejections count. A connection reset / EOF
-        // is not evidence of pinning and is trivially forgeable by any local
-        // process, so it must never disable inspection.
-        if !is_downstream_tls_compat_failure(detail) {
+        // Arm on two failure classes, both routed through the same
+        // threshold + exact-host gating:
+        //   1. Downstream genuine cert-trust rejections — the client refused
+        //      our MITM leaf (pinning / custom trust).
+        //   2. Upstream TLS handshake/config failures — our interception can't
+        //      complete TLS to the origin (origin requires mTLS we can't
+        //      present, rejects our client, or an unusual cert our verifier
+        //      won't accept). Tunneling lets the client negotiate directly and
+        //      succeed where our MITM failed — fail open to direct instead of
+        //      breaking every connection to that host. Upstream *timeouts* and
+        //      connect failures are excluded: tunneling can't help when the
+        //      origin itself is slow/unreachable.
+        // Forgeable aborts (reset/EOF) never arm either class.
+        let downstream = is_downstream_tls_compat_failure(detail);
+        let upstream = is_upstream_tls_passthrough_failure(detail);
+        if !downstream && !upstream {
             return false;
         }
 
@@ -94,16 +106,27 @@ impl TlsInterceptBackoff {
         let until = now + self.bypass_ttl;
         let mut activated = false;
 
-        if let Some(pid) = pid {
-            if self.record_failure_reached_threshold(&self.failures_by_pid, pid, now) {
-                activated |= register_backoff_deadline(&self.bypass_until_by_pid, pid, now, until);
+        // The pid-scoped bypass is armed ONLY by downstream failures. Client
+        // pinning is a property of the *process's* trust store, so a pid-wide
+        // bypass is justified. An upstream failure is a property of the *host*
+        // (origin mTLS/cert), not the process — arming a pid-wide bypass on it
+        // would let a local process disable inspection of ALL its traffic by
+        // failing 2 upstream handshakes against a host it controls. So
+        // upstream failures never touch the pid scope.
+        if downstream {
+            if let Some(pid) = pid {
+                if self.record_failure_reached_threshold(&self.failures_by_pid, pid, now) {
+                    activated |=
+                        register_backoff_deadline(&self.bypass_until_by_pid, pid, now, until);
+                }
             }
         }
 
         // Exact host only — no parent-domain widening. Widening a failure at
         // `x.co.uk` up to `co.uk` (or any eTLD) would disable inspection for
         // every sibling/host under that suffix; without a public-suffix list
-        // that blast radius is unbounded, so we never widen.
+        // that blast radius is unbounded, so we never widen. Host scope is
+        // armed by both classes (both mean "this host can't be intercepted").
         if let Some(host_key) = normalize_host_key(host) {
             if self.record_failure_reached_threshold(&self.failures_by_host, host_key.clone(), now)
             {
@@ -226,6 +249,40 @@ fn is_downstream_tls_compat_failure(detail: &str) -> bool {
         || normalized.contains("certificate unknown")
 }
 
+/// An upstream (origin-facing) TLS handshake or client-config failure for
+/// which passing the flow through as a blind tunnel — letting the client do
+/// its own TLS to the origin — is the right recovery. Excludes timeouts and
+/// connect failures: if the origin itself is slow or unreachable, tunneling
+/// doesn't help, so those must not arm the passthrough.
+fn is_upstream_tls_passthrough_failure(detail: &str) -> bool {
+    let normalized = detail.to_ascii_lowercase();
+    if !normalized.contains("upstream handshake failed") {
+        // Note: an "upstream tls config build failed" is our OWN
+        // configuration error, not a host property — arming a tunnel bypass
+        // on it would silently mask the misconfiguration, so it is
+        // deliberately NOT matched here.
+        return false;
+    }
+    // Require a genuine TLS-negotiation rejection — the same discipline the
+    // downstream matcher uses. A bare `"upstream handshake failed"` also
+    // covers forgeable aborts (`unexpected eof`, `connection reset`) and
+    // stage timeouts, none of which indicate a fixable interception failure
+    // and all of which a peer can trivially produce; matching those would
+    // reopen the very bypass primitive the downstream hardening closed. Only
+    // clear negotiation-rejection signals arm the passthrough:
+    normalized.contains("invalid peer certificate")
+        || normalized.contains("certificate required") // origin wants mTLS we can't present
+        || normalized.contains("bad certificate")
+        || normalized.contains("unknown issuer")
+        || normalized.contains("unknown ca")
+        || normalized.contains("certificate expired")
+        || normalized.contains("not valid for name")
+        || normalized.contains("handshake failure") // fatal alert: cipher/param mismatch
+        || normalized.contains("no cipher suites in common")
+        || normalized.contains("unsupported protocol")
+        || normalized.contains("peer misbehaved")
+}
+
 #[cfg(test)]
 mod tests {
     use super::TlsInterceptBackoff;
@@ -269,18 +326,52 @@ mod tests {
     }
 
     #[test]
-    fn upstream_failure_does_not_enable_bypass() {
+    fn upstream_tls_failure_arms_host_only_not_pid() {
+        // Fail open to direct: repeated genuine upstream TLS rejections (origin
+        // requires mTLS we can't present, rejects our client, etc.) tunnel the
+        // HOST so the client negotiates directly — but must NOT arm the
+        // pid-scoped bypass, or a process could disable all its own inspection
+        // via a host it controls.
         let backoff = TlsInterceptBackoff::new(Duration::from_secs(30));
-        for _ in 0..3 {
-            assert!(!backoff.register_tls_failure(
-                Some(42),
-                Some("codex"),
-                concat!("chatg", "pt.com"),
-                "upstream handshake failed: certificate verify failed: unknown ca"
-            ));
+        let host = concat!("chatg", "pt.com");
+        let detail = "upstream handshake failed: rustls handshake failed: bad certificate";
+        assert!(!backoff.register_tls_failure(Some(42), Some("codex"), host, detail));
+        assert!(!backoff.should_bypass_for_host(host));
+        assert!(backoff.register_tls_failure(Some(42), Some("codex"), host, detail));
+        assert!(backoff.should_bypass_for_host(host));
+        // Host armed, but the pid scope must stay clean.
+        assert!(
+            !backoff.should_bypass_for_pid(42),
+            "upstream failures must not arm the pid-scoped bypass"
+        );
+    }
+
+    #[test]
+    fn upstream_forgeable_abort_or_timeout_never_arms_passthrough() {
+        // Forgeable aborts (reset/EOF) and origin-slowness (timeout/connect
+        // failure) must never disable interception — matching a bare
+        // "upstream handshake failed" would reopen the bypass primitive the
+        // downstream hardening closed.
+        let backoff = TlsInterceptBackoff::new(Duration::from_secs(30));
+        let host = concat!("chatg", "pt.com");
+        for detail in [
+            "upstream handshake failed: unexpected eof",
+            "upstream handshake failed: connection reset by peer",
+            "upstream handshake failed: received corrupt message of type Handshake",
+            "upstream handshake failed: stream_stage_timeout:intercept_upstream_tls_connect:5000ms",
+            "upstream connect failed: connection refused",
+            "upstream handshake failed: timed out",
+            "upstream tls config build failed: bad certificate", // our own error, must not arm
+        ] {
+            for _ in 0..5 {
+                assert!(
+                    !backoff.register_tls_failure(Some(42), None, host, detail),
+                    "detail must not arm: {detail}"
+                );
+            }
         }
+        assert!(!backoff.should_bypass_for_host(host));
         assert!(!backoff.should_bypass_for_pid(42));
-        assert!(!backoff.should_bypass_for_host(concat!("chatg", "pt.com")));
     }
 
     #[test]

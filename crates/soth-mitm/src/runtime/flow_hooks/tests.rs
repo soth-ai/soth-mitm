@@ -522,7 +522,10 @@ async fn downstream_tls_failure_bypasses_intercept_for_same_host_without_process
 }
 
 #[tokio::test]
-async fn upstream_tls_failure_does_not_bypass_intercept_for_process() {
+async fn repeated_upstream_tls_failure_arms_passthrough() {
+    // A single upstream TLS failure must not disable interception, but
+    // repeated ones (origin our MITM can't complete TLS to) fail open to a
+    // direct tunnel so the client can negotiate itself.
     let handler = Arc::new(PassThroughTlsHandler);
     let metrics_store = Arc::new(ProxyMetricsStore::default());
     let hooks = build_hooks(
@@ -532,23 +535,29 @@ async fn upstream_tls_failure_does_not_bypass_intercept_for_process() {
         Duration::from_millis(100),
         true,
     );
-    let context = sample_context(111);
-    register_connection(&hooks, context.clone()).await;
+    let upstream_fail =
+        "upstream handshake failed: rustls handshake failed: bad certificate".to_string();
 
-    hooks
-        .on_tls_failure(
-            context,
-            "upstream handshake failed: certificate verify failed: unknown ca".to_string(),
-        )
-        .await;
-
-    let next_context = sample_context(112);
-    let should_intercept = hooks
-        .should_intercept_tls(next_context, Some(fixture_policy_process_info(7001)))
-        .await;
+    // One failure: still intercept.
+    let first = sample_context(111);
+    register_connection(&hooks, first.clone()).await;
+    hooks.on_tls_failure(first, upstream_fail.clone()).await;
     assert!(
-        should_intercept,
-        "upstream TLS failures should not disable interception for local process"
+        hooks
+            .should_intercept_tls(sample_context(112), Some(fixture_policy_process_info(7001)))
+            .await,
+        "a single upstream TLS failure must not disable interception"
+    );
+
+    // Second failure crosses the threshold → passthrough.
+    let second = sample_context(113);
+    register_connection(&hooks, second.clone()).await;
+    hooks.on_tls_failure(second, upstream_fail).await;
+    assert!(
+        !hooks
+            .should_intercept_tls(sample_context(114), Some(fixture_policy_process_info(7001)))
+            .await,
+        "repeated upstream TLS failures should fail open to a direct tunnel"
     );
 }
 
