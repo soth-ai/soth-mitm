@@ -83,10 +83,21 @@ impl TlsInterceptBackoff {
         host: &str,
         detail: &str,
     ) -> bool {
-        // Only genuine cert-trust rejections count. A connection reset / EOF
-        // is not evidence of pinning and is trivially forgeable by any local
-        // process, so it must never disable inspection.
-        if !is_downstream_tls_compat_failure(detail) {
+        // Arm on two failure classes, both routed through the same
+        // threshold + exact-host gating:
+        //   1. Downstream genuine cert-trust rejections — the client refused
+        //      our MITM leaf (pinning / custom trust).
+        //   2. Upstream TLS handshake/config failures — our interception can't
+        //      complete TLS to the origin (origin requires mTLS we can't
+        //      present, rejects our client, or an unusual cert our verifier
+        //      won't accept). Tunneling lets the client negotiate directly and
+        //      succeed where our MITM failed — fail open to direct instead of
+        //      breaking every connection to that host. Upstream *timeouts* and
+        //      connect failures are excluded: tunneling can't help when the
+        //      origin itself is slow/unreachable.
+        // Forgeable aborts (reset/EOF) never arm either class.
+        if !is_downstream_tls_compat_failure(detail) && !is_upstream_tls_passthrough_failure(detail)
+        {
             return false;
         }
 
@@ -226,6 +237,23 @@ fn is_downstream_tls_compat_failure(detail: &str) -> bool {
         || normalized.contains("certificate unknown")
 }
 
+/// An upstream (origin-facing) TLS handshake or client-config failure for
+/// which passing the flow through as a blind tunnel — letting the client do
+/// its own TLS to the origin — is the right recovery. Excludes timeouts and
+/// connect failures: if the origin itself is slow or unreachable, tunneling
+/// doesn't help, so those must not arm the passthrough.
+fn is_upstream_tls_passthrough_failure(detail: &str) -> bool {
+    let normalized = detail.to_ascii_lowercase();
+    let is_upstream_tls = normalized.contains("upstream handshake failed")
+        || normalized.contains("upstream tls config build failed");
+    if !is_upstream_tls {
+        return false;
+    }
+    // A stage-timeout on the upstream handshake is an origin slowness signal,
+    // not a fixable interception failure.
+    !normalized.contains("stream_stage_timeout") && !normalized.contains("timed out")
+}
+
 #[cfg(test)]
 mod tests {
     use super::TlsInterceptBackoff;
@@ -269,18 +297,35 @@ mod tests {
     }
 
     #[test]
-    fn upstream_failure_does_not_enable_bypass() {
+    fn upstream_tls_failure_arms_passthrough_after_threshold() {
+        // Fail open to direct: repeated upstream TLS handshake failures (origin
+        // requires mTLS we can't present, rejects our client, etc.) should
+        // tunnel the host so the client negotiates directly.
         let backoff = TlsInterceptBackoff::new(Duration::from_secs(30));
-        for _ in 0..3 {
-            assert!(!backoff.register_tls_failure(
-                Some(42),
-                Some("codex"),
-                concat!("chatg", "pt.com"),
-                "upstream handshake failed: certificate verify failed: unknown ca"
-            ));
+        let host = concat!("chatg", "pt.com");
+        let detail = "upstream handshake failed: rustls handshake failed: bad certificate";
+        assert!(!backoff.register_tls_failure(Some(42), Some("codex"), host, detail));
+        assert!(!backoff.should_bypass_for_host(host));
+        assert!(backoff.register_tls_failure(Some(42), Some("codex"), host, detail));
+        assert!(backoff.should_bypass_for_host(host));
+    }
+
+    #[test]
+    fn upstream_timeout_or_connect_failure_never_arms_passthrough() {
+        // If the origin is slow/unreachable, tunneling can't help — these must
+        // not disable interception.
+        let backoff = TlsInterceptBackoff::new(Duration::from_secs(30));
+        let host = concat!("chatg", "pt.com");
+        for detail in [
+            "upstream handshake failed: stream_stage_timeout:intercept_upstream_tls_connect:5000ms",
+            "upstream connect failed: connection refused",
+            "upstream handshake failed: timed out",
+        ] {
+            for _ in 0..5 {
+                assert!(!backoff.register_tls_failure(Some(42), None, host, detail));
+            }
         }
-        assert!(!backoff.should_bypass_for_pid(42));
-        assert!(!backoff.should_bypass_for_host(concat!("chatg", "pt.com")));
+        assert!(!backoff.should_bypass_for_host(host));
     }
 
     #[test]

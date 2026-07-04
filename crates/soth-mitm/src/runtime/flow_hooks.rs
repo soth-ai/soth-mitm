@@ -229,7 +229,7 @@ impl<H: InterceptHandler> FlowHooks for HandlerFlowHooks<H> {
                     process_name = process_name.unwrap_or("unknown"),
                     server_host = %context.server_host,
                     bypass_ttl_ms = tls_intercept_backoff.bypass_ttl().as_millis(),
-                    "downstream TLS incompatibility detected; temporarily bypassing TLS interception"
+                    "repeated TLS interception failure (downstream pinning or upstream mTLS/handshake); temporarily failing open to a direct tunnel for this host"
                 );
             }
             let handler = Arc::clone(&flow_state.handler);
