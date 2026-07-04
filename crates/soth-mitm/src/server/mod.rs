@@ -63,6 +63,10 @@ pub struct SidecarConfig {
     pub h2_response_overflow_mode: H2ResponseOverflowMode,
     pub dns_nameservers: Option<Vec<String>>,
     pub unix_socket_path: Option<String>,
+    /// Global cap on concurrently-accepted connections. `0` derives a
+    /// generous default from the intercept-flow budget (8× `max_concurrent_
+    /// flows`, floored at 8192). A non-zero value is used verbatim.
+    pub max_accepted_connections: usize,
 }
 impl Default for SidecarConfig {
     fn default() -> Self {
@@ -81,6 +85,7 @@ impl Default for SidecarConfig {
             h2_response_overflow_mode: H2ResponseOverflowMode::TruncateContinue,
             dns_nameservers: None,
             unix_socket_path: None,
+            max_accepted_connections: 0,
         }
     }
 }
@@ -97,6 +102,15 @@ where
     tls_learning: Arc<TlsLearningGuardrails>,
     flow_hooks: Arc<dyn FlowHooks>,
     upstream_tls_cache: Arc<UpstreamTlsConfigCache>,
+    /// Global admission cap over **all** accepted connections (tunnel and
+    /// intercept alike), unlike the runtime-governor flow permit which only
+    /// bounds the intercept path. A flood of non-AI CONNECTs — a runaway or
+    /// malicious local app opening thousands of sockets — would otherwise
+    /// spawn unbounded tasks and upstream sockets and exhaust FDs/memory,
+    /// wedging the whole proxy and taking *all* traffic (AI and non-AI) down.
+    /// Sized well above realistic concurrency; when full, new connections are
+    /// shed (closed immediately) rather than dropping existing flows.
+    connection_admission: Arc<tokio::sync::Semaphore>,
 }
 #[derive(Clone)]
 pub(crate) struct RuntimeHandles<P, S>
@@ -251,6 +265,19 @@ where
             upstream_client_auth_mode,
             upstream_client_auth_pem,
         ));
+        // Admit up to 8× the intercept-flow budget (floored at 8192) across
+        // all connections — generous headroom over realistic concurrency,
+        // since tunnels take no flow permit, while still bounding a storm.
+        // A non-zero config override is used verbatim (tests set a small cap).
+        let max_accepted_connections = if config.max_accepted_connections > 0 {
+            config.max_accepted_connections
+        } else {
+            engine
+                .config
+                .max_concurrent_flows
+                .saturating_mul(8)
+                .max(8192)
+        };
         Ok(Self {
             config,
             engine: Arc::new(engine),
@@ -260,6 +287,7 @@ where
             tls_learning,
             flow_hooks,
             upstream_tls_cache,
+            connection_admission: Arc::new(tokio::sync::Semaphore::new(max_accepted_connections)),
         })
     }
 
@@ -427,10 +455,29 @@ where
                 }
                 Err(error) => return Err(error),
             };
+            // Global admission gate over ALL connections. `try_acquire` never
+            // blocks the accept loop; when the cap is full we shed the *new*
+            // connection (drop it, closing the socket) and keep serving
+            // existing flows — a bounded proxy that refuses excess beats a
+            // dead proxy that took everything down. The permit is moved into
+            // the connection task below and released on its drop.
+            let admission_permit = match Arc::clone(&self.connection_admission).try_acquire_owned()
+            {
+                Ok(permit) => permit,
+                Err(_) => {
+                    self.runtime_governor.mark_connection_admission_denial();
+                    tracing::warn!(
+                        client = %client_addr,
+                        "connection-admission cap reached; shedding new connection (existing flows unaffected)"
+                    );
+                    drop(stream);
+                    continue;
+                }
+            };
             apply_per_connection_socket_hardening(&stream);
-            // No permit acquired here — the accept loop must never block.
-            // Permits are acquired lazily inside handle_client only when the
-            // intercept path is taken. Tunnel/block paths never need a permit.
+            // No flow permit acquired here — the accept loop must never block.
+            // Flow permits are acquired lazily inside handle_client only when
+            // the intercept path is taken. Tunnel/block paths never need one.
             let runtime = RuntimeHandles {
                 engine: Arc::clone(&self.engine),
                 cert_store: Arc::clone(&self.cert_store),
@@ -446,6 +493,9 @@ where
             let flow_hooks_for_register = Arc::clone(&self.flow_hooks);
             let flow_id_pre = self.engine.allocate_flow_id();
             let join_handle = tokio::spawn(async move {
+                // Held for the whole connection; dropping it here returns the
+                // admission slot to the pool.
+                let _admission_permit = admission_permit;
                 let accept_context = unknown_context(flow_id_pre, client_addr.clone());
                 let process_info = runtime
                     .flow_hooks

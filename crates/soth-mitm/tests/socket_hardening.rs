@@ -31,6 +31,7 @@ fn sidecar_config_for_addr(listen_addr: &str) -> SidecarConfig {
         h2_response_overflow_mode: soth_mitm::test_server::H2ResponseOverflowMode::TruncateContinue,
         dns_nameservers: None,
         unix_socket_path: None,
+        max_accepted_connections: 0,
     }
 }
 

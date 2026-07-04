@@ -35,6 +35,10 @@ pub struct RuntimeObservabilitySnapshot {
     pub budget_denial_count: u64,
     pub flow_permit_denial_count: u64,
     pub in_flight_budget_denial_count: u64,
+    /// New connections shed at accept time because the global
+    /// connection-admission cap was full (load-shedding a flood so the proxy
+    /// stays alive rather than exhausting FDs/memory).
+    pub connection_admission_denial_count: u64,
     pub decoder_failure_count: u64,
     pub idle_timeout_count: u64,
     pub stream_stage_timeout_count: u64,
@@ -57,6 +61,7 @@ pub struct RuntimeGovernor {
     budget_denial_count: AtomicU64,
     flow_permit_denial_count: AtomicU64,
     in_flight_budget_denial_count: AtomicU64,
+    connection_admission_denial_count: AtomicU64,
     decoder_failure_count: AtomicU64,
     idle_timeout_count: AtomicU64,
     stream_stage_timeout_count: AtomicU64,
@@ -90,6 +95,7 @@ impl RuntimeGovernor {
             budget_denial_count: AtomicU64::new(0),
             flow_permit_denial_count: AtomicU64::new(0),
             in_flight_budget_denial_count: AtomicU64::new(0),
+            connection_admission_denial_count: AtomicU64::new(0),
             decoder_failure_count: AtomicU64::new(0),
             idle_timeout_count: AtomicU64::new(0),
             stream_stage_timeout_count: AtomicU64::new(0),
@@ -187,6 +193,12 @@ impl RuntimeGovernor {
         self.mark_budget_denial();
     }
 
+    pub fn mark_connection_admission_denial(&self) {
+        self.connection_admission_denial_count
+            .fetch_add(1, Ordering::Relaxed);
+        self.mark_backpressure_activation();
+    }
+
     pub fn mark_decoder_failure(&self) {
         self.decoder_failure_count.fetch_add(1, Ordering::Relaxed);
     }
@@ -238,6 +250,9 @@ impl RuntimeGovernor {
             flow_permit_denial_count: self.flow_permit_denial_count.load(Ordering::Relaxed),
             in_flight_budget_denial_count: self
                 .in_flight_budget_denial_count
+                .load(Ordering::Relaxed),
+            connection_admission_denial_count: self
+                .connection_admission_denial_count
                 .load(Ordering::Relaxed),
             decoder_failure_count: self.decoder_failure_count.load(Ordering::Relaxed),
             idle_timeout_count: self.idle_timeout_count.load(Ordering::Relaxed),

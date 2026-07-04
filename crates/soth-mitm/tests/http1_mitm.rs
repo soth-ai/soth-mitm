@@ -53,6 +53,7 @@ async fn start_sidecar_with_sink(
         h2_response_overflow_mode: soth_mitm::test_server::H2ResponseOverflowMode::TruncateContinue,
         dns_nameservers: None,
         unix_socket_path: None,
+        max_accepted_connections: 0,
     };
     let engine = build_engine(config, sink.clone());
     let server = SidecarServer::new(sidecar_config, engine).expect("build sidecar");
@@ -90,6 +91,7 @@ async fn start_sidecar_with_flow_hooks(
         h2_response_overflow_mode: soth_mitm::test_server::H2ResponseOverflowMode::TruncateContinue,
         dns_nameservers: None,
         unix_socket_path: None,
+        max_accepted_connections: 0,
     };
     let engine = build_engine(config, sink.clone());
     let server = SidecarServer::new_with_flow_hooks(sidecar_config, engine, flow_hooks)

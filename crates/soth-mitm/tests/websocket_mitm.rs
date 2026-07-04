@@ -52,6 +52,7 @@ async fn start_sidecar_with_sink(
         h2_response_overflow_mode: soth_mitm::test_server::H2ResponseOverflowMode::TruncateContinue,
         dns_nameservers: None,
         unix_socket_path: None,
+        max_accepted_connections: 0,
     };
     start_sidecar_with_sink_and_config(sink, config, sidecar_config).await
 }
@@ -1494,6 +1495,7 @@ async fn websocket_idle_session_survives_when_within_ws_timeout_policy() {
         h2_response_overflow_mode: soth_mitm::test_server::H2ResponseOverflowMode::TruncateContinue,
         dns_nameservers: None,
         unix_socket_path: None,
+        max_accepted_connections: 0,
     };
     let (proxy_addr, proxy_task, sink) =
         start_sidecar_with_sink_and_config(sink, config, sidecar_config).await;

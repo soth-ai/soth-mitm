@@ -70,6 +70,8 @@ pub(crate) fn build_runtime_server<H: InterceptHandler>(
             .unix_socket_path
             .as_ref()
             .map(|path| path.to_string_lossy().to_string()),
+        // 0 = derive from the flow budget in SidecarServer.
+        max_accepted_connections: 0,
     };
 
     let engine = MitmEngine::new_checked(core_config, policy, sink)
