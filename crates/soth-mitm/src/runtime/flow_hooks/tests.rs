@@ -93,6 +93,40 @@ async fn request_timeout_cancels_future_and_records_metric() {
 }
 
 #[tokio::test]
+async fn on_request_with_missing_connection_meta_fails_open_to_allow() {
+    // A request whose flow was never registered (or whose meta was reaped by
+    // a stale-flow / hot-reload race) must pass through un-inspected, NOT be
+    // blocked with a 500. Blocking would break the user's in-flight request
+    // on a transient internal condition.
+    let handler = Arc::new(PassThroughTlsHandler);
+    let metrics_store = Arc::new(ProxyMetricsStore::default());
+    let hooks = build_hooks(
+        handler,
+        Arc::clone(&metrics_store),
+        Duration::from_millis(100),
+        Duration::from_millis(100),
+        true,
+    );
+    // Reproduce the real race: register a flow, then finalize it (stream end
+    // reaps its ConnectionMeta and tombstones the flow), then a late request
+    // arrives on it. The meta is gone but the flow is known-closed.
+    let context = sample_context(140);
+    register_connection(&hooks, context.clone()).await;
+    hooks.on_stream_end(context.clone()).await;
+
+    let decision = hooks.on_request(context, sample_sidecar_request()).await;
+    assert!(
+        matches!(decision, crate::HandlerDecision::Allow),
+        "missing ConnectionMeta must fail open to Allow, not Block"
+    );
+    assert_eq!(
+        metrics_store.snapshot().missing_connection_meta_count,
+        1,
+        "the missing-meta condition must still be recorded"
+    );
+}
+
+#[tokio::test]
 async fn request_panic_recover_true_defaults_allow_and_records_metric() {
     let handler = Arc::new(PanicRequestHandler);
     let metrics_store = Arc::new(ProxyMetricsStore::default());
