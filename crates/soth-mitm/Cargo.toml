@@ -90,7 +90,7 @@ tracing = { workspace = true }
 dashmap = { workspace = true }
 parking_lot = { workspace = true }
 uuid = { workspace = true }
-lru = "0.14"
+lru = "0.18"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
