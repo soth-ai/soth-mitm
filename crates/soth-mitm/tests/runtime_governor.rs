@@ -108,6 +108,7 @@ async fn runtime_governor_enforces_concurrent_flow_limit_and_records_metrics() {
         h2_response_overflow_mode: soth_mitm::test_server::H2ResponseOverflowMode::TruncateContinue,
         dns_nameservers: None,
         unix_socket_path: None,
+        max_accepted_connections: 0,
     };
     let engine = build_engine(config, sink);
     let server = SidecarServer::new(sidecar_config, engine).expect("build sidecar");
@@ -217,6 +218,7 @@ async fn blind_tunnel_survives_idle_and_closes_on_peer_eof() {
         h2_response_overflow_mode: soth_mitm::test_server::H2ResponseOverflowMode::TruncateContinue,
         dns_nameservers: None,
         unix_socket_path: None,
+        max_accepted_connections: 0,
     };
     let engine = build_engine(config, sink);
     let server = SidecarServer::new(sidecar_config, engine).expect("build sidecar");
@@ -314,4 +316,81 @@ async fn blind_tunnel_survives_idle_and_closes_on_peer_eof() {
 
     proxy_task.abort();
     upstream_task.abort();
+}
+
+/// With a small admission cap, connections beyond the cap are shed (closed
+/// immediately) while those within it keep working — the proxy stays alive
+/// under a connection storm instead of exhausting resources. Existing flows
+/// are never dropped.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn connection_admission_cap_sheds_excess_connections() {
+    let _serial_permit = acquire_runtime_governor_test_permit().await;
+
+    let sink = VecEventConsumer::default();
+    let config = MitmConfig {
+        ignore_hosts: vec!["127.0.0.1".to_string()],
+        max_concurrent_flows: 8,
+        max_in_flight_bytes: 32 * 1024,
+        ..MitmConfig::default()
+    };
+    let sidecar_config = SidecarConfig {
+        listen_addr: "127.0.0.1".to_string(),
+        listen_port: 0,
+        max_connect_head_bytes: 4 * 1024,
+        max_http_head_bytes: 4 * 1024,
+        accept_retry_backoff_ms: 100,
+        idle_watchdog_timeout: Duration::from_secs(30),
+        websocket_idle_watchdog_timeout: Duration::from_secs(120),
+        upstream_connect_timeout: Duration::from_secs(10),
+        upstream_connect_retry_delay: None,
+        stream_stage_timeout: Duration::from_secs(5),
+        h2_body_idle_timeout: Duration::from_secs(5),
+        h2_response_overflow_mode: soth_mitm::test_server::H2ResponseOverflowMode::TruncateContinue,
+        dns_nameservers: None,
+        unix_socket_path: None,
+        // Cap of 2 accepted connections so the 3rd is shed.
+        max_accepted_connections: 2,
+    };
+    let engine = build_engine(config, sink);
+    let server = SidecarServer::new(sidecar_config, engine).expect("build sidecar");
+    let observability = server.runtime_observability_handle();
+    let listener = bind_loopback_listener_with_retry("bind sidecar").await;
+    let proxy_addr = listener.local_addr().expect("proxy addr");
+    let proxy_task = tokio::spawn(server.run_with_listener(listener));
+
+    // Two long-lived connections that hold their admission slots (they connect
+    // but send nothing, so the per-connection task stays alive reading the
+    // CONNECT head).
+    let _hold_a = TcpStream::connect(proxy_addr).await.expect("connect a");
+    let _hold_b = TcpStream::connect(proxy_addr).await.expect("connect b");
+
+    // Give the accept loop time to admit both holds and fill the cap of 2.
+    sleep(Duration::from_millis(200)).await;
+
+    // A third connection: the server accepts the TCP socket (kernel) but the
+    // admission gate sheds it, so our task drops the stream and the peer sees
+    // an immediate EOF rather than a served connection.
+    let mut shed = TcpStream::connect(proxy_addr).await.expect("connect shed");
+    let mut probe = [0_u8; 1];
+    let read = timeout(Duration::from_secs(3), shed.read(&mut probe))
+        .await
+        .expect("shed connection should close promptly")
+        .expect("read on shed connection");
+    assert_eq!(read, 0, "shed connection must be closed immediately (EOF)");
+
+    // The shed must be recorded.
+    timeout(Duration::from_secs(2), async {
+        loop {
+            if observability.snapshot().connection_admission_denial_count >= 1 {
+                break;
+            }
+            sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("a connection-admission denial should be recorded");
+
+    drop(_hold_a);
+    drop(_hold_b);
+    proxy_task.abort();
 }
