@@ -18,7 +18,6 @@ use crate::server::{
 };
 use crate::types::{RawRequest, RawResponse, StreamChunk};
 use crate::HandlerDecision;
-use bytes::Bytes;
 use dashmap::{DashMap, DashSet};
 use lru::LruCache;
 use std::future::Future;
@@ -260,10 +259,21 @@ impl<H: InterceptHandler> FlowHooks for HandlerFlowHooks<H> {
             )
             .await
             else {
-                return HandlerDecision::Block {
-                    status: 500,
-                    body: Bytes::from_static(b"missing ConnectionMeta"),
-                };
+                // Fail OPEN, not closed. A missing ConnectionMeta here is a
+                // transient internal race (stale-flow reaping / finalize_flow /
+                // hot-reload dropping the meta between accept and this request
+                // callback), not a client problem. Returning Block{500} would
+                // break the user's in-flight request; passing it through
+                // un-inspected loses observability on one request but keeps
+                // connectivity — the correct trade for a component in the data
+                // path. Mirrors the graceful skip the observe-only variants
+                // already use.
+                tracing::debug!(
+                    flow_id = context.flow_id.as_u64(),
+                    "on_request: connection metadata unavailable; passing request through un-inspected (fail-open)"
+                );
+                flow_state.metrics_store.record_missing_connection_meta();
+                return HandlerDecision::Allow;
             };
             let raw_request = RawRequest {
                 method: request.method,
