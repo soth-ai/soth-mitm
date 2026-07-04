@@ -4,6 +4,15 @@ use crate::config::H2ResponseOverflowMode;
 const IDLE_TIMEOUT_ERROR_PREFIX: &str = "idle_watchdog_timeout";
 const STREAM_STAGE_TIMEOUT_ERROR_PREFIX: &str = "stream_stage_timeout";
 const HAPPY_EYEBALLS_STAGGER: std::time::Duration = std::time::Duration::from_millis(200);
+/// Last-resort idle ceiling for blind tunnels. Blind tunnels deliberately have
+/// no aggressive idle watchdog (they carry legitimately-idle SSH / IMAP / DB
+/// sessions), relying on TCP keepalive to reap a peer that vanished without a
+/// RST. But keepalive is best-effort and cannot apply to non-TCP transports,
+/// and can be swallowed by a middlebox — leaving no reaper. This ceiling is
+/// the unconditional backstop: high enough (1h) that no legitimate idle
+/// session is severed, low enough that a dead-without-RST flow can't pin a
+/// task and its admission slot forever.
+const TUNNEL_IDLE_CEILING: std::time::Duration = std::time::Duration::from_secs(3600);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct IoTimeoutConfig {
@@ -568,7 +577,56 @@ where
     A: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
     B: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
 {
-    tokio::io::copy_bidirectional(side_a, side_b).await
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let mut a_to_b = [0_u8; IO_CHUNK_SIZE];
+    let mut b_to_a = [0_u8; IO_CHUNK_SIZE];
+    let mut bytes_from_a = 0_u64;
+    let mut bytes_from_b = 0_u64;
+    let mut a_closed = false;
+    let mut b_closed = false;
+
+    // Each read is bounded by the large TUNNEL_IDLE_CEILING backstop only —
+    // there is no aggressive idle watchdog, so legitimately-idle tunnels
+    // survive; a dead-without-RST peer that keepalive fails to reap is
+    // eventually reaped here instead of leaking forever.
+    loop {
+        if a_closed && b_closed {
+            return Ok((bytes_from_a, bytes_from_b));
+        }
+        tokio::select! {
+            result = tokio::time::timeout(TUNNEL_IDLE_CEILING, side_a.read(&mut a_to_b)), if !a_closed => {
+                let read = result.map_err(|_| tunnel_idle_ceiling_error())??;
+                if read == 0 {
+                    a_closed = true;
+                    let _ = side_b.shutdown().await;
+                } else {
+                    side_b.write_all(&a_to_b[..read]).await?;
+                    bytes_from_a += read as u64;
+                }
+            }
+            result = tokio::time::timeout(TUNNEL_IDLE_CEILING, side_b.read(&mut b_to_a)), if !b_closed => {
+                let read = result.map_err(|_| tunnel_idle_ceiling_error())??;
+                if read == 0 {
+                    b_closed = true;
+                    let _ = side_a.shutdown().await;
+                } else {
+                    side_a.write_all(&b_to_a[..read]).await?;
+                    bytes_from_b += read as u64;
+                }
+            }
+        }
+    }
+}
+
+fn tunnel_idle_ceiling_error() -> std::io::Error {
+    runtime_governor::mark_idle_timeout_global();
+    runtime_governor::mark_stuck_flow_global();
+    timeout_error(
+        IDLE_TIMEOUT_ERROR_PREFIX,
+        "tunnel_idle_ceiling",
+        TUNNEL_IDLE_CEILING,
+    )
 }
 
 pub(crate) async fn copy_bidirectional_with_websocket_idle_timeout<A, B>(
