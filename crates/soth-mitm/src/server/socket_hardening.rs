@@ -193,8 +193,16 @@ pub(crate) async fn bind_unix_listener_with_socket_hardening(
     tokio::net::UnixListener::bind(path)
 }
 
+/// Apply TCP keepalive + no-delay to a downstream (client-facing) connection.
+/// Keepalive on the downstream side is what reaps a client that vanished
+/// without a RST — sleep/hibernate, Wi-Fi→cellular handoff, radio drop. Until
+/// this was added, only upstream sockets had keepalive, so a disappeared
+/// client left its flow (and, on intercepted h2, a runtime permit) pinned
+/// until the multi-minute idle watchdog fired. Same 15s/5s cadence as
+/// upstream so both directions detect a dead peer on the same timescale.
 pub(crate) fn apply_per_connection_socket_hardening(stream: &TcpStream) {
     let _ = stream.set_nodelay(true);
+    apply_tcp_keepalive(stream);
 }
 
 /// Apply TCP keepalive and no-delay to upstream connections.
@@ -206,6 +214,13 @@ pub(crate) fn apply_per_connection_socket_hardening(stream: &TcpStream) {
 /// erroring within ~keepalive time.
 pub(crate) fn apply_upstream_socket_hardening(stream: &TcpStream) {
     let _ = stream.set_nodelay(true);
+    apply_tcp_keepalive(stream);
+}
+
+/// Set a 15s-idle / 5s-interval TCP keepalive on a live tokio `TcpStream`,
+/// cross-platform. Best-effort (errors ignored). Uses `mem::forget` so the
+/// borrowed `socket2::Socket` view doesn't close the underlying fd/socket.
+fn apply_tcp_keepalive(stream: &TcpStream) {
     let keepalive = socket2::TcpKeepalive::new()
         .with_time(std::time::Duration::from_secs(15))
         .with_interval(std::time::Duration::from_secs(5));

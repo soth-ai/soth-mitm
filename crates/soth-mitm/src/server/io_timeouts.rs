@@ -4,6 +4,15 @@ use crate::config::H2ResponseOverflowMode;
 const IDLE_TIMEOUT_ERROR_PREFIX: &str = "idle_watchdog_timeout";
 const STREAM_STAGE_TIMEOUT_ERROR_PREFIX: &str = "stream_stage_timeout";
 const HAPPY_EYEBALLS_STAGGER: std::time::Duration = std::time::Duration::from_millis(200);
+/// Last-resort idle ceiling for blind tunnels. Blind tunnels deliberately have
+/// no aggressive idle watchdog (they carry legitimately-idle SSH / IMAP / DB
+/// sessions), relying on TCP keepalive to reap a peer that vanished without a
+/// RST. But keepalive is best-effort and cannot apply to non-TCP transports,
+/// and can be swallowed by a middlebox — leaving no reaper. This ceiling is
+/// the unconditional backstop: high enough (1h) that no legitimate idle
+/// session is severed, low enough that a dead-without-RST flow can't pin a
+/// task and its admission slot forever.
+const TUNNEL_IDLE_CEILING: std::time::Duration = std::time::Duration::from_secs(3600);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct IoTimeoutConfig {
@@ -32,14 +41,18 @@ impl Default for IoTimeoutConfig {
     }
 }
 
-static IO_TIMEOUT_CONFIG: std::sync::OnceLock<std::sync::Mutex<IoTimeoutConfig>> =
-    std::sync::OnceLock::new();
+/// Lock-free, poison-free global read via `ArcSwap` (same pattern as the DNS
+/// resolver). Previously this was a `std::sync::Mutex` read with
+/// `.expect("… poisoned")` on *every* proxy read/write/connect/flush — so a
+/// single panic while any thread held the lock would poison it and make every
+/// subsequent I/O timeout lookup panic, killing every connection in the proxy
+/// until restart. `ArcSwap` has neither a lock nor a poison state.
+static IO_TIMEOUT_CONFIG: std::sync::LazyLock<arc_swap::ArcSwap<IoTimeoutConfig>> =
+    std::sync::LazyLock::new(|| arc_swap::ArcSwap::from_pointee(IoTimeoutConfig::default()));
 
 fn io_timeout_config() -> IoTimeoutConfig {
-    *IO_TIMEOUT_CONFIG
-        .get_or_init(|| std::sync::Mutex::new(IoTimeoutConfig::default()))
-        .lock()
-        .expect("io timeout config lock poisoned")
+    // IoTimeoutConfig is Copy, so this is a cheap value read.
+    **IO_TIMEOUT_CONFIG.load()
 }
 
 fn timeout_error(
@@ -97,11 +110,7 @@ pub(crate) fn install_io_timeout_config(
         h2_response_overflow_mode,
         upstream_connect_retry_delay,
     };
-    let mut guard = IO_TIMEOUT_CONFIG
-        .get_or_init(|| std::sync::Mutex::new(IoTimeoutConfig::default()))
-        .lock()
-        .expect("io timeout config lock poisoned");
-    *guard = config;
+    IO_TIMEOUT_CONFIG.store(std::sync::Arc::new(config));
 }
 
 pub(crate) async fn connect_with_upstream_timeout(
@@ -547,6 +556,79 @@ where
     })?
 }
 
+/// Blind-tunnel byte pump with **no application idle timeout**.
+///
+/// Blind tunnels carry arbitrary long-lived protocols — SSH, IMAP IDLE,
+/// database keepalives, RDP, MQTT — that are legitimately silent for minutes
+/// or hours while both endpoints stay alive. The application idle watchdog
+/// used for intercepted flows and websockets would sever those (the previous
+/// behavior: a tunnel silent for the ~10-minute watchdog window was force-
+/// closed even though both peers were healthy — a breakage the user never
+/// sees natively). Dead-peer detection is instead delegated to TCP keepalive
+/// (set on both sockets in `socket_hardening`) plus natural connection
+/// errors, exactly as a plain TCP proxy behaves. Using tokio's
+/// `copy_bidirectional` also avoids the head-of-line stall the hand-rolled
+/// copy had, where a slow write in one direction blocked reads in the other.
+pub(crate) async fn copy_bidirectional_tunnel<A, B>(
+    side_a: &mut A,
+    side_b: &mut B,
+) -> std::io::Result<(u64, u64)>
+where
+    A: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+    B: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let mut a_to_b = [0_u8; IO_CHUNK_SIZE];
+    let mut b_to_a = [0_u8; IO_CHUNK_SIZE];
+    let mut bytes_from_a = 0_u64;
+    let mut bytes_from_b = 0_u64;
+    let mut a_closed = false;
+    let mut b_closed = false;
+
+    // Each read is bounded by the large TUNNEL_IDLE_CEILING backstop only —
+    // there is no aggressive idle watchdog, so legitimately-idle tunnels
+    // survive; a dead-without-RST peer that keepalive fails to reap is
+    // eventually reaped here instead of leaking forever.
+    loop {
+        if a_closed && b_closed {
+            return Ok((bytes_from_a, bytes_from_b));
+        }
+        tokio::select! {
+            result = tokio::time::timeout(TUNNEL_IDLE_CEILING, side_a.read(&mut a_to_b)), if !a_closed => {
+                let read = result.map_err(|_| tunnel_idle_ceiling_error())??;
+                if read == 0 {
+                    a_closed = true;
+                    let _ = side_b.shutdown().await;
+                } else {
+                    side_b.write_all(&a_to_b[..read]).await?;
+                    bytes_from_a += read as u64;
+                }
+            }
+            result = tokio::time::timeout(TUNNEL_IDLE_CEILING, side_b.read(&mut b_to_a)), if !b_closed => {
+                let read = result.map_err(|_| tunnel_idle_ceiling_error())??;
+                if read == 0 {
+                    b_closed = true;
+                    let _ = side_a.shutdown().await;
+                } else {
+                    side_a.write_all(&b_to_a[..read]).await?;
+                    bytes_from_b += read as u64;
+                }
+            }
+        }
+    }
+}
+
+fn tunnel_idle_ceiling_error() -> std::io::Error {
+    runtime_governor::mark_idle_timeout_global();
+    runtime_governor::mark_stuck_flow_global();
+    timeout_error(
+        IDLE_TIMEOUT_ERROR_PREFIX,
+        "tunnel_idle_ceiling",
+        TUNNEL_IDLE_CEILING,
+    )
+}
+
 pub(crate) async fn copy_bidirectional_with_websocket_idle_timeout<A, B>(
     side_a: &mut A,
     side_b: &mut B,
@@ -660,6 +742,63 @@ mod io_timeout_happy_eyeballs_tests {
         .await
         .expect_err("empty address list must fail");
         assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn tunnel_copy_pumps_both_directions_and_reports_counts() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        // Echo server on side_b; side_a is the client half of a loopback pair.
+        let echo = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        let echo_addr = echo.local_addr().unwrap();
+        let echo_task = tokio::spawn(async move {
+            let (mut s, _) = echo.accept().await.unwrap();
+            let mut buf = [0u8; 64];
+            let n = s.read(&mut buf).await.unwrap();
+            s.write_all(&buf[..n]).await.unwrap();
+            s.shutdown().await.unwrap();
+        });
+
+        let (mut a_client, mut a_server) = tokio::io::duplex(1024);
+        let mut b = tokio::net::TcpStream::connect(echo_addr).await.unwrap();
+
+        let copy =
+            tokio::spawn(
+                async move { super::copy_bidirectional_tunnel(&mut a_server, &mut b).await },
+            );
+
+        a_client.write_all(b"ping").await.unwrap();
+        a_client.shutdown().await.unwrap();
+        let mut echoed = Vec::new();
+        a_client.read_to_end(&mut echoed).await.unwrap();
+        assert_eq!(&echoed, b"ping");
+
+        let (from_a, from_b) = copy.await.unwrap().unwrap();
+        assert_eq!(from_a, 4);
+        assert_eq!(from_b, 4);
+        echo_task.await.unwrap();
+    }
+
+    #[test]
+    fn io_timeout_config_swaps_without_lock() {
+        use super::{install_io_timeout_config, io_timeout_config};
+        use crate::config::H2ResponseOverflowMode;
+        install_io_timeout_config(
+            Duration::from_secs(31),
+            Duration::from_secs(601),
+            Duration::from_secs(11),
+            Duration::from_secs(7),
+            Duration::from_secs(9),
+            H2ResponseOverflowMode::TruncateContinue,
+            Some(Duration::from_millis(250)),
+        );
+        let cfg = io_timeout_config();
+        assert_eq!(cfg.upstream_connect_timeout, Duration::from_secs(11));
+        assert_eq!(
+            cfg.upstream_connect_retry_delay,
+            Some(Duration::from_millis(250))
+        );
     }
 
     #[test]
