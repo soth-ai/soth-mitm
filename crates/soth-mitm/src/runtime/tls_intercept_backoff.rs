@@ -125,29 +125,51 @@ impl TlsInterceptBackoff {
         now: Instant,
     ) -> bool
     where
-        K: Eq + std::hash::Hash + Clone,
+        K: Eq + std::hash::Hash,
     {
-        let mut record = map.get(&key).map(|r| *r).unwrap_or(FailureRecord {
-            count: 0,
-            window_until: now + self.bypass_ttl,
-        });
-        if record.window_until <= now {
-            // Window expired — start a fresh count.
-            record = FailureRecord {
-                count: 0,
-                window_until: now + self.bypass_ttl,
-            };
+        // Read-modify-write under the shard lock via `entry`, not a
+        // get-then-insert pair. The latter has a TOCTOU gap: concurrent
+        // failures for the same host (e.g. an h2 client racing several
+        // connections that all reject our MITM leaf at once) would all read
+        // the same count and all write count+1, advancing by 1 instead of N —
+        // stalling arming for exactly the pinned host this exists to serve.
+        use dashmap::mapref::entry::Entry;
+        let window_until = now + self.bypass_ttl;
+        match map.entry(key) {
+            Entry::Occupied(mut occupied) => {
+                let record = occupied.get_mut();
+                if record.window_until <= now {
+                    // Window expired — start a fresh count.
+                    *record = FailureRecord {
+                        count: 1,
+                        window_until,
+                    };
+                } else {
+                    record.count = record.count.saturating_add(1);
+                }
+                if record.count >= ACTIVATION_THRESHOLD {
+                    // Threshold crossed — clear the counter; the bypass
+                    // deadline now governs behavior.
+                    occupied.remove();
+                    true
+                } else {
+                    false
+                }
+            }
+            Entry::Vacant(vacant) => {
+                // First failure in a fresh window. With ACTIVATION_THRESHOLD > 1
+                // this never arms on its own; record and wait for the next.
+                if ACTIVATION_THRESHOLD <= 1 {
+                    true
+                } else {
+                    vacant.insert(FailureRecord {
+                        count: 1,
+                        window_until,
+                    });
+                    false
+                }
+            }
         }
-        record.count = record.count.saturating_add(1);
-        let reached = record.count >= ACTIVATION_THRESHOLD;
-        if reached {
-            // Threshold crossed — clear the counter; the bypass deadline now
-            // governs behavior.
-            map.remove(&key);
-        } else {
-            map.insert(key, record);
-        }
-        reached
     }
 }
 
