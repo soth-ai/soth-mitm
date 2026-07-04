@@ -375,6 +375,11 @@ async fn should_intercept_tls_receives_process_info_from_connect_path() {
     );
 }
 
+// A genuine cert-trust rejection (the client validated our MITM leaf and
+// refused it). Only these arm the bypass now — EOF/reset do not.
+const DOWNSTREAM_CERT_REJECT: &str =
+    "downstream handshake failed: downstream rustls handshake failed: bad certificate";
+
 #[tokio::test]
 async fn downstream_tls_failure_bypasses_intercept_for_same_process() {
     let handler = Arc::new(PassThroughTlsHandler);
@@ -386,16 +391,15 @@ async fn downstream_tls_failure_bypasses_intercept_for_same_process() {
         Duration::from_millis(100),
         true,
     );
-    let failing_context = sample_context(109);
-    register_connection(&hooks, failing_context.clone()).await;
-
-    hooks
-        .on_tls_failure(
-            failing_context,
-            "downstream handshake failed: downstream rustls handshake failed: tls handshake eof"
-                .to_string(),
-        )
-        .await;
+    // Two genuine cert rejections are required before the bypass arms; a
+    // single one no longer disables interception.
+    for flow_id in [109, 111] {
+        let failing_context = sample_context(flow_id);
+        register_connection(&hooks, failing_context.clone()).await;
+        hooks
+            .on_tls_failure(failing_context, DOWNSTREAM_CERT_REJECT.to_string())
+            .await;
+    }
 
     let next_context = sample_context(110);
     let should_intercept = hooks
@@ -403,7 +407,35 @@ async fn downstream_tls_failure_bypasses_intercept_for_same_process() {
         .await;
     assert!(
         !should_intercept,
-        "process with downstream TLS EOF should temporarily bypass interception"
+        "process with repeated downstream cert rejections should temporarily bypass interception"
+    );
+}
+
+#[tokio::test]
+async fn single_downstream_cert_failure_does_not_bypass() {
+    let handler = Arc::new(PassThroughTlsHandler);
+    let metrics_store = Arc::new(ProxyMetricsStore::default());
+    let hooks = build_hooks(
+        handler,
+        metrics_store,
+        Duration::from_millis(100),
+        Duration::from_millis(100),
+        true,
+    );
+    let failing_context = sample_context(131);
+    register_connection(&hooks, failing_context.clone()).await;
+    hooks
+        .on_tls_failure(failing_context, DOWNSTREAM_CERT_REJECT.to_string())
+        .await;
+
+    // One failure must not be enough to disable inspection.
+    let next_context = sample_context(132);
+    let should_intercept = hooks
+        .should_intercept_tls(next_context, Some(fixture_policy_process_info(7001)))
+        .await;
+    assert!(
+        should_intercept,
+        "a single cert rejection must not disable interception"
     );
 }
 
@@ -418,33 +450,32 @@ async fn downstream_tls_failure_bypasses_intercept_for_same_host_without_process
         Duration::from_millis(100),
         true,
     );
-    let failing_context = sample_context(121);
-    hooks
-        .on_connection_open(failing_context.clone(), None)
-        .await;
-
-    hooks
-        .on_tls_failure(
-            failing_context,
-            "downstream handshake failed: downstream rustls handshake failed: tls handshake eof"
-                .to_string(),
-        )
-        .await;
+    for flow_id in [121, 125] {
+        let failing_context = sample_context(flow_id);
+        hooks
+            .on_connection_open(failing_context.clone(), None)
+            .await;
+        hooks
+            .on_tls_failure(failing_context, DOWNSTREAM_CERT_REJECT.to_string())
+            .await;
+    }
 
     let next_context = sample_context(122);
     let should_intercept = hooks.should_intercept_tls(next_context, None).await;
     assert!(
         !should_intercept,
-        "host with downstream TLS EOF should temporarily bypass interception even without process attribution"
+        "host with repeated downstream cert rejections should bypass interception even without process attribution"
     );
 
+    // Security fix: the bypass must NOT widen to sibling subdomains or the
+    // parent suffix — only the exact host that failed is bypassed.
     let mut sibling_host_context = sample_context(123);
     sibling_host_context.server_host = "api2.example.com".to_string();
     let sibling_host_should_intercept =
         hooks.should_intercept_tls(sibling_host_context, None).await;
     assert!(
-        !sibling_host_should_intercept,
-        "bypass should apply to sibling hosts that share the same parent domain"
+        sibling_host_should_intercept,
+        "bypass must not spill over to sibling hosts"
     );
 
     let mut other_host_context = sample_context(124);
