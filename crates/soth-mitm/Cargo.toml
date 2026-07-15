@@ -106,7 +106,7 @@ openssl = { version = "0.10", features = ["vendored"] }
 tokio-openssl = "0.6"
 
 [dev-dependencies]
-hudsucker = { version = "0.24.0", default-features = false, features = ["rcgen-ca", "rustls-client"] }
+hudsucker = { version = "0.25.0", default-features = false, features = ["rcgen-ca", "rustls-client"] }
 hyper-rustls = { version = "0.27.0", default-features = false, features = ["http1", "webpki-tokio"] }
 rustls-pemfile = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
